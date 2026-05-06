@@ -310,6 +310,7 @@ def run_scoring_pipeline(df: pd.DataFrame) -> pd.DataFrame:
             row["shock_flag"],
             row["credit_equity_divergence"],
             row["vol_credit_mismatch"],
+            row["composite_risk_score_smooth"],
         ),
         axis=1,
     )

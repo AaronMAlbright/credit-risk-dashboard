@@ -180,6 +180,9 @@ def _apply_score_scale(df: pd.DataFrame, col: str, scale: float) -> pd.DataFrame
             axis=1,
         )
 
+    # Recompute composite score so it reflects the scaled column
+    df = build_composite_risk(df)
+
     df["final_decision_obj"] = df.apply(
         lambda row: generate_final_decision(
             row["macro_risk_score_smooth"],
@@ -192,6 +195,7 @@ def _apply_score_scale(df: pd.DataFrame, col: str, scale: float) -> pd.DataFrame
             row["shock_flag"],
             row["credit_equity_divergence"],
             row["vol_credit_mismatch"],
+            row["composite_risk_score_smooth"],
         ),
         axis=1,
     )

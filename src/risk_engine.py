@@ -473,7 +473,8 @@ def generate_final_decision(
     transition_regime,
     shock_flag,
     credit_equity_divergence,
-    vol_credit_mismatch
+    vol_credit_mismatch,
+    composite_score=0,
 ):
     max_stress = max(macro_score, credit_score, liquidity_regime_score)
 
@@ -559,12 +560,29 @@ def generate_final_decision(
         }
 
     if macro_score < 30 and credit_score < 30 and complacency_score < 40:
+        if composite_score >= 50:
+            return {
+                "final_decision": "Wait",
+                "environment": "Individual signals benign but composite risk elevated",
+                "action": "Hold neutral — composite risk gauge signals caution",
+                "buy_trigger": "Composite risk score falls below 50 and complacency resets",
+                "risk_off_trigger": "Composite risk continues rising or shock flag triggers",
+            }
         return {
             "final_decision": "Neutral",
             "environment": "Benign but not enough edge to force exposure",
             "action": "Maintain neutral risk posture",
             "buy_trigger": "Complacency reset or mean-reversion setup",
             "risk_off_trigger": "Complacency > 70 or shock flag",
+        }
+
+    if composite_score >= 50:
+        return {
+            "final_decision": "Wait",
+            "environment": "No dominant signal but composite risk elevated",
+            "action": "Neutral positioning with elevated background risk",
+            "buy_trigger": "Composite risk score falls below 50",
+            "risk_off_trigger": "Individual signal fires or composite risk continues rising",
         }
 
     return {
