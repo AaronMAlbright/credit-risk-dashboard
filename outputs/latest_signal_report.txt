@@ -1,0 +1,47 @@
+
+MACRO CREDIT SIGNAL REPORT
+
+Current Date: 2026-05-01 00:00:00
+
+FINAL DECISION
+Decision: Hold / Do Not Chase
+Environment: Stable but crowded
+Action: Hold existing risk, avoid aggressive new risk
+Buy Trigger: Wait for better entry after volatility or credit repricing
+Risk-Off Trigger: 5D VIX spike or HY widening
+
+KEY SCORES
+Macro Risk Score: 5.0
+Credit Market Risk Score: 8.1
+Liquidity Score: 9.5
+Risk Appetite Score: 89.9
+Complacency Score: 79.3
+Mean-Reversion Score: 0.0
+
+MARKET STATE
+Credit / Equity Divergence: Risk-On Confirmation
+Vol / Credit Mismatch: Neutral
+Transition Regime: Complacency / Late Cycle
+Shock Flag: No Shock
+Labor Warning: Low
+
+TOP DRIVERS
+- Crowded / complacent market setup
+- HY spreads tight
+- HY spreads tightening quickly
+- VIX low
+- VIX falling sharply
+- SP500 near highs
+- Credit/equity signal: Risk-On Confirmation
+
+MODEL CONFIDENCE
+Confidence: High
+- Adequate decision sample size
+- No active shock flag
+- Signals mostly aligned
+- Labor warning low
+
+TRIGGER DISTANCES
+VIX points to 25: 8.01
+SP500 drawdown needed to reach -5%: 5.00%
+HY 5D widening needed to reach +0.25: 0.34

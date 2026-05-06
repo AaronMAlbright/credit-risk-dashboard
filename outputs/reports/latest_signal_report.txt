@@ -1,0 +1,58 @@
+
+MACRO CREDIT SIGNAL REPORT
+
+Current Date: 2026-05-04 00:00:00
+
+FINAL DECISION
+Decision: Hold / Do Not Chase
+Environment: Stable but crowded
+Action: Hold existing risk, avoid aggressive new risk
+Buy Trigger: Wait for better entry after volatility or credit repricing
+Risk-Off Trigger: 5D VIX spike or HY widening
+
+PORTFOLIO STANCE
+Equity Weight: 40%
+Credit Weight: 25%
+Cash Weight: 35%
+Duration Bias: Neutral
+
+KEY SCORES
+Macro Risk Score: 5.0
+Credit Market Risk Score: 5.5
+Liquidity Regime Score: 0.3
+Treasury Stress Score: 0.0
+Cross-Asset Divergence Score: 0.0
+Market Internals Score: 67.6
+Risk Appetite Score: 89.9
+Complacency Score: 80.3
+Mean-Reversion Score: 0.0
+
+MARKET STATE
+Credit / Equity Divergence: Risk-On Confirmation
+Vol / Credit Mismatch: Neutral
+Transition Regime: Complacency / Late Cycle
+Shock Flag: No Shock
+Labor Warning: Low
+
+MODEL HEALTH
+Portfolio Weight Check: PASS
+
+TOP ATTRIBUTIONS
+- Elevated complacency: +20
+- HY spread tightness: +18
+- High risk appetite: +16
+- HY spread compression: +14
+- VIX compression: +12
+- SP500 near highs: +12
+
+HISTORICAL ANALOGS
+- Late-Cycle Melt-Up: 75.2% similarity
+- Benign Risk-On: 62.7% similarity
+- COVID Crash: 0% similarity
+
+MODEL CONFIDENCE
+Confidence: High
+- Adequate decision sample size
+- No active shock flag
+- Signals mostly aligned
+- Labor warning low
