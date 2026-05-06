@@ -12,6 +12,8 @@ DATA_PATH = Path("data/scored_macro_credit_data.csv")
 HISTORY_PATH = Path("history/model_run_history.csv")
 REPORT_PATH = Path("outputs/reports/latest_signal_report.txt")
 CHART_DIR = Path("outputs/charts")
+WF_WINDOWS_PATH = Path("outputs/validation/walk_forward_windows.csv")
+WF_REGIMES_PATH = Path("outputs/validation/walk_forward_regimes.csv")
 
 
 @st.cache_data
@@ -26,6 +28,15 @@ def load_history():
     if HISTORY_PATH.exists():
         return pd.read_csv(HISTORY_PATH)
     return pd.DataFrame()
+
+
+@st.cache_data
+def load_walk_forward():
+    if WF_WINDOWS_PATH.exists() and WF_REGIMES_PATH.exists():
+        windows_df = pd.read_csv(WF_WINDOWS_PATH, parse_dates=["train_end", "test_start", "test_end"])
+        regimes_df = pd.read_csv(WF_REGIMES_PATH, parse_dates=["train_end", "test_start", "test_end"])
+        return windows_df, regimes_df
+    return None, None
 
 
 df = load_data()
@@ -140,7 +151,66 @@ with tab3:
     st.write(f"**Risk-Off Trigger:** {latest.get('risk_off_trigger', 'N/A')}")
 
 with tab4:
-    st.header("Validation Dataset")
+    st.header("Walk-Forward Validation")
+
+    wf_windows, wf_regimes = load_walk_forward()
+
+    if wf_windows is None:
+        st.warning("No walk-forward results found. Run `python app.py` to generate them.")
+    else:
+        n_windows = len(wf_windows)
+        strategy_beat = (wf_windows["strategy_sharpe"] > wf_windows["sp500_sharpe"]).sum()
+        avg_strat_sharpe = wf_windows["strategy_sharpe"].mean()
+        avg_sp500_sharpe = wf_windows["sp500_sharpe"].mean()
+        avg_strat_return = wf_windows["strategy_total_return"].mean()
+        avg_sp500_return = wf_windows["sp500_total_return"].mean()
+        avg_strat_dd = wf_windows["strategy_max_drawdown"].mean()
+        avg_sp500_dd = wf_windows["sp500_max_drawdown"].mean()
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Test Windows", n_windows)
+        col2.metric("Windows: Strategy Beat SP500", f"{strategy_beat} / {n_windows}")
+        col3.metric("Avg Strategy Sharpe", f"{avg_strat_sharpe:.2f}")
+        col4.metric("Avg SP500 Sharpe", f"{avg_sp500_sharpe:.2f}")
+
+        col5, col6, col7, col8 = st.columns(4)
+        col5.metric("Avg Strategy Return", f"{avg_strat_return:.1%}")
+        col6.metric("Avg SP500 Return", f"{avg_sp500_return:.1%}")
+        col7.metric("Avg Strategy Max Drawdown", f"{avg_strat_dd:.1%}")
+        col8.metric("Avg SP500 Max Drawdown", f"{avg_sp500_dd:.1%}")
+
+        st.subheader("Sharpe Ratio by Window")
+        sharpe_chart = wf_windows[["test_start", "strategy_sharpe", "sp500_sharpe"]].copy()
+        sharpe_chart["test_start"] = sharpe_chart["test_start"].dt.strftime("%b %Y")
+        st.bar_chart(sharpe_chart.set_index("test_start"), color=["#4C9BE8", "#E8834C"])
+
+        st.subheader("Per-Window Performance")
+        disp = wf_windows[[
+            "window_id", "test_start", "test_end", "dominant_regime",
+            "strategy_total_return", "strategy_sharpe", "strategy_max_drawdown",
+            "sp500_total_return", "sp500_sharpe", "sp500_max_drawdown",
+        ]].copy()
+        disp["test_start"] = disp["test_start"].dt.strftime("%Y-%m-%d")
+        disp["test_end"] = disp["test_end"].dt.strftime("%Y-%m-%d")
+        for c in ["strategy_total_return", "strategy_max_drawdown", "sp500_total_return", "sp500_max_drawdown"]:
+            disp[c] = disp[c].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
+        for c in ["strategy_sharpe", "sp500_sharpe"]:
+            disp[c] = disp[c].map(lambda x: f"{x:.2f}" if pd.notna(x) else "—")
+        st.dataframe(disp, use_container_width=True, hide_index=True)
+
+        st.subheader("Regime Breakdown")
+        rd = wf_regimes[[
+            "window_id", "test_start", "regime", "n_obs",
+            "avg_forward_30d_return", "hit_rate", "worst_5pct", "avg_equity_weight",
+        ]].copy()
+        rd["test_start"] = rd["test_start"].dt.strftime("%Y-%m-%d")
+        for c in ["avg_forward_30d_return", "worst_5pct"]:
+            rd[c] = rd[c].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
+        rd["hit_rate"] = rd["hit_rate"].map(lambda x: f"{x:.0%}" if pd.notna(x) else "—")
+        rd["avg_equity_weight"] = rd["avg_equity_weight"].map(lambda x: f"{x:.0%}" if pd.notna(x) else "—")
+        st.dataframe(rd, use_container_width=True, hide_index=True)
+
+    st.subheader("Validation Dataset")
 
     validation_cols = [
         "date",
