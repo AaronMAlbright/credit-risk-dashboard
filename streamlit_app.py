@@ -4,6 +4,11 @@ from pathlib import Path
 
 from src.bootstrap import run_bootstrap_analysis
 from src.regime_attribution import COMPOSITE_WEIGHTS, DISPLAY_NAMES, run_regime_attribution
+from src.regime_charts import (
+    build_decision_timeline,
+    build_score_history,
+    build_sp500_with_regime_overlay,
+)
 from src.regime_transition import run_regime_analysis
 
 st.set_page_config(
@@ -103,7 +108,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -113,6 +118,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Sensitivity",
     "Regime Transitions",
     "Attribution",
+    "Timeline",
 ])
 
 with tab1:
@@ -749,3 +755,63 @@ with tab9:
             {c: "{:.1f}" for c in mean_disp.columns if c != "N Obs"}
         )
         st.dataframe(styled, use_container_width=True)
+
+with tab10:
+    st.header("Regime Timeline")
+    st.caption(
+        "Interactive charts with persistent regime color mapping. "
+        "Use the date range controls to zoom in on a specific period. "
+        "Click legend entries to show/hide individual series."
+    )
+
+    # ── Date range selector ───────────────────────────────────────────────────
+    if "date" in df.columns:
+        min_date = pd.to_datetime(df["date"]).min().date()
+        max_date = pd.to_datetime(df["date"]).max().date()
+    else:
+        min_date = max_date = None
+
+    col_ds, col_de, _ = st.columns([1, 1, 3])
+    with col_ds:
+        date_start = st.date_input("From", value=min_date, min_value=min_date, max_value=max_date, key="tl_start")
+    with col_de:
+        date_end = st.date_input("To", value=max_date, min_value=min_date, max_value=max_date, key="tl_end")
+
+    regime_choice = st.radio(
+        "Overlay regime",
+        ["Final Decision", "Transition Regime"],
+        horizontal=True,
+        key="tl_regime",
+    )
+    regime_col_map = {"Final Decision": "final_decision", "Transition Regime": "transition_regime"}
+    overlay_col = regime_col_map[regime_choice]
+
+    # ── Decision / Transition regime timeline ────────────────────────────────
+    st.subheader("Regime Timeline (Gantt View)")
+    st.plotly_chart(
+        build_decision_timeline(df, regime_col=overlay_col),
+        use_container_width=True,
+    )
+
+    # ── SP500 with regime overlay ─────────────────────────────────────────────
+    st.subheader("SP500 with Regime Background")
+    st.plotly_chart(
+        build_sp500_with_regime_overlay(
+            df,
+            regime_col=overlay_col,
+            date_start=date_start,
+            date_end=date_end,
+        ),
+        use_container_width=True,
+    )
+
+    # ── Score history ─────────────────────────────────────────────────────────
+    st.subheader("Score History")
+    st.caption(
+        "Macro Risk, Credit Risk, and Composite are visible by default. "
+        "Click any legend entry to toggle other scores on or off."
+    )
+    st.plotly_chart(
+        build_score_history(df, date_start=date_start, date_end=date_end),
+        use_container_width=True,
+    )
