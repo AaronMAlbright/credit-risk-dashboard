@@ -3,6 +3,7 @@ import streamlit as st
 from pathlib import Path
 
 from src.bootstrap import run_bootstrap_analysis
+from src.regime_attribution import COMPOSITE_WEIGHTS, DISPLAY_NAMES, run_regime_attribution
 from src.regime_transition import run_regime_analysis
 
 st.set_page_config(
@@ -65,6 +66,12 @@ def load_bootstrap(_df, _windows_df):
     return run_bootstrap_analysis(_df, windows_df=_windows_df, n_boot=1000)
 
 
+@st.cache_data
+def load_attribution(_df):
+    """Run regime attribution analysis (cached against df hash)."""
+    return run_regime_attribution(_df)
+
+
 df = load_data()
 history = load_history()
 latest = df.iloc[-1]
@@ -96,7 +103,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -105,6 +112,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "History",
     "Sensitivity",
     "Regime Transitions",
+    "Attribution",
 ])
 
 with tab1:
@@ -631,3 +639,113 @@ with tab8:
             .background_gradient(cmap="RdYlGn", subset=[c for c in trans.columns if "Drawdown" not in c])
             .format("{:.2%}")
         )
+with tab9:
+    st.header("Signal Attribution")
+    st.caption(
+        "Explains which sub-scores drive composite risk levels, what triggered each "
+        "regime shift, and which scores are systematically elevated for each decision type."
+    )
+
+    attr = load_attribution(df)
+    rolling = attr["rolling_contributions"]
+    shifts  = attr["shift_attribution"]
+    elev    = attr["trigger_elevation"]
+    drivers = attr["top_drivers_current"]
+
+    # ── Current top drivers ───────────────────────────────────────────────────
+    st.subheader("Current Top Drivers")
+    col_a, col_b, col_c = st.columns(3)
+    for i, col in enumerate([col_a, col_b, col_c]):
+        if i < len(drivers):
+            d = drivers[i]
+            badge = "⬆ Elevated" if d["elevated"] else "Normal"
+            col.metric(
+                label=d["name"],
+                value=f"{d['level']:.1f}",
+                delta=f"{d['excess']:+.1f} vs 75th pct — {badge}",
+                delta_color="inverse",
+            )
+
+    # ── Rolling contributions chart ───────────────────────────────────────────
+    st.subheader("Rolling Weighted Contributions to Composite Risk")
+    st.caption(
+        "Each line = weight × smoothed score. "
+        "Mean Reversion is inverted (high MR score = low risk contribution). "
+        "Sum approximates the composite risk score."
+    )
+    contrib_display = rolling.rename(columns={
+        f"{k}_contribution": DISPLAY_NAMES[k]
+        for k in COMPOSITE_WEIGHTS
+        if f"{k}_contribution" in rolling.columns
+    })
+    if "date" in df.columns:
+        contrib_display.index = pd.to_datetime(df["date"])
+    st.line_chart(contrib_display, use_container_width=True)
+
+    # ── Shift attribution table ───────────────────────────────────────────────
+    st.subheader("Regime Shift Attribution")
+    st.caption(
+        "Each row = one regime transition. Delta = change in score over the prior "
+        "21 trading days. Positive delta = more risk added. "
+        "Primary driver = score with the largest absolute move."
+    )
+    if shifts.empty:
+        st.info("No regime transitions found in the dataset.")
+    else:
+        delta_cols = [c for c in shifts.columns if c.endswith("_delta")]
+        display_cols = ["date", "from_regime", "to_regime",
+                        "primary_driver", "secondary_driver",
+                        "composite_delta", "direction"] + delta_cols
+        shift_disp = shifts[[c for c in display_cols if c in shifts.columns]].copy()
+        if "date" in shift_disp.columns:
+            shift_disp["date"] = pd.to_datetime(shift_disp["date"]).dt.strftime("%Y-%m-%d")
+
+        # Rename delta cols for readability
+        rename_deltas = {
+            f"{k}_delta": f"Δ {DISPLAY_NAMES[k]}"
+            for k in DISPLAY_NAMES
+            if f"{k}_delta" in shift_disp.columns
+        }
+        shift_disp = shift_disp.rename(columns=rename_deltas)
+
+        st.dataframe(shift_disp, use_container_width=True, hide_index=True)
+
+    # ── Trigger elevation table ───────────────────────────────────────────────
+    st.subheader("Score Elevation by Decision Type")
+    st.caption(
+        "Mean score level while the model was in each decision regime. "
+        "Highlighted cells = mean exceeds the global 75th-percentile threshold."
+    )
+    if elev.empty:
+        st.info("No elevation data available.")
+    else:
+        mean_cols = [c for c in elev.columns if c.endswith("_mean")]
+        elev_cols = [c for c in elev.columns if c.endswith("_elevated")]
+
+        # Build a display DataFrame: show means only, with elevation as background
+        mean_disp = elev[["n_obs"] + mean_cols].copy()
+        mean_disp.columns = ["N Obs"] + [
+            DISPLAY_NAMES.get(c.replace("_mean", ""), c) for c in mean_cols
+        ]
+
+        # Build boolean mask for styling (same col order, without n_obs)
+        bool_mask = elev[elev_cols].copy()
+        bool_mask.columns = [
+            DISPLAY_NAMES.get(c.replace("_elevated", ""), c) for c in elev_cols
+        ]
+
+        score_display_cols = list(bool_mask.columns)
+
+        def highlight_elevated(data):
+            style = pd.DataFrame("", index=data.index, columns=data.columns)
+            for col in score_display_cols:
+                if col in data.columns and col in bool_mask.columns:
+                    style[col] = bool_mask[col].map(
+                        lambda v: "background-color: #f4c542; font-weight: bold" if v else ""
+                    )
+            return style
+
+        styled = mean_disp.style.apply(highlight_elevated, axis=None).format(
+            {c: "{:.1f}" for c in mean_disp.columns if c != "N Obs"}
+        )
+        st.dataframe(styled, use_container_width=True)
