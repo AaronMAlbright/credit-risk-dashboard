@@ -14,6 +14,9 @@ REPORT_PATH = Path("outputs/reports/latest_signal_report.txt")
 CHART_DIR = Path("outputs/charts")
 WF_WINDOWS_PATH = Path("outputs/validation/walk_forward_windows.csv")
 WF_REGIMES_PATH = Path("outputs/validation/walk_forward_regimes.csv")
+SENS_RESULTS_PATH = Path("outputs/sensitivity/sensitivity_results.csv")
+SENS_REPORT_PATH  = Path("outputs/sensitivity/sensitivity_report.txt")
+SENS_HEATMAP_DIR  = Path("outputs/sensitivity/heatmaps")
 
 
 @st.cache_data
@@ -37,6 +40,13 @@ def load_walk_forward():
         regimes_df = pd.read_csv(WF_REGIMES_PATH, parse_dates=["train_end", "test_start", "test_end"])
         return windows_df, regimes_df
     return None, None
+
+
+@st.cache_data
+def load_sensitivity():
+    if SENS_RESULTS_PATH.exists():
+        return pd.read_csv(SENS_RESULTS_PATH)
+    return None
 
 
 df = load_data()
@@ -70,13 +80,14 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
     "Validation",
     "Backtest",
     "History",
+    "Sensitivity",
 ])
 
 with tab1:
@@ -357,3 +368,90 @@ with tab6:
             st.line_chart(history.set_index("timestamp")[available_history_cols])
     else:
         st.warning("No run history found yet.")
+
+with tab7:
+    st.header("Parameter Sensitivity")
+
+    sens_df = load_sensitivity()
+
+    if sens_df is None:
+        st.warning("No sensitivity results found. Run `python app.py` to generate them.")
+    else:
+        # ── Plain-text report ────────────────────────────────────────────────
+        if SENS_REPORT_PATH.exists():
+            with st.expander("Sensitivity Report", expanded=True):
+                st.text(SENS_REPORT_PATH.read_text())
+
+        groups = {
+            "score_scale":        "Score Scale (±30% per sub-score)",
+            "composite_weights":  "Composite Blend Weights (±30%, renormalized)",
+            "backtester_weights": "Backtester Decision Weights (±30%)",
+        }
+
+        for group_key, group_label in groups.items():
+            sub = sens_df[sens_df["group"] == group_key]
+            if sub.empty:
+                continue
+
+            st.subheader(group_label)
+
+            # ── Summary table: metric range per parameter ────────────────────
+            metric_cols = [c for c in ["sharpe", "total_return", "max_drawdown",
+                                       "hit_rate", "fwd_mean_return", "fwd_hit_rate"]
+                           if c in sub.columns]
+
+            rows = []
+            for param, pdata in sub.groupby("param"):
+                row = {"param": param}
+                for m in metric_cols:
+                    vals = pdata[m].dropna()
+                    if len(vals):
+                        row[f"{m}_min"]   = vals.min()
+                        row[f"{m}_max"]   = vals.max()
+                        row[f"{m}_range"] = vals.max() - vals.min()
+                        mean = vals.mean()
+                        row[f"{m}_cv"] = (
+                            round(float(vals.std() / abs(mean)), 4)
+                            if abs(mean) > 1e-9 else 0.0
+                        )
+                rows.append(row)
+
+            summary = pd.DataFrame(rows).set_index("param")
+
+            # highlight CV columns — high CV = unstable
+            cv_cols = [c for c in summary.columns if c.endswith("_cv")]
+            range_cols = [c for c in summary.columns if c.endswith("_range")]
+
+            if cv_cols:
+                fmt = {c: "{:.3f}" for c in summary.select_dtypes("number").columns}
+                st.dataframe(
+                    summary[cv_cols + range_cols].style
+                        .format("{:.4f}")
+                        .background_gradient(subset=cv_cols, cmap="YlOrRd", axis=None),
+                    use_container_width=True,
+                )
+
+            # ── Sharpe line chart across perturbation values ─────────────────
+            primary_metric = "fwd_mean_return" if group_key == "composite_weights" else "sharpe"
+            if primary_metric in sub.columns:
+                chart_data = sub.pivot_table(
+                    index="param_value", columns="param",
+                    values=primary_metric, aggfunc="mean",
+                )
+                st.caption(f"{primary_metric} vs perturbation value")
+                st.line_chart(chart_data, use_container_width=True)
+
+            # ── Heatmap images ───────────────────────────────────────────────
+            heatmap_metrics = {
+                "score_scale":        ["sharpe", "total_return"],
+                "composite_weights":  ["fwd_mean_return", "fwd_hit_rate"],
+                "backtester_weights": ["sharpe", "total_return"],
+            }
+            shown = False
+            for metric in heatmap_metrics.get(group_key, []):
+                img_path = SENS_HEATMAP_DIR / f"{group_key}_{metric}.png"
+                if img_path.exists():
+                    if not shown:
+                        st.caption("Heatmaps (rows = perturbation value, columns = parameter)")
+                        shown = True
+                    st.image(str(img_path), use_container_width=True)
