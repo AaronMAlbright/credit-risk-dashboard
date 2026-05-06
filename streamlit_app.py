@@ -2,6 +2,8 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
+from src.regime_transition import run_regime_analysis
+
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
     page_icon="📉",
@@ -17,6 +19,7 @@ WF_REGIMES_PATH = Path("outputs/validation/walk_forward_regimes.csv")
 SENS_RESULTS_PATH = Path("outputs/sensitivity/sensitivity_results.csv")
 SENS_REPORT_PATH  = Path("outputs/sensitivity/sensitivity_report.txt")
 SENS_HEATMAP_DIR  = Path("outputs/sensitivity/heatmaps")
+REGIME_TRANS_DIR  = Path("outputs/regime_transition")
 
 
 @st.cache_data
@@ -47,6 +50,12 @@ def load_sensitivity():
     if SENS_RESULTS_PATH.exists():
         return pd.read_csv(SENS_RESULTS_PATH)
     return None
+
+
+@st.cache_data
+def load_regime_transition(_df):
+    """Run (or reload) regime transition analysis from the scored dataset."""
+    return run_regime_analysis(_df)
 
 
 df = load_data()
@@ -80,7 +89,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -88,6 +97,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Backtest",
     "History",
     "Sensitivity",
+    "Regime Transitions",
 ])
 
 with tab1:
@@ -455,3 +465,76 @@ with tab7:
                         st.caption("Heatmaps (rows = perturbation value, columns = parameter)")
                         shown = True
                     st.image(str(img_path), use_container_width=True)
+
+with tab8:
+    st.header("Regime Transition Analysis")
+
+    regime_results = load_regime_transition(df)
+
+    VIEW_OPTIONS = {
+        "Final Decision": "final_decision",
+        "Transition Regime": "transition_regime",
+    }
+    view_label = st.radio("View regime", list(VIEW_OPTIONS.keys()), horizontal=True)
+    view_col = VIEW_OPTIONS[view_label]
+
+    if view_col not in regime_results:
+        st.warning(f"No results found for '{view_col}'.")
+    else:
+        res = regime_results[view_col]
+
+        # ── Transition probability heatmap ───────────────────────────────────
+        st.subheader("Transition Probability Heatmap")
+        heatmap_path = REGIME_TRANS_DIR / f"{view_col}_heatmap.png"
+        if heatmap_path.exists():
+            st.image(str(heatmap_path), use_container_width=True)
+        else:
+            st.caption("Heatmap not yet saved to disk — showing table instead.")
+            probs = res["transition_probs"]
+            st.dataframe(probs.style.background_gradient(cmap="YlOrRd", axis=1).format("{:.1%}"))
+
+        # ── Transition counts ─────────────────────────────────────────────────
+        with st.expander("Raw transition counts"):
+            st.dataframe(res["transition_counts"])
+
+        # ── Regime persistence ────────────────────────────────────────────────
+        st.subheader("Regime Persistence (trading days)")
+        durations = res["durations"].copy()
+        st.dataframe(
+            durations.style
+            .background_gradient(cmap="Blues", subset=["mean_days", "max_days"])
+            .format("{:.1f}")
+        )
+
+        # ── Forward returns by regime ─────────────────────────────────────────
+        st.subheader("Mean Forward Returns by Regime")
+        fwd = res["forward_returns"].copy()
+        rename_map = {
+            "sp500_forward_30d_return": "SP500 30D Fwd",
+            "sp500_forward_60d_return": "SP500 60D Fwd",
+            "strategy_forward_30d_return": "Strategy 30D Fwd",
+            "sp500_future_drawdown_30d": "Max Drawdown 30D",
+        }
+        fwd = fwd.rename(columns={k: v for k, v in rename_map.items() if k in fwd.columns})
+
+        pct_cols = [c for c in fwd.columns if c != "Max Drawdown 30D"]
+        dd_cols = ["Max Drawdown 30D"] if "Max Drawdown 30D" in fwd.columns else []
+
+        styled = fwd.style
+        if pct_cols:
+            styled = styled.background_gradient(cmap="RdYlGn", subset=pct_cols)
+        if dd_cols:
+            styled = styled.background_gradient(cmap="RdYlGn_r", subset=dd_cols)
+        styled = styled.format("{:.2%}")
+        st.dataframe(styled)
+
+        # ── Transition entry returns ──────────────────────────────────────────
+        st.subheader("Entry-Point Returns on Regime Change")
+        st.caption("Average forward returns measured on the first day of each new regime.")
+        trans = res["transition_returns"].copy()
+        trans = trans.rename(columns={k: v for k, v in rename_map.items() if k in trans.columns})
+        st.dataframe(
+            trans.style
+            .background_gradient(cmap="RdYlGn", subset=[c for c in trans.columns if "Drawdown" not in c])
+            .format("{:.2%}")
+        )
