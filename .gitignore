@@ -1,2 +1,27 @@
-# Project exclude paths
-/venv/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Generated outputs (rebuild with python app.py)
+outputs/
+
+# Environment / secrets
+.env
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Pytest
+.pytest_cache/
