@@ -77,6 +77,7 @@ from src.crisis_similarity import compute_crisis_similarity
 
 from src.backtester import (
     assign_strategy_return,
+    build_strategy_backtest,
     compute_backtest_summary,
 )
 
@@ -87,7 +88,9 @@ from src.utils import (
     hit_rate,
     worst_5pct,
 )
+
 from src.run_logger import log_model_run
+from src.composite_engine import build_composite_risk
 
 import matplotlib.pyplot as plt
 
@@ -193,7 +196,6 @@ df["sp500_peak"] = df["sp500"].cummax()
 df["sp500_drawdown"] = df["sp500"] / df["sp500_peak"] - 1
 
 df = compute_treasury_features(df)
-
 df = df.dropna()
 
 
@@ -383,6 +385,7 @@ df["complacency_score_smooth"] = df["complacency_score"].rolling(10).mean()
 df["mean_reversion_score_smooth"] = df["mean_reversion_score"].rolling(10).mean()
 
 df = df.dropna()
+df = build_composite_risk(df)
 
 
 # =====================
@@ -459,7 +462,7 @@ df["crisis_analogs"] = df.apply(compute_crisis_similarity, axis=1)
 
 
 # =====================
-# 11. Validation Metrics
+# 11. Validation Metrics / Backtest
 # =====================
 df["sp500_forward_30d_return"] = df["sp500"].shift(-30) / df["sp500"] - 1
 df["sp500_forward_60d_return"] = df["sp500"].shift(-60) / df["sp500"] - 1
@@ -474,6 +477,7 @@ df["sp500_future_drawdown_30d"] = df["sp500_future_min_30d"] / df["sp500"] - 1
 df["sp500_future_drawdown_60d"] = df["sp500_future_min_60d"] / df["sp500"] - 1
 
 df["strategy_forward_30d_return"] = df.apply(assign_strategy_return, axis=1)
+df = build_strategy_backtest(df)
 backtest_summary = compute_backtest_summary(df)
 
 macro_threshold_75 = df["macro_risk_score_smooth"].quantile(0.75)
@@ -558,6 +562,7 @@ print(f"Real Yield 90D Change: {latest['real_yield_change_90d']:.2f}")
 print(f"Treasury Stress Score: {latest['treasury_stress_score_smooth']:.1f} ({latest['treasury_stress_label']})")
 
 print("\n=== SIGNAL SNAPSHOT ===")
+print(f"Composite Risk Score: {latest['composite_risk_score_smooth']:.1f} ({latest['composite_risk_label']})")
 print(f"Macro Risk Score: {latest['macro_risk_score_smooth']:.1f} ({latest['macro_risk_label']})")
 print(f"Credit Market Risk Score: {latest['credit_market_risk_score_smooth']:.1f} ({latest['credit_market_risk_label']})")
 print(f"Liquidity Regime Score: {latest['liquidity_regime_score_smooth']:.1f} ({latest['liquidity_regime_label']})")
@@ -633,12 +638,12 @@ print("Hit Rate 30D SP500 | High Complacency:", f"{hit_rate(df.loc[high_complace
 print("Worst 5% 30D SP500 Return | High Complacency:", f"{worst_5pct(df.loc[high_complacency, 'sp500_forward_30d_return']):.2%}")
 
 print("\n=== SIMPLE STRATEGY BACKTEST ===")
-print(f"Avg Strategy 30D Return: {backtest_summary['avg_strategy_30d_return']:.2%}")
-print(f"Avg SP500 30D Return: {backtest_summary['avg_sp500_30d_return']:.2%}")
-print(f"Strategy Hit Rate: {backtest_summary['strategy_hit_rate']:.2%}")
-print(f"SP500 Hit Rate: {backtest_summary['sp500_hit_rate']:.2%}")
-print(f"Strategy Worst 5%: {backtest_summary['strategy_worst_5pct']:.2%}")
-print(f"SP500 Worst 5%: {backtest_summary['sp500_worst_5pct']:.2%}")
+for key, value in backtest_summary.items():
+    if value == value:
+        if any(term in key for term in ["return", "rate", "worst", "drawdown", "volatility"]):
+            print(f"{key}: {value:.2%}")
+        else:
+            print(f"{key}: {value:.2f}")
 
 print("\n=== FINAL DECISION VALIDATION ===")
 print(decision_validation)
@@ -670,6 +675,8 @@ Cash Weight: {latest['cash_weight']:.0%}
 Duration Bias: {latest['duration_bias']}
 
 KEY SCORES
+Composite Risk Score: {latest['composite_risk_score_smooth']:.1f}
+Composite Regime: {latest['composite_risk_label']}
 Macro Risk Score: {latest['macro_risk_score_smooth']:.1f}
 Credit Market Risk Score: {latest['credit_market_risk_score_smooth']:.1f}
 Liquidity Regime Score: {latest['liquidity_regime_score_smooth']:.1f}
@@ -708,6 +715,7 @@ with open(f"{OUTPUT_REPORT_DIR}/latest_signal_report.txt", "w") as f:
 # =====================
 # 16. Plots
 # =====================
+
 plt.figure(figsize=(10, 5))
 plt.plot(df.index, df["macro_risk_score_smooth"], label="Macro Risk")
 plt.plot(df.index, df["credit_market_risk_score_smooth"], label="Credit Risk")
@@ -718,18 +726,24 @@ plt.axhline(70)
 plt.ylim(0, 100)
 plt.legend()
 plt.title("Macro Risk vs Credit Risk vs Complacency vs Mean-Reversion")
+plt.savefig(f"{OUTPUT_CHART_DIR}/macro_credit_complacency.png", dpi=150, bbox_inches="tight")
 plt.show()
+plt.close()
 
 plt.figure(figsize=(10, 5))
 plt.plot(df.index, df["hy_spread"])
 plt.title("High-Yield Credit Spread")
+plt.savefig(f"{OUTPUT_CHART_DIR}/hy_credit_spread.png", dpi=150, bbox_inches="tight")
 plt.show()
+plt.close()
 
 plt.figure(figsize=(10, 5))
 plt.plot(df.index, df["credit_impulse"])
 plt.axhline(0)
 plt.title("Credit Impulse: 30D HY Change Minus Prior 30D Change")
+plt.savefig(f"{OUTPUT_CHART_DIR}/credit_impulse.png", dpi=150, bbox_inches="tight")
 plt.show()
+plt.close()
 
 plt.figure(figsize=(10, 5))
 plt.plot(df.index, df["treasury_stress_score_smooth"], label="Treasury Stress")
@@ -740,7 +754,9 @@ plt.axhline(70)
 plt.ylim(0, 100)
 plt.legend()
 plt.title("Treasury Stress vs Credit Risk vs Macro Risk")
+plt.savefig(f"{OUTPUT_CHART_DIR}/treasury_credit_macro.png", dpi=150, bbox_inches="tight")
 plt.show()
+plt.close()
 
 plt.figure(figsize=(10, 5))
 plt.plot(df.index, df["cross_asset_divergence_score_smooth"], label="Cross-Asset Divergence")
@@ -750,13 +766,17 @@ plt.axhline(70)
 plt.ylim(0, 100)
 plt.legend()
 plt.title("Cross-Asset Divergence vs Liquidity Regime")
+plt.savefig(f"{OUTPUT_CHART_DIR}/cross_asset_liquidity.png", dpi=150, bbox_inches="tight")
 plt.show()
+plt.close()
 
 plt.figure(figsize=(10, 5))
 plt.plot(df.index, df["sp500_drawdown"] * 100)
 plt.axhline(0)
 plt.title("SP500 Drawdown (%)")
+plt.savefig(f"{OUTPUT_CHART_DIR}/sp500_drawdown.png", dpi=150, bbox_inches="tight")
 plt.show()
+plt.close()
 
 plt.figure(figsize=(10, 5))
 plt.plot(df.index, df["risk_appetite_score_smooth"], label="Risk Appetite")
@@ -765,4 +785,46 @@ plt.axhline(70)
 plt.ylim(0, 100)
 plt.legend()
 plt.title("Risk Appetite vs Complacency")
+plt.savefig(f"{OUTPUT_CHART_DIR}/risk_appetite_vs_complacency.png", dpi=150, bbox_inches="tight")
 plt.show()
+plt.close()
+
+plt.figure(figsize=(10, 5))
+plt.plot(df.index, df["composite_risk_score_smooth"], label="Composite Risk")
+plt.axhline(25)
+plt.axhline(50)
+plt.axhline(70)
+plt.ylim(0, 100)
+plt.legend()
+plt.title("Composite Macro Credit Risk Score")
+plt.savefig(f"{OUTPUT_CHART_DIR}/composite_risk_score.png", dpi=150, bbox_inches="tight")
+plt.show()
+plt.close()
+
+regime_map = {
+    "Risk-On": 1,
+    "Neutral": 2,
+    "Caution": 3,
+    "Defensive / High Risk": 4,
+}
+
+df["composite_regime_numeric"] = df["composite_risk_label"].map(regime_map)
+
+plt.figure(figsize=(10, 5))
+plt.step(df.index, df["composite_regime_numeric"], where="post", label="Composite Regime")
+plt.yticks([1, 2, 3, 4], ["Risk-On", "Neutral", "Caution", "Defensive"])
+plt.ylim(0.5, 4.5)
+plt.legend()
+plt.title("Composite Risk Regime Timeline")
+plt.savefig(f"{OUTPUT_CHART_DIR}/composite_regime_timeline.png", dpi=150, bbox_inches="tight")
+plt.show()
+plt.close()
+
+plt.figure(figsize=(10, 5))
+plt.plot(df.index, df["strategy_equity_curve"], label="Regime Strategy")
+plt.plot(df.index, df["sp500_equity_curve"], label="SP500 Buy & Hold")
+plt.legend()
+plt.title("Backtest: Regime Strategy vs SP500")
+plt.savefig(f"{OUTPUT_CHART_DIR}/backtest_equity_curve.png", dpi=150, bbox_inches="tight")
+plt.show()
+plt.close()

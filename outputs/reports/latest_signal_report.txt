@@ -1,7 +1,7 @@
 
 MACRO CREDIT SIGNAL REPORT
 
-Current Date: 2026-05-04 00:00:00
+Current Date: 2026-05-05 00:00:00
 
 FINAL DECISION
 Decision: Hold / Do Not Chase
@@ -17,14 +17,16 @@ Cash Weight: 35%
 Duration Bias: Neutral
 
 KEY SCORES
-Macro Risk Score: 5.0
-Credit Market Risk Score: 5.5
-Liquidity Regime Score: 0.3
+Composite Risk Score: 25.9
+Composite Regime: Neutral
+Macro Risk Score: 5.3
+Credit Market Risk Score: 4.0
+Liquidity Regime Score: 0.2
 Treasury Stress Score: 0.0
 Cross-Asset Divergence Score: 0.0
-Market Internals Score: 67.6
-Risk Appetite Score: 89.9
-Complacency Score: 80.3
+Market Internals Score: 71.3
+Risk Appetite Score: 87.2
+Complacency Score: 82.7
 Mean-Reversion Score: 0.0
 
 MARKET STATE
@@ -41,13 +43,14 @@ TOP ATTRIBUTIONS
 - Elevated complacency: +20
 - HY spread tightness: +18
 - High risk appetite: +16
+- Low VIX: +15
 - HY spread compression: +14
 - VIX compression: +12
 - SP500 near highs: +12
 
 HISTORICAL ANALOGS
-- Late-Cycle Melt-Up: 75.2% similarity
-- Benign Risk-On: 62.7% similarity
+- Late-Cycle Melt-Up: 75.9% similarity
+- Benign Risk-On: 60.3% similarity
 - COVID Crash: 0% similarity
 
 MODEL CONFIDENCE
