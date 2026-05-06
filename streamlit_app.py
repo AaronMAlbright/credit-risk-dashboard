@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
+from src.bootstrap import run_bootstrap_analysis
 from src.regime_transition import run_regime_analysis
 
 st.set_page_config(
@@ -56,6 +57,12 @@ def load_sensitivity():
 def load_regime_transition(_df):
     """Run (or reload) regime transition analysis from the scored dataset."""
     return run_regime_analysis(_df)
+
+
+@st.cache_data
+def load_bootstrap(_df, _windows_df):
+    """Run bootstrap CI analysis (cached against df hash)."""
+    return run_bootstrap_analysis(_df, windows_df=_windows_df, n_boot=1000)
 
 
 df = load_data()
@@ -269,6 +276,92 @@ with tab4:
 
     available = [c for c in corr_cols if c in df.columns]
     st.dataframe(df[available].corr(), use_container_width=True)
+
+    # ── Bootstrap Confidence Intervals ───────────────────────────────────────
+    with st.expander("Bootstrap Confidence Intervals (95%)", expanded=False):
+        st.caption(
+            "Percentile bootstrap with 1,000 resamples. "
+            "⚠️ = flagged: fewer than 30 obs for regime metrics, "
+            "fewer than 5 transitions for probability cells, "
+            "fewer than 10 windows for walk-forward metrics."
+        )
+
+        boot = load_bootstrap(df, wf_windows)
+
+        def _flag(val):
+            return "⚠️" if val else ""
+
+        def _fmt_ci_row(mean, lo, hi, pct=True):
+            if pd.isna(lo):
+                return f"{mean:.2%}" if pct else f"{mean:.3f}", "—", "—"
+            if pct:
+                return f"{mean:.2%}", f"{lo:.2%}", f"{hi:.2%}"
+            return f"{mean:.3f}", f"{lo:.3f}", f"{hi:.3f}"
+
+        # Walk-forward window CIs
+        wm = boot.get("window_metrics", pd.DataFrame())
+        if not wm.empty:
+            st.markdown("**Walk-Forward Window Metrics**")
+            pct_metrics = {"strategy_total_return", "sp500_total_return",
+                           "strategy_max_drawdown", "sp500_max_drawdown", "strategy_hit_rate"}
+            rows = []
+            for metric, row in wm.iterrows():
+                pct = metric in pct_metrics
+                m, lo, hi = _fmt_ci_row(row["mean"], row.get("ci_lower"), row.get("ci_upper"), pct)
+                rows.append({
+                    "Metric": metric,
+                    "Mean": m,
+                    "CI Lower": lo,
+                    "CI Upper": hi,
+                    "N Windows": int(row["n_windows"]),
+                    "": _flag(row["flagged"]),
+                })
+            st.dataframe(pd.DataFrame(rows).set_index("Metric"), use_container_width=True)
+
+        # Regime forward returns CIs
+        rr = boot.get("regime_returns", pd.DataFrame())
+        if not rr.empty:
+            st.markdown("**Mean 30D Forward Return by Regime**")
+            rows = []
+            for regime, row in rr.iterrows():
+                m, lo, hi = _fmt_ci_row(row["mean"], row.get("ci_lower"), row.get("ci_upper"), pct=True)
+                rows.append({
+                    "Regime": regime, "Mean": m,
+                    "CI Lower": lo, "CI Upper": hi,
+                    "N Obs": int(row["n_obs"]),
+                    "": _flag(row["flagged"]),
+                })
+            st.dataframe(pd.DataFrame(rows).set_index("Regime"), use_container_width=True)
+
+        # Hit rate CIs
+        hr = boot.get("regime_hit_rates", pd.DataFrame())
+        if not hr.empty:
+            st.markdown("**Hit Rate (% Positive 30D Returns) by Regime**")
+            rows = []
+            for regime, row in hr.iterrows():
+                m, lo, hi = _fmt_ci_row(row["hit_rate"], row.get("ci_lower"), row.get("ci_upper"), pct=True)
+                rows.append({
+                    "Regime": regime, "Hit Rate": m,
+                    "CI Lower": lo, "CI Upper": hi,
+                    "N Obs": int(row["n_obs"]),
+                    "": _flag(row["flagged"]),
+                })
+            st.dataframe(pd.DataFrame(rows).set_index("Regime"), use_container_width=True)
+
+        # Transition probability CIs
+        tp = boot.get("transition_probs_final_decision", pd.DataFrame())
+        if not tp.empty:
+            st.markdown("**Transition Probability CIs (Final Decision)**")
+            rows = []
+            for (frm, to), row in tp.iterrows():
+                m, lo, hi = _fmt_ci_row(row["mean_prob"], row.get("ci_lower"), row.get("ci_upper"), pct=True)
+                rows.append({
+                    "From": frm, "To": to, "Prob": m,
+                    "CI Lower": lo, "CI Upper": hi,
+                    "N Transitions": int(row["n_obs"]),
+                    "": _flag(row["flagged"]),
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with tab5:
     st.header("Backtest")
