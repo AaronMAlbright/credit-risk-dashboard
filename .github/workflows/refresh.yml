@@ -1,0 +1,60 @@
+name: Daily Refresh
+
+on:
+  schedule:
+    # 12:00 UTC = 8:00 AM ET (7:00 AM CT) — after FRED morning update
+    - cron: "0 12 * * 1-5"
+  workflow_dispatch:  # allow manual trigger from GitHub Actions UI
+
+permissions:
+  contents: write  # needed to commit updated CSV + alert state
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch FRED data and re-score
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python app.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/scored_macro_credit_data.csv history/model_run_history.csv
+          git diff --cached --quiet || git commit -m "chore: daily data refresh $(date -u +%Y-%m-%d)"
+
+      - name: Run alert checks
+        env:
+          FRED_API_KEY:        ${{ secrets.FRED_API_KEY }}
+          ALERT_SMTP_HOST:     ${{ secrets.ALERT_SMTP_HOST }}
+          ALERT_SMTP_PORT:     ${{ secrets.ALERT_SMTP_PORT }}
+          ALERT_SMTP_USER:     ${{ secrets.ALERT_SMTP_USER }}
+          ALERT_SMTP_PASSWORD: ${{ secrets.ALERT_SMTP_PASSWORD }}
+          ALERT_FROM_ADDR:     ${{ secrets.ALERT_FROM_ADDR }}
+          ALERT_TO_ADDRS:      ${{ secrets.ALERT_TO_ADDRS }}
+        run: python scripts/send_alerts.py --min-level INFO
+
+      - name: Commit alert state
+        run: |
+          git add history/alert_state.json
+          git diff --cached --quiet || git commit -m "chore: update alert state $(date -u +%Y-%m-%d)"
+
+      - name: Push changes
+        run: git push origin main

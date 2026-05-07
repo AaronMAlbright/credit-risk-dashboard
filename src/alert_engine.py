@@ -83,7 +83,7 @@ DEFAULT_STATE: dict = {
     "shock_flag":  "No Shock",
 }
 
-_DEFAULT_STATE_PATH = Path("outputs/alert_state.json")
+_DEFAULT_STATE_PATH = Path("history/alert_state.json")
 
 
 # ---------------------------------------------------------------------------

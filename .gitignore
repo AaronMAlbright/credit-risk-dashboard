@@ -15,6 +15,7 @@ outputs/
 # Environment / secrets
 .env
 *.log
+.streamlit/secrets.toml
 
 # macOS
 .DS_Store

@@ -1,6 +1,13 @@
+import os
 import pandas as pd
 import streamlit as st
 from pathlib import Path
+
+# Inject Streamlit Cloud secrets into os.environ so all downstream
+# os.environ.get() calls (fred_loader, alert_engine, etc.) just work.
+for _k, _v in st.secrets.items():
+    if isinstance(_v, str):
+        os.environ.setdefault(_k, _v)
 
 from src.report_generator import generate_html_report, generate_excel_report
 from src.data_pipeline import check_api_key, run_pipeline, fetch_source_dates
@@ -284,7 +291,7 @@ with st.sidebar.expander("Source freshness"):
 st.sidebar.divider()
 
 # ── Sidebar: Alert engine ─────────────────────────────────────────────────────
-_ALERT_STATE_PATH = Path("outputs/alert_state.json")
+_ALERT_STATE_PATH = Path("history/alert_state.json")
 _prev_alert_state = load_alert_state(_ALERT_STATE_PATH)
 
 st.sidebar.subheader("Alerts")
