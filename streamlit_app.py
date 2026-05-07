@@ -23,6 +23,7 @@ from src.stress_episodes import STRESS_EPISODES, run_stress_analysis
 from src.performance_scorecard import run_performance_scorecard
 from src.factor_exposure import run_factor_analysis
 from src.regime_probability import run_regime_probability
+from src.monte_carlo import run_monte_carlo
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -143,6 +144,14 @@ def load_factor_analysis(_df):
 def load_regime_probability(_df):
     """Run regime probability nowcast (cached)."""
     return run_regime_probability(_df)
+
+
+@st.cache_data
+def load_monte_carlo(_df, _current_probs_key: str):
+    """Run Monte Carlo simulation (cached; key encodes the start-probs hash)."""
+    rp = run_regime_probability(_df)
+    cur_probs = rp.get("current", {}).get("probs") or {}
+    return run_monte_carlo(_df, current_probs=cur_probs or None)
 
 
 @st.cache_data
@@ -410,7 +419,7 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -428,6 +437,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Performance",
     "Factor Exposure",
     "Regime Probability",
+    "Monte Carlo",
 ])
 
 with tab1:
@@ -2477,3 +2487,186 @@ with tab17:
                 _rows17.append(_row)
             st.dataframe(pd.DataFrame(_rows17).set_index("Regime"),
                          use_container_width=True)
+
+with tab18:
+    st.header("Monte Carlo Forward Simulation")
+    st.caption(
+        "1 000 Markov-chain paths seeded from current regime probabilities. "
+        "Regime transitions follow the empirical day-over-day transition matrix "
+        "(Laplace-smoothed). Composite scores drawn from per-regime Gaussian distributions."
+    )
+
+    import plotly.graph_objects as _go18
+    import plotly.graph_objs as _pgo18
+
+    # Build a cache key from the top regime + its probability (changes when model updates)
+    _rp18   = load_regime_probability(df)
+    _cur18  = _rp18.get("current", {})
+    _ck18   = f"{_cur18.get('top_regime','')}:{_cur18.get('top_prob', 0):.4f}"
+    _mc18   = load_monte_carlo(df, _ck18)
+
+    if not _mc18:
+        st.warning("Monte Carlo simulation unavailable — check input data.")
+    else:
+        _sim18   = _mc18["simulation"]
+        _reg18   = _mc18["regimes"]
+        _H_list  = _mc18["horizons"]
+        _last_s  = _mc18["last_actual"]
+        _last_d  = pd.Timestamp(_mc18["last_date"])
+
+        # ── Fan chart ────────────────────────────────────────────────────────
+        st.subheader("Composite Score — Fan Chart")
+        _h_sel = st.radio("Horizon", _H_list,
+                          format_func=lambda h: f"{h}d (~{h//21}mo)",
+                          horizontal=True, key="mc_horizon")
+
+        _pct18  = _sim18["percentiles"][_h_sel]
+        _fwd_dates = pd.bdate_range(_last_d + pd.Timedelta(days=1),
+                                    periods=_h_sel)
+
+        _hist_n = min(90, len(df))
+        _hist_d = df["date"].iloc[-_hist_n:]
+        _hist_s = df["composite_risk_score_smooth"].iloc[-_hist_n:]
+
+        _fan = _go18.Figure()
+
+        # Shaded risk bands
+        _fan.add_hrect(y0=70, y1=100, fillcolor="rgba(214,39,40,0.06)",
+                       line_width=0, annotation_text="Elevated",
+                       annotation_position="top left")
+        _fan.add_hrect(y0=50, y1=70, fillcolor="rgba(255,127,14,0.06)",
+                       line_width=0, annotation_text="Caution",
+                       annotation_position="top left")
+
+        # P5–P95 outer band
+        _fan.add_trace(_go18.Scatter(
+            x=list(_fwd_dates) + list(_fwd_dates[::-1]),
+            y=list(_pct18["p95"]) + list(_pct18["p5"][::-1]),
+            fill="toself",
+            fillcolor="rgba(31,119,180,0.10)",
+            line=dict(width=0),
+            name="P5–P95",
+            hoverinfo="skip",
+        ))
+        # P25–P75 inner band
+        _fan.add_trace(_go18.Scatter(
+            x=list(_fwd_dates) + list(_fwd_dates[::-1]),
+            y=list(_pct18["p75"]) + list(_pct18["p25"][::-1]),
+            fill="toself",
+            fillcolor="rgba(31,119,180,0.20)",
+            line=dict(width=0),
+            name="P25–P75",
+            hoverinfo="skip",
+        ))
+        # Median path
+        _fan.add_trace(_go18.Scatter(
+            x=_fwd_dates,
+            y=_pct18["p50"],
+            mode="lines",
+            line=dict(color="#1f77b4", width=2),
+            name="Median",
+        ))
+        # Historical actual
+        _fan.add_trace(_go18.Scatter(
+            x=_hist_d,
+            y=_hist_s,
+            mode="lines",
+            line=dict(color="#333", width=1.5),
+            name="Actual (last 90d)",
+        ))
+        # Connector dot at last actual
+        _fan.add_trace(_go18.Scatter(
+            x=[_last_d],
+            y=[_last_s],
+            mode="markers",
+            marker=dict(color="#333", size=6),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+        # Vertical separator
+        _fan.add_vline(x=_last_d, line_dash="dot", line_color="#bbb", line_width=1)
+
+        _fan.update_layout(
+            height=380,
+            yaxis=dict(range=[0, 100], title="Composite Score", showgrid=True,
+                       gridcolor="#eee"),
+            xaxis=dict(showgrid=False, title=None),
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
+            margin=dict(l=50, r=20, t=50, b=40),
+            plot_bgcolor="white",
+            hovermode="x unified",
+        )
+        st.plotly_chart(_fan, use_container_width=True)
+
+        # ── Summary stats ────────────────────────────────────────────────────
+        st.subheader(f"Summary at {_h_sel}-Day Horizon")
+        _s18 = _sim18["summary"][_h_sel]
+        _sc1, _sc2, _sc3, _sc4, _sc5 = st.columns(5)
+        _sc1.metric("Median Score",   f"{_s18['median']:.1f}")
+        _sc2.metric("P5 (bear)",      f"{_s18['p5']:.1f}")
+        _sc3.metric("P95 (bull-risk)",f"{_s18['p95']:.1f}")
+        _sc4.metric("P(score > 50)",  f"{_s18['prob_above_50']:.1%}")
+        _sc5.metric("P(score > 70)",  f"{_s18['prob_above_70']:.1%}",
+                    help="Probability that composite score enters the elevated band")
+
+        st.divider()
+
+        # ── Regime distribution at horizon ──────────────────────────────────
+        st.subheader(f"Regime Distribution at {_h_sel} Days")
+        _rpa18 = _sim18["regime_probs_at"][_h_sel]
+        _rpa_sorted = sorted(_rpa18.items(), key=lambda kv: kv[1], reverse=True)
+
+        _COLORS18 = {
+            "Avoid Chasing Risk":           "#d62728",
+            "Buy Stress":                   "#2ca02c",
+            "Watch Entry":                  "#ff7f0e",
+            "Wait":                         "#1f77b4",
+            "Neutral":                      "#7f7f7f",
+            "Hold / Do Not Chase":          "#9467bd",
+            "Hold":                         "#9467bd",
+            "Divergence Warning":           "#e377c2",
+            "Credit Warning":               "#8c564b",
+            "Stress / Stabilization Watch": "#bcbd22",
+        }
+        _rpa_labs   = [r for r, _ in _rpa_sorted]
+        _rpa_vals   = [p for _, p in _rpa_sorted]
+        _rpa_colors = [_COLORS18.get(r, "#aaa") for r in _rpa_labs]
+
+        _fig_rpa = _go18.Figure(_go18.Bar(
+            y=_rpa_labs,
+            x=_rpa_vals,
+            orientation="h",
+            marker_color=_rpa_colors,
+            text=[f"{v:.1%}" for v in _rpa_vals],
+            textposition="outside",
+        ))
+        _fig_rpa.update_layout(
+            height=max(220, len(_rpa_labs) * 38),
+            xaxis=dict(range=[0, 1], tickformat=".0%", title="Probability"),
+            yaxis=dict(autorange="reversed"),
+            margin=dict(l=180, r=60, t=10, b=30),
+            plot_bgcolor="white",
+        )
+        _fig_rpa.update_xaxes(showgrid=True, gridcolor="#eee")
+        st.plotly_chart(_fig_rpa, use_container_width=True)
+
+        # ── Cross-horizon summary table ──────────────────────────────────────
+        with st.expander("Cross-horizon summary"):
+            _rows_xh = []
+            for _H in _H_list:
+                _sx = _sim18["summary"][_H]
+                _top_r = max(_sim18["regime_probs_at"][_H].items(),
+                             key=lambda kv: kv[1])
+                _rows_xh.append({
+                    "Horizon": f"{_H}d (~{_H // 21}mo)",
+                    "Median": f"{_sx['median']:.1f}",
+                    "P5":     f"{_sx['p5']:.1f}",
+                    "P95":    f"{_sx['p95']:.1f}",
+                    "P(>50)": f"{_sx['prob_above_50']:.1%}",
+                    "P(>70)": f"{_sx['prob_above_70']:.1%}",
+                    "Top regime": f"{_top_r[0]} ({_top_r[1]:.1%})",
+                })
+            st.dataframe(
+                pd.DataFrame(_rows_xh).set_index("Horizon"),
+                use_container_width=True,
+            )
