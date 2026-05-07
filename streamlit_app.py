@@ -796,28 +796,205 @@ with tab1:
         st.caption("6 sheets: Summary, Scores, Sizing, Scenarios, Attribution, Monte Carlo.")
 
 with tab2:
-    st.header("Charts")
+    import plotly.graph_objects as _go
+    from plotly.subplots import make_subplots as _make_subplots
 
-    chart_files = [
-        "macro_credit_complacency.png",
-        "composite_risk_score.png",
-        "composite_regime_timeline.png",
-        "backtest_equity_curve.png",
-        "hy_credit_spread.png",
-        "credit_impulse.png",
-        "treasury_credit_macro.png",
-        "cross_asset_liquidity.png",
-        "sp500_drawdown.png",
-        "risk_appetite_vs_complacency.png",
+    # ── Shared dark layout helper ─────────────────────────────────────────────
+    def _dlayout(**kw):
+        base = dict(
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="system-ui, sans-serif", color="#9aa0aa", size=11),
+            margin=dict(l=8, r=8, t=40, b=8),
+            xaxis=dict(showgrid=False, color="#6b7280", linecolor="#1e2435",
+                       tickcolor="#1e2435"),
+            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                       color="#6b7280", linecolor="#1e2435", tickcolor="#1e2435"),
+            legend=dict(orientation="h", y=1.08, x=0,
+                        bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                            font=dict(color="#e2e8f0")),
+        )
+        base.update(kw)
+        return base
+
+    _df2 = df.copy()
+    _df2["date"] = pd.to_datetime(_df2["date"])
+
+    # ── 1. Composite Risk Score ───────────────────────────────────────────────
+    st.subheader("Composite Risk Score")
+    _fig1 = _go.Figure()
+    _fig1.add_hrect(y0=70, y1=100, fillcolor="rgba(231,76,60,0.10)", line_width=0,
+                    annotation_text="Elevated Risk", annotation_position="top left",
+                    annotation_font=dict(color="rgba(231,76,60,0.7)", size=10))
+    _fig1.add_hrect(y0=50, y1=70, fillcolor="rgba(230,126,34,0.08)", line_width=0,
+                    annotation_text="Caution", annotation_position="top left",
+                    annotation_font=dict(color="rgba(230,126,34,0.7)", size=10))
+    _fig1.add_trace(_go.Scatter(
+        x=_df2["date"], y=_df2["composite_risk_score_smooth"],
+        mode="lines", name="Composite (smooth)",
+        line=dict(color="#4f8ef7", width=2.5),
+        fill="tozeroy", fillcolor="rgba(79,142,247,0.08)",
+    ))
+    _fig1.add_trace(_go.Scatter(
+        x=_df2["date"], y=_df2["composite_risk_score"],
+        mode="lines", name="Composite (raw)",
+        line=dict(color="#4f8ef7", width=1, dash="dot"),
+        opacity=0.4,
+    ))
+    _fig1.update_layout(**_dlayout(height=280,
+        yaxis=dict(range=[0, 100], showgrid=True,
+                   gridcolor="rgba(255,255,255,0.06)",
+                   color="#6b7280", title=None)))
+    st.plotly_chart(_fig1, use_container_width=True)
+
+    # ── 2. Component Scores ───────────────────────────────────────────────────
+    st.subheader("Component Scores")
+    _components = [
+        ("macro_risk_score_smooth",            "Macro Risk",      "#e74c3c"),
+        ("credit_market_risk_score_smooth",    "Credit Risk",     "#e67e22"),
+        ("complacency_score_smooth",           "Complacency",     "#f1c40f"),
+        ("risk_appetite_score_smooth",         "Risk Appetite",   "#27ae60"),
+        ("mean_reversion_score_smooth",        "Mean Reversion",  "#9b59b6"),
+        ("treasury_stress_score_smooth",       "Treasury Stress", "#1abc9c"),
+        ("liquidity_regime_score_smooth",      "Liquidity",       "#3498db"),
     ]
+    _fig2 = _go.Figure()
+    for _col, _name, _color in _components:
+        if _col in _df2.columns:
+            _fig2.add_trace(_go.Scatter(
+                x=_df2["date"], y=_df2[_col],
+                mode="lines", name=_name,
+                line=dict(color=_color, width=1.8),
+            ))
+    _fig2.update_layout(**_dlayout(height=300,
+        yaxis=dict(range=[0, 100], showgrid=True,
+                   gridcolor="rgba(255,255,255,0.06)",
+                   color="#6b7280", title=None)))
+    st.plotly_chart(_fig2, use_container_width=True)
 
-    for chart in chart_files:
-        path = CHART_DIR / chart
-        if path.exists():
-            st.subheader(chart.replace("_", " ").replace(".png", "").title())
-            st.image(str(path), use_container_width=True)
-        else:
-            st.warning(f"Missing chart: {chart}")
+    # ── 3+4. HY Spread & VIX  |  SP500 & Drawdown ────────────────────────────
+    _c3, _c4 = st.columns(2)
+
+    with _c3:
+        st.subheader("HY Spread & VIX")
+        _fig3 = _make_subplots(specs=[[{"secondary_y": True}]])
+        _fig3.add_trace(_go.Scatter(
+            x=_df2["date"], y=_df2["hy_spread"],
+            name="HY Spread", line=dict(color="#e74c3c", width=2),
+        ), secondary_y=False)
+        _fig3.add_trace(_go.Scatter(
+            x=_df2["date"], y=_df2["vix"],
+            name="VIX", line=dict(color="#e67e22", width=1.8, dash="dot"),
+        ), secondary_y=True)
+        _fig3.update_layout(**_dlayout(height=280,
+            legend=dict(orientation="h", y=1.1, x=0,
+                        bgcolor="rgba(0,0,0,0)")))
+        _fig3.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", linecolor="#1e2435",
+                           title_text="HY Spread %", secondary_y=False)
+        _fig3.update_yaxes(showgrid=False, color="#6b7280",
+                           title_text="VIX", secondary_y=True)
+        _fig3.update_xaxes(showgrid=False, color="#6b7280", linecolor="#1e2435")
+        st.plotly_chart(_fig3, use_container_width=True)
+
+    with _c4:
+        st.subheader("SP500 & Drawdown")
+        _fig4 = _make_subplots(specs=[[{"secondary_y": True}]])
+        _fig4.add_trace(_go.Scatter(
+            x=_df2["date"], y=_df2["sp500"],
+            name="SP500", line=dict(color="#27ae60", width=2),
+            fill="tozeroy", fillcolor="rgba(39,174,96,0.06)",
+        ), secondary_y=False)
+        _fig4.add_trace(_go.Scatter(
+            x=_df2["date"], y=_df2["sp500_drawdown"] * 100,
+            name="Drawdown %", line=dict(color="#e74c3c", width=1.5),
+            fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+        ), secondary_y=True)
+        _fig4.update_layout(**_dlayout(height=280,
+            legend=dict(orientation="h", y=1.1, x=0,
+                        bgcolor="rgba(0,0,0,0)")))
+        _fig4.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", linecolor="#1e2435",
+                           title_text="SP500", secondary_y=False)
+        _fig4.update_yaxes(showgrid=False, color="#e74c3c",
+                           title_text="Drawdown %", secondary_y=True)
+        _fig4.update_xaxes(showgrid=False, color="#6b7280", linecolor="#1e2435")
+        st.plotly_chart(_fig4, use_container_width=True)
+
+    # ── 5+6. Credit Impulse  |  Risk Appetite vs Complacency ─────────────────
+    _c5, _c6 = st.columns(2)
+
+    with _c5:
+        st.subheader("Credit Impulse")
+        _ci = _df2["credit_impulse"].fillna(0)
+        _fig5 = _go.Figure()
+        _fig5.add_trace(_go.Bar(
+            x=_df2["date"], y=_ci,
+            marker_color=[
+                "#27ae60" if v < 0 else "#e74c3c" for v in _ci
+            ],
+            name="Credit Impulse",
+            marker_line_width=0,
+        ))
+        _fig5.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+        _fig5.update_layout(**_dlayout(height=280, showlegend=False))
+        st.plotly_chart(_fig5, use_container_width=True)
+
+    with _c6:
+        st.subheader("Risk Appetite vs Complacency")
+        _fig6 = _go.Figure()
+        _fig6.add_trace(_go.Scatter(
+            x=_df2["date"], y=_df2["risk_appetite_score_smooth"],
+            name="Risk Appetite", line=dict(color="#27ae60", width=2),
+        ))
+        _fig6.add_trace(_go.Scatter(
+            x=_df2["date"], y=_df2["complacency_score_smooth"],
+            name="Complacency", line=dict(color="#f1c40f", width=2),
+            fill="tonexty", fillcolor="rgba(241,196,15,0.05)",
+        ))
+        _fig6.update_layout(**_dlayout(height=280,
+            yaxis=dict(range=[0, 100], showgrid=True,
+                       gridcolor="rgba(255,255,255,0.06)",
+                       color="#6b7280", title=None)))
+        st.plotly_chart(_fig6, use_container_width=True)
+
+    # ── 7. Treasury Stress & Macro vs Credit ─────────────────────────────────
+    st.subheader("Treasury Stress, Macro Risk & Credit Risk")
+    _fig7 = _go.Figure()
+    for _col, _name, _color, _dash in [
+        ("treasury_stress_score_smooth", "Treasury Stress", "#1abc9c", "solid"),
+        ("macro_risk_score_smooth",      "Macro Risk",      "#e74c3c", "dot"),
+        ("credit_market_risk_score_smooth", "Credit Risk",  "#e67e22", "dash"),
+    ]:
+        _fig7.add_trace(_go.Scatter(
+            x=_df2["date"], y=_df2[_col],
+            name=_name, line=dict(color=_color, width=2, dash=_dash),
+        ))
+    _fig7.update_layout(**_dlayout(height=260,
+        yaxis=dict(range=[0, 100], showgrid=True,
+                   gridcolor="rgba(255,255,255,0.06)",
+                   color="#6b7280", title=None)))
+    st.plotly_chart(_fig7, use_container_width=True)
+
+    # ── 8. Strategy vs SP500 Equity Curve ────────────────────────────────────
+    if "strategy_equity_curve" in _df2.columns:
+        st.subheader("Strategy vs SP500 — Cumulative Return")
+        _fig8 = _go.Figure()
+        _fig8.add_trace(_go.Scatter(
+            x=_df2["date"], y=(_df2["strategy_equity_curve"] - 1) * 100,
+            name="Strategy", line=dict(color="#4f8ef7", width=2.5),
+            fill="tozeroy", fillcolor="rgba(79,142,247,0.07)",
+        ))
+        _fig8.add_trace(_go.Scatter(
+            x=_df2["date"], y=(_df2["sp500_equity_curve"] - 1) * 100,
+            name="SP500", line=dict(color="#6b7280", width=1.8, dash="dot"),
+        ))
+        _fig8.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+        _fig8.update_layout(**_dlayout(height=280,
+            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                       color="#6b7280", title="Return %")))
+        st.plotly_chart(_fig8, use_container_width=True)
 
 with tab3:
     st.header("Portfolio Stance")
