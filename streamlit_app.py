@@ -22,6 +22,7 @@ from src.tail_risk import run_tail_risk_analysis
 from src.stress_episodes import STRESS_EPISODES, run_stress_analysis
 from src.performance_scorecard import run_performance_scorecard
 from src.factor_exposure import run_factor_analysis
+from src.regime_probability import run_regime_probability
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -136,6 +137,12 @@ def load_performance_scorecard(_df):
 def load_factor_analysis(_df):
     """Run factor exposure analysis (cached)."""
     return run_factor_analysis(_df)
+
+
+@st.cache_data
+def load_regime_probability(_df):
+    """Run regime probability nowcast (cached)."""
+    return run_regime_probability(_df)
 
 
 @st.cache_data
@@ -272,6 +279,44 @@ mc5.metric("Max Drawdown",    f"{_max_dd:.1%}" if not pd.isna(_max_dd) else "—
 mc6.metric("Hit Rate",        f"{_hit_rt:.1%}" if not pd.isna(_hit_rt) else "—",
            help="% of trading days with positive strategy return")
 
+# Regime probability strip
+_rp_ov = load_regime_probability(df)
+_cur_ov = _rp_ov.get("current", {})
+if _cur_ov:
+    _top3 = sorted(_cur_ov["probs"].items(), key=lambda kv: kv[1], reverse=True)[:3]
+    _BADGE_COLORS = {
+        "Avoid Chasing Risk":          "#d62728",
+        "Buy Stress":                  "#2ca02c",
+        "Watch Entry":                 "#ff7f0e",
+        "Wait":                        "#1f77b4",
+        "Neutral":                     "#7f7f7f",
+        "Hold / Do Not Chase":         "#9467bd",
+        "Hold":                        "#9467bd",
+        "Divergence Warning":          "#e377c2",
+        "Credit Warning":              "#8c564b",
+        "Stress / Stabilization Watch":"#bcbd22",
+    }
+    _ent = _cur_ov.get("entropy", 0.0)
+    _max_ent = max(1.0, _ent)
+    st.markdown("**Regime probability distribution** (Gaussian Naive Bayes · in-sample)")
+    _prob_cols = st.columns(len(_top3) + 1)
+    for _ci, (_rname, _rprob) in enumerate(_top3):
+        _col_hex = _BADGE_COLORS.get(_rname, "#555")
+        _prob_cols[_ci].markdown(
+            f'<div style="border-left:4px solid {_col_hex};padding:4px 10px">'
+            f'<div style="font-size:0.8em;color:#666">{_rname}</div>'
+            f'<div style="font-size:1.3em;font-weight:600">{_rprob:.1%}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    _prob_cols[-1].markdown(
+        f'<div style="padding:4px 10px">'
+        f'<div style="font-size:0.8em;color:#666">Entropy (uncertainty)</div>'
+        f'<div style="font-size:1.3em;font-weight:600">{_ent:.2f} bits</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
 st.divider()
 
 # Two-column overview body
@@ -365,7 +410,7 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -382,6 +427,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Stress Episodes",
     "Performance",
     "Factor Exposure",
+    "Regime Probability",
 ])
 
 with tab1:
@@ -2273,3 +2319,161 @@ with tab16:
             margin=dict(l=50, r=20, t=50, b=40),
         )
         st.plotly_chart(_decomp_fig, use_container_width=True)
+
+with tab17:
+    st.header("Regime Probability Nowcast")
+    st.caption(
+        "Gaussian Naive Bayes posterior over regime labels, fitted in-sample "
+        "on all 7 component scores. P(regime | scores) ∝ P(scores | regime) × P(regime)."
+    )
+
+    _rp17 = load_regime_probability(df)
+    _cur17 = _rp17.get("current", {})
+    _hist17 = _rp17.get("history", pd.DataFrame())
+    _mdl17  = _rp17.get("model", {})
+
+    if not _cur17:
+        st.warning("Could not fit regime probability model — check data.")
+    else:
+        import plotly.graph_objects as _go17
+
+        # ── Current distribution ─────────────────────────────────────────────
+        st.subheader("Current Regime Probabilities")
+        _probs_sorted = sorted(_cur17["probs"].items(), key=lambda kv: kv[1], reverse=True)
+        _COLORS17 = {
+            "Avoid Chasing Risk":           "#d62728",
+            "Buy Stress":                   "#2ca02c",
+            "Watch Entry":                  "#ff7f0e",
+            "Wait":                         "#1f77b4",
+            "Neutral":                      "#7f7f7f",
+            "Hold / Do Not Chase":          "#9467bd",
+            "Hold":                         "#9467bd",
+            "Divergence Warning":           "#e377c2",
+            "Credit Warning":               "#8c564b",
+            "Stress / Stabilization Watch": "#bcbd22",
+        }
+        _bar_labels = [r for r, _ in _probs_sorted]
+        _bar_vals   = [p for _, p in _probs_sorted]
+        _bar_colors = [_COLORS17.get(r, "#aaa") for r in _bar_labels]
+
+        _fig_bar = _go17.Figure(_go17.Bar(
+            y=_bar_labels,
+            x=_bar_vals,
+            orientation="h",
+            marker_color=_bar_colors,
+            text=[f"{v:.1%}" for v in _bar_vals],
+            textposition="outside",
+        ))
+        _fig_bar.update_layout(
+            height=max(250, len(_bar_labels) * 40),
+            xaxis=dict(range=[0, 1], tickformat=".0%", title="Probability"),
+            yaxis=dict(autorange="reversed"),
+            margin=dict(l=180, r=60, t=20, b=40),
+            plot_bgcolor="white",
+        )
+        _fig_bar.update_xaxes(showgrid=True, gridcolor="#eee")
+        st.plotly_chart(_fig_bar, use_container_width=True)
+
+        _p17c1, _p17c2, _p17c3 = st.columns(3)
+        _p17c1.metric("Top Regime",    _cur17["top_regime"])
+        _p17c2.metric("Confidence",    f"{_cur17['top_prob']:.1%}")
+        _p17c3.metric("Entropy",       f"{_cur17['entropy']:.2f} bits",
+                      help="0 bits = certain; log₂(N regimes) = maximum uncertainty")
+
+        if "second" in _cur17:
+            st.caption(
+                f"Second: **{_cur17['second']}** at {_cur17['second_prob']:.1%}  ·  "
+                f"Model covers {len(_mdl17)} regimes "
+                f"(min {min(v['n_obs'] for v in _mdl17.values())} obs each)"
+            )
+
+        st.divider()
+
+        # ── Probability history ──────────────────────────────────────────────
+        if not _hist17.empty:
+            st.subheader("Regime Probability Over Time")
+            _regime_cols17 = [c for c in _hist17.columns
+                              if c not in ("top_regime", "entropy")]
+            _sorted_regimes = sorted(
+                _regime_cols17,
+                key=lambda r: _cur17["probs"].get(r, 0),
+                reverse=True,
+            )
+
+            _fig_stack = _go17.Figure()
+            for _r17 in reversed(_sorted_regimes):
+                _fig_stack.add_trace(_go17.Scatter(
+                    x=_hist17.index,
+                    y=_hist17[_r17],
+                    name=_r17,
+                    stackgroup="one",
+                    mode="none",
+                    fillcolor=_COLORS17.get(_r17, "#ccc"),
+                    line=dict(width=0),
+                ))
+            _fig_stack.update_layout(
+                height=320,
+                yaxis=dict(tickformat=".0%", range=[0, 1], title="Probability"),
+                xaxis=dict(title=None, showgrid=False),
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0,
+                            traceorder="reversed"),
+                margin=dict(l=50, r=20, t=50, b=40),
+                plot_bgcolor="white",
+                hovermode="x unified",
+            )
+            st.plotly_chart(_fig_stack, use_container_width=True)
+
+            # ── Entropy trend ────────────────────────────────────────────────
+            st.subheader("Model Uncertainty Over Time (Shannon Entropy)")
+            _fig_ent = _go17.Figure(_go17.Scatter(
+                x=_hist17.index,
+                y=_hist17["entropy"],
+                mode="lines",
+                line=dict(color="#7f7f7f", width=1.5),
+                fill="tozeroy",
+                fillcolor="rgba(127,127,127,0.08)",
+            ))
+            _max_ent17 = round(float(pd.Series([1]).apply(
+                lambda _: __import__("math").log2(len(_sorted_regimes))
+            ).iloc[0]), 2)
+            _fig_ent.add_hline(
+                y=_max_ent17, line_dash="dot", line_color="#bbb",
+                annotation_text=f"Max entropy ({_max_ent17:.2f} bits)",
+                annotation_position="bottom right",
+            )
+            _fig_ent.update_layout(
+                height=200,
+                yaxis=dict(title="bits", range=[0, _max_ent17 * 1.1]),
+                xaxis=dict(title=None, showgrid=False),
+                margin=dict(l=50, r=20, t=20, b=40),
+                plot_bgcolor="white",
+                showlegend=False,
+            )
+            st.plotly_chart(_fig_ent, use_container_width=True)
+            st.caption(
+                "Low entropy = model is confident in a single regime. "
+                "High entropy = scores consistent with multiple regimes simultaneously."
+            )
+
+        # ── Model parameters ────────────────────────────────────────────────
+        with st.expander("Model parameters (regime centroids)"):
+            _feat_labels = {
+                "macro_risk_score_smooth":          "Macro Risk",
+                "credit_market_risk_score_smooth":  "Credit Risk",
+                "liquidity_regime_score_smooth":    "Liquidity",
+                "complacency_score_smooth":         "Complacency",
+                "mean_reversion_score_smooth":      "Mean Reversion",
+                "risk_appetite_score_smooth":       "Risk Appetite",
+                "treasury_stress_score_smooth":     "Treasury Stress",
+            }
+            _rows17 = []
+            for _r17, _p17 in sorted(_mdl17.items(),
+                                     key=lambda kv: kv[1]["prior"], reverse=True):
+                _row = {"Regime": _r17, "Prior": f"{_p17['prior']:.1%}",
+                        "N": _p17["n_obs"]}
+                for _fi, _fn in enumerate(_p17["features"]):
+                    _lbl = _feat_labels.get(_fn, _fn)
+                    _row[_lbl] = f"{_p17['means'][_fi]:.1f} ± {_p17['stds'][_fi]:.1f}"
+                _rows17.append(_row)
+            st.dataframe(pd.DataFrame(_rows17).set_index("Regime"),
+                         use_container_width=True)
