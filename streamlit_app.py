@@ -12,6 +12,10 @@ from src.regime_charts import (
 from src.regime_transition import run_regime_analysis
 from src.signal_decay import HORIZONS, run_signal_decay
 from src.score_orthogonality import run_orthogonality_analysis, VIF_HIGH, VIF_MODERATE
+from src.weight_optimizer import (
+    CURRENT_WEIGHTS,
+    run_weight_optimization,
+)
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -84,6 +88,12 @@ def load_bootstrap(_df, _windows_df):
 def load_attribution(_df):
     """Run regime attribution analysis (cached against df hash)."""
     return run_regime_attribution(_df)
+
+
+@st.cache_data
+def load_weight_optimization(_df):
+    """Run weight optimisation (2000 Monte Carlo samples, cached)."""
+    return run_weight_optimization(_df, n_samples=2000)
 
 
 @st.cache_data
@@ -599,6 +609,128 @@ with tab6:
 with tab7:
     st.header("Parameter Sensitivity")
 
+    # ── Live weight optimisation ──────────────────────────────────────────────
+    st.subheader("Composite Weight Optimisation")
+    st.caption(
+        "2,000 weight vectors sampled from the 6-score simplex (Dirichlet uniform). "
+        "Strategy return = equity_weight × SP500 daily return, "
+        "where equity_weight = 1 − composite/100. "
+        "In-sample Sharpe only — treat as directional, not predictive."
+    )
+
+    _wopt = load_weight_optimization(df)
+    _grid = _wopt["grid_results"]
+    _tornado = _wopt["tornado"]
+    _curr_s = _wopt["current_sharpe"]
+    _opt_w = _wopt["optimal_weights"]
+    _opt_s = _wopt["optimal_sharpe"]
+
+    if not _grid.empty:
+        # Headline metrics
+        wc1, wc2, wc3 = st.columns(3)
+        wc1.metric("Current Weights Sharpe", f"{_curr_s:.2f}" if pd.notna(_curr_s) else "—")
+        wc2.metric(
+            "Best Found Sharpe",
+            f"{_opt_s:.2f}" if pd.notna(_opt_s) else "—",
+            delta=f"{_opt_s - _curr_s:+.2f}" if pd.notna(_opt_s) and pd.notna(_curr_s) else None,
+        )
+        pct_better = (_grid["sharpe"] > _curr_s).mean() if pd.notna(_curr_s) else np.nan
+        wc3.metric(
+            "Samples Beating Current Weights",
+            f"{pct_better:.0%}" if pd.notna(pct_better) else "—",
+        )
+
+        # Current vs optimal weights bar chart
+        st.markdown("**Current vs Best-Found Weights**")
+        _score_display = {
+            "macro_risk": "Macro Risk", "credit_risk": "Credit Risk",
+            "complacency": "Complacency", "liquidity": "Liquidity",
+            "treasury": "Treasury", "mean_reversion": "Mean Reversion",
+        }
+        _w_compare = pd.DataFrame({
+            "Current": {_score_display.get(k, k): v for k, v in CURRENT_WEIGHTS.items()},
+            "Optimal": {_score_display.get(k, k): v for k, v in _opt_w.items()},
+        })
+        st.bar_chart(_w_compare, use_container_width=True)
+
+        # Sharpe distribution with current marked
+        st.markdown("**Sharpe Distribution Across 2,000 Weight Combinations**")
+        import plotly.graph_objects as _wgo
+        _sharpe_vals = _grid["sharpe"].dropna()
+        fig_dist = _wgo.Figure()
+        fig_dist.add_trace(_wgo.Histogram(
+            x=_sharpe_vals, nbinsx=60,
+            marker_color="#3498db", opacity=0.75, name="Sampled Sharpes",
+        ))
+        if pd.notna(_curr_s):
+            fig_dist.add_vline(
+                x=_curr_s, line=dict(color="#e74c3c", width=2, dash="dash"),
+                annotation_text=f"Current ({_curr_s:.2f})",
+                annotation_position="top right",
+            )
+        fig_dist.update_layout(
+            xaxis_title="Annualised Sharpe", yaxis_title="Count",
+            height=320, showlegend=False,
+            plot_bgcolor="white", paper_bgcolor="white",
+            margin=dict(l=20, r=20, t=30, b=20),
+        )
+        fig_dist.update_xaxes(showgrid=True, gridcolor="#eeeeee")
+        fig_dist.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+        st.plotly_chart(fig_dist, use_container_width=True)
+
+        # Tornado chart
+        if not _tornado.empty:
+            st.markdown(f"**Tornado: Sharpe Sensitivity to ±5% Weight Shift (current weights)**")
+            st.caption("Positive delta = increasing that weight improves Sharpe.")
+            fig_torn = _wgo.Figure()
+            _torn_display = _tornado.copy()
+            _torn_display.index = [_score_display.get(i, i) for i in _torn_display.index]
+            fig_torn.add_trace(_wgo.Bar(
+                y=_torn_display.index.tolist(),
+                x=_torn_display["delta_up"],
+                name="+5%", orientation="h",
+                marker_color="#27ae60", opacity=0.8,
+            ))
+            fig_torn.add_trace(_wgo.Bar(
+                y=_torn_display.index.tolist(),
+                x=_torn_display["delta_down"],
+                name="−5%", orientation="h",
+                marker_color="#e74c3c", opacity=0.8,
+            ))
+            fig_torn.add_vline(x=0, line=dict(color="#888888", width=1))
+            fig_torn.update_layout(
+                barmode="overlay",
+                xaxis_title="Δ Sharpe vs Current",
+                yaxis_title="",
+                height=max(280, len(_tornado) * 42 + 80),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=20, r=20, t=45, b=20),
+            )
+            fig_torn.update_xaxes(showgrid=True, gridcolor="#eeeeee")
+            st.plotly_chart(fig_torn, use_container_width=True)
+
+        # Top-10 weight combinations
+        with st.expander("Top 10 Weight Combinations", expanded=False):
+            _top10 = _grid.head(10).copy()
+            _top10.index = range(1, 11)
+            for k, label in _score_display.items():
+                if k in _top10.columns:
+                    _top10[label] = _top10[k].map(lambda v: f"{v:.3f}")
+                    _top10 = _top10.drop(columns=[k])
+            if "sharpe" in _top10.columns:
+                _top10["sharpe"] = _top10["sharpe"].map(lambda v: f"{v:.2f}")
+            if "corr_30d" in _top10.columns:
+                _top10["corr_30d"] = _top10["corr_30d"].map(
+                    lambda v: f"{v:.3f}" if pd.notna(v) else "—"
+                )
+            st.dataframe(_top10, use_container_width=True)
+    else:
+        st.warning("Insufficient data for weight optimisation (need ≥ 3 score columns and sp500_daily_return).")
+
+    st.divider()
+
+    # ── Legacy CSV-based sensitivity (if outputs exist) ───────────────────────
     sens_df = load_sensitivity()
 
     if sens_df is None:
