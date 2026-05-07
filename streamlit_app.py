@@ -11,6 +11,7 @@ from src.regime_charts import (
 )
 from src.regime_transition import run_regime_analysis
 from src.signal_decay import HORIZONS, run_signal_decay
+from src.score_orthogonality import run_orthogonality_analysis, VIF_HIGH, VIF_MODERATE
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -86,6 +87,12 @@ def load_attribution(_df):
 
 
 @st.cache_data
+def load_orthogonality(_df):
+    """Run score orthogonality analysis (cached)."""
+    return run_orthogonality_analysis(_df)
+
+
+@st.cache_data
 def load_signal_decay(_df):
     """Run signal decay analysis (cached)."""
     return run_signal_decay(_df)
@@ -128,7 +135,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -140,6 +147,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "Attribution",
     "Timeline",
     "Signal Decay",
+    "Orthogonality",
 ])
 
 with tab1:
@@ -1061,3 +1069,158 @@ with tab11:
             lambda v: f"{v:.3f}" if pd.notna(v) else "—"
         )
         st.dataframe(styled_corr, use_container_width=True)
+
+with tab12:
+    st.header("Score Orthogonality")
+    st.caption(
+        "Measures how independent the six composite sub-scores are from each other. "
+        "High multicollinearity reduces the regime engine's discriminating power "
+        "and makes composite weights unstable."
+    )
+
+    _orth = load_orthogonality(df)
+    _corr_m = _orth["correlation_matrix"]
+    _vif_df = _orth["vif"]
+    _pca    = _orth["pca"]
+    _roll   = _orth["rolling_correlations"]
+    _osumm  = _orth["summary"]
+
+    # ── Headline metrics ──────────────────────────────────────────────────────
+    oc1, oc2, oc3, oc4 = st.columns(4)
+    oc1.metric(
+        "Effective Rank",
+        f"{_osumm.get('effective_rank', '—'):.2f}" if pd.notna(_osumm.get('effective_rank')) else "—",
+        help="Shannon-entropy effective dimensionality. 1 = one dominant factor, 6 = fully diverse.",
+    )
+    oc2.metric(
+        "Components for 90% Variance",
+        str(_osumm.get("n_components_90pct", "—")),
+        help="Fewest PCA components needed to explain 90% of total score variance.",
+    )
+    oc3.metric(
+        "Max Pairwise Correlation",
+        f"{_osumm.get('max_pairwise_corr', '—'):.3f}" if pd.notna(_osumm.get('max_pairwise_corr')) else "—",
+        help="Highest absolute off-diagonal correlation in the score correlation matrix.",
+    )
+    oc4.metric(
+        "High-VIF Scores",
+        str(_osumm.get("n_high_vif", 0)),
+        help=f"Scores with VIF ≥ {VIF_HIGH:.0f} (severe multicollinearity).",
+    )
+
+    # ── Correlation matrix heatmap ────────────────────────────────────────────
+    st.subheader("Pairwise Score Correlations")
+    st.caption("Red = strong positive correlation (redundant). Blue = negative. Diagonal = 1.")
+    if not _corr_m.empty:
+        def _style_corr_cell(val):
+            if pd.isna(val) or val == 1.0:
+                return ""
+            intensity = min(int(abs(val) * 180), 180)
+            if val > 0:
+                return f"background-color: rgb({255}, {255 - intensity}, {255 - intensity})"
+            return f"background-color: rgb({255 - intensity}, {255 - intensity}, {255})"
+
+        styled_matrix = _corr_m.style.map(_style_corr_cell).format("{:.3f}")
+        st.dataframe(styled_matrix, use_container_width=True)
+    else:
+        st.info("Insufficient score columns for correlation matrix.")
+
+    # ── VIF table ─────────────────────────────────────────────────────────────
+    st.subheader("Variance Inflation Factors")
+    st.caption(
+        f"VIF < {VIF_MODERATE:.0f}: Low (acceptable) · "
+        f"{VIF_MODERATE:.0f}–{VIF_HIGH:.0f}: Moderate · "
+        f"> {VIF_HIGH:.0f}: High (multicollinearity concern)."
+    )
+    if not _vif_df.empty:
+        def _style_vif(row):
+            flag = row["flag"]
+            color = {"Low": "#d5f5e3", "Moderate": "#fef9e7", "High": "#fde8e8"}.get(flag, "")
+            return [f"background-color: {color}"] * len(row)
+
+        vif_disp = _vif_df.copy()
+        vif_disp["vif"] = vif_disp["vif"].map(lambda v: f"{v:.2f}" if pd.notna(v) else "—")
+        styled_vif = vif_disp.style.apply(_style_vif, axis=1)
+        st.dataframe(styled_vif, use_container_width=True)
+    else:
+        st.info("Insufficient scores for VIF computation (need ≥ 3).")
+
+    # ── PCA scree plot ────────────────────────────────────────────────────────
+    st.subheader("PCA Explained Variance (Scree Plot)")
+    st.caption(
+        "How much of total score variance is explained by each principal component. "
+        "A single dominant component signals that scores are not truly independent."
+    )
+    if _pca:
+        import plotly.graph_objects as _pgo
+        evr = _pca["explained_variance_ratio"]
+        cumvar = _pca["cumulative_variance"]
+        n_comp = list(range(1, len(evr) + 1))
+
+        fig_pca = _pgo.Figure()
+        fig_pca.add_trace(_pgo.Bar(
+            x=n_comp, y=[v * 100 for v in evr],
+            name="Individual",
+            marker_color="#3498db",
+            hovertemplate="PC%{x}: %{y:.1f}%<extra></extra>",
+        ))
+        fig_pca.add_trace(_pgo.Scatter(
+            x=n_comp, y=[v * 100 for v in cumvar],
+            name="Cumulative",
+            mode="lines+markers",
+            line=dict(color="#e74c3c", width=2),
+            marker=dict(size=6),
+            hovertemplate="Cumulative: %{y:.1f}%<extra></extra>",
+        ))
+        fig_pca.add_hline(
+            y=90, line=dict(color="#888888", width=1, dash="dash"),
+            opacity=0.6, annotation_text="90%", annotation_position="right",
+        )
+        fig_pca.update_layout(
+            xaxis_title="Principal Component",
+            yaxis_title="Explained Variance (%)",
+            xaxis=dict(tickvals=n_comp, ticktext=[f"PC{i}" for i in n_comp]),
+            height=360,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            plot_bgcolor="white", paper_bgcolor="white",
+            margin=dict(l=20, r=20, t=45, b=20),
+        )
+        fig_pca.update_xaxes(showgrid=True, gridcolor="#eeeeee")
+        fig_pca.update_yaxes(showgrid=True, gridcolor="#eeeeee", range=[0, 105])
+        st.plotly_chart(fig_pca, use_container_width=True)
+    else:
+        st.info("Insufficient data for PCA decomposition.")
+
+    # ── Rolling correlation for top pairs ─────────────────────────────────────
+    st.subheader("Rolling Correlations — Most Correlated Pairs")
+    st.caption("60-day rolling Pearson correlation. Persistent high values signal redundancy.")
+    if _roll:
+        import plotly.graph_objects as _rgo
+        _PAIR_COLORS = ["#e74c3c", "#e67e22", "#9b59b6"]
+        fig_roll = _rgo.Figure()
+        for (a, b), series in zip(_roll.keys(), _roll.values()):
+            color = _PAIR_COLORS[list(_roll.keys()).index((a, b)) % len(_PAIR_COLORS)]
+            fig_roll.add_trace(_rgo.Scatter(
+                x=series.index,
+                y=series.values,
+                name=f"{a} / {b}",
+                mode="lines",
+                line=dict(color=color, width=1.8),
+                hovertemplate=f"{a}/{b}: %{{y:.3f}}<br>%{{x|%Y-%m-%d}}<extra></extra>",
+            ))
+        fig_roll.add_hline(y=0.7, line=dict(color="#888888", width=1, dash="dot"),
+                           opacity=0.5, annotation_text="0.7 threshold", annotation_position="right")
+        fig_roll.add_hline(y=0, line=dict(color="#cccccc", width=1), opacity=0.5)
+        fig_roll.update_layout(
+            xaxis_title="Date", yaxis_title="Correlation",
+            yaxis=dict(range=[-1.05, 1.05]),
+            height=360, hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            plot_bgcolor="white", paper_bgcolor="white",
+            margin=dict(l=20, r=20, t=45, b=20),
+        )
+        fig_roll.update_xaxes(showgrid=True, gridcolor="#eeeeee")
+        fig_roll.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+        st.plotly_chart(fig_roll, use_container_width=True)
+    else:
+        st.info("Insufficient data for rolling correlations (need > 60 rows).")
