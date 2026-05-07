@@ -69,6 +69,112 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown("""
+<style>
+/* ── Hide Streamlit chrome ───────────────────────────────────────────── */
+#MainMenu, footer, header { visibility: hidden; }
+.stDeployButton { display: none; }
+
+/* ── Global typography ───────────────────────────────────────────────── */
+html, body, [class*="css"] { font-family: -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+
+/* ── Page title ──────────────────────────────────────────────────────── */
+h1 { font-size: 1.5rem !important; font-weight: 700 !important;
+     letter-spacing: -0.3px; margin-bottom: 0.25rem !important; }
+h2 { font-size: 1.15rem !important; font-weight: 600 !important;
+     color: #c8ccd4 !important; margin-top: 1.5rem !important; }
+h3 { font-size: 0.95rem !important; font-weight: 600 !important;
+     color: #9aa0aa !important; text-transform: uppercase;
+     letter-spacing: .6px; margin-top: 1.2rem !important; }
+
+/* ── Metric cards ────────────────────────────────────────────────────── */
+[data-testid="stMetric"] {
+    background: #151820;
+    border: 1px solid #232838;
+    border-radius: 8px;
+    padding: 14px 18px !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.72rem !important;
+    color: #6b7280 !important;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+}
+[data-testid="stMetricValue"] {
+    font-size: 1.4rem !important;
+    font-weight: 700 !important;
+    color: #e2e8f0 !important;
+}
+[data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
+
+/* ── Tabs ────────────────────────────────────────────────────────────── */
+[data-baseweb="tab-list"] {
+    gap: 2px;
+    background: #0e1117;
+    border-bottom: 1px solid #1e2435;
+}
+[data-baseweb="tab"] {
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    padding: 8px 14px !important;
+    color: #6b7280 !important;
+    border-radius: 6px 6px 0 0 !important;
+    background: transparent !important;
+}
+[aria-selected="true"] {
+    color: #e2e8f0 !important;
+    background: #151820 !important;
+    border-bottom: 2px solid #4f8ef7 !important;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: #0b0e16 !important;
+    border-right: 1px solid #1e2435;
+}
+[data-testid="stSidebar"] [data-testid="stMetric"] {
+    background: #0e1117;
+}
+
+/* ── Divider ─────────────────────────────────────────────────────────── */
+hr { border-color: #1e2435 !important; }
+
+/* ── Dataframe ───────────────────────────────────────────────────────── */
+[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+[data-testid="baseButton-secondary"] {
+    background: #151820 !important;
+    border: 1px solid #2d3550 !important;
+    color: #c8ccd4 !important;
+    border-radius: 6px !important;
+}
+[data-testid="baseButton-primary"] {
+    border-radius: 6px !important;
+}
+
+/* ── Download button ─────────────────────────────────────────────────── */
+[data-testid="baseButton-secondary"]:hover {
+    border-color: #4f8ef7 !important;
+    color: #e2e8f0 !important;
+}
+
+/* ── Caption / small text ────────────────────────────────────────────── */
+.stCaption, small { color: #4b5563 !important; font-size: 0.75rem !important; }
+
+/* ── Expander ────────────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid #1e2435 !important;
+    border-radius: 8px !important;
+    background: #0e1117 !important;
+}
+
+/* ── Top padding reduction ───────────────────────────────────────────── */
+.block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
+</style>
+""", unsafe_allow_html=True)
+
 DATA_PATH = Path("data/scored_macro_credit_data.csv")
 HISTORY_PATH = Path("history/model_run_history.csv")
 REPORT_PATH = Path("outputs/reports/latest_signal_report.txt")
@@ -440,16 +546,20 @@ if _cur_ov:
     for _ci, (_rname, _rprob) in enumerate(_top3):
         _col_hex = _BADGE_COLORS.get(_rname, "#555")
         _prob_cols[_ci].markdown(
-            f'<div style="border-left:4px solid {_col_hex};padding:4px 10px">'
-            f'<div style="font-size:0.8em;color:#666">{_rname}</div>'
-            f'<div style="font-size:1.3em;font-weight:600">{_rprob:.1%}</div>'
+            f'<div style="border-left:3px solid {_col_hex};padding:6px 12px;'
+            f'background:#151820;border-radius:0 6px 6px 0;margin-bottom:4px">'
+            f'<div style="font-size:0.68rem;color:#4b5563;text-transform:uppercase;'
+            f'letter-spacing:.4px">{_rname}</div>'
+            f'<div style="font-size:1.2rem;font-weight:700;color:#e2e8f0">{_rprob:.1%}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
     _prob_cols[-1].markdown(
-        f'<div style="padding:4px 10px">'
-        f'<div style="font-size:0.8em;color:#666">Entropy (uncertainty)</div>'
-        f'<div style="font-size:1.3em;font-weight:600">{_ent:.2f} bits</div>'
+        f'<div style="padding:6px 12px;background:#151820;border-radius:6px;'
+        f'border:1px solid #1e2435;margin-bottom:4px">'
+        f'<div style="font-size:0.68rem;color:#4b5563;text-transform:uppercase;'
+        f'letter-spacing:.4px">Uncertainty</div>'
+        f'<div style="font-size:1.2rem;font-weight:700;color:#9aa0aa">{_ent:.2f} bits</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -475,9 +585,9 @@ with _ov_l:
 
     def _ov_color(v):
         if pd.isna(v): return ""
-        if v >= 70: return "background-color:#fee0d2;color:#c0392b"
-        if v >= 50: return "background-color:#fff3cd;color:#856404"
-        return "background-color:#d4edda;color:#155724"
+        if v >= 70: return "background-color:rgba(231,76,60,0.2);color:#e74c3c"
+        if v >= 50: return "background-color:rgba(230,126,34,0.2);color:#e67e22"
+        return "background-color:rgba(39,174,96,0.15);color:#27ae60"
 
     st.dataframe(
         _sdf.style.map(_ov_color, subset=["Score"]).format({"Score": "{:.1f}"}),
@@ -494,23 +604,28 @@ with _ov_r:
         x=_recent90["date"],
         y=_recent90["composite_risk_score_smooth"],
         mode="lines",
-        line=dict(color="#1f77b4", width=2),
+        line=dict(color="#4f8ef7", width=2.5),
         fill="tozeroy",
-        fillcolor="rgba(31,119,180,0.08)",
+        fillcolor="rgba(79,142,247,0.12)",
         name="Composite",
     ))
-    _fig_ov.add_hrect(y0=70, y1=100, fillcolor="rgba(214,39,40,0.07)",  line_width=0,
-                      annotation_text="Elevated", annotation_position="top left")
-    _fig_ov.add_hrect(y0=50, y1=70,  fillcolor="rgba(255,127,14,0.07)", line_width=0,
-                      annotation_text="Caution",  annotation_position="top left")
+    _fig_ov.add_hrect(y0=70, y1=100, fillcolor="rgba(231,76,60,0.12)",  line_width=0,
+                      annotation_text="Elevated", annotation_position="top left",
+                      annotation_font_color="rgba(231,76,60,0.8)")
+    _fig_ov.add_hrect(y0=50, y1=70,  fillcolor="rgba(230,126,34,0.10)", line_width=0,
+                      annotation_text="Caution",  annotation_position="top left",
+                      annotation_font_color="rgba(230,126,34,0.8)")
     _fig_ov.update_layout(
-        title="Composite Score — Last 90 Trading Days",
+        title=dict(text="Composite Score — Last 90 Days", font=dict(size=12, color="#9aa0aa")),
         height=240,
         margin=dict(l=0, r=8, t=32, b=8),
-        xaxis=dict(showgrid=False, title=None),
-        yaxis=dict(range=[0, 100], showgrid=True, gridcolor="#eee", title=None),
+        xaxis=dict(showgrid=False, title=None, color="#6b7280"),
+        yaxis=dict(range=[0, 100], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                   title=None, color="#6b7280"),
         showlegend=False,
-        plot_bgcolor="white",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#9aa0aa"),
     )
     st.plotly_chart(_fig_ov, use_container_width=True)
 
@@ -520,18 +635,20 @@ with _ov_r:
         _fig_cum = _ov_go.Figure()
         _fig_cum.add_trace(_ov_go.Scatter(x=df["date"], y=_cum_s,
                                           name="Strategy",
-                                          line=dict(color="#1f77b4", width=1.5)))
+                                          line=dict(color="#4f8ef7", width=2)))
         _fig_cum.add_trace(_ov_go.Scatter(x=df["date"], y=_cum_m,
                                           name="SP500",
-                                          line=dict(color="#aaa", width=1.5, dash="dot")))
+                                          line=dict(color="#6b7280", width=1.5, dash="dot")))
         _fig_cum.update_layout(
-            title="Cumulative Return — Full Period",
+            title=dict(text="Cumulative Return — Full Period", font=dict(size=12, color="#9aa0aa")),
             height=200,
             margin=dict(l=0, r=8, t=32, b=0),
-            xaxis=dict(showgrid=False, title=None),
-            yaxis=dict(showgrid=True, gridcolor="#eee", title=None),
-            legend=dict(orientation="h", y=-0.25, x=0),
-            plot_bgcolor="white",
+            xaxis=dict(showgrid=False, title=None, color="#6b7280"),
+            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", title=None, color="#6b7280"),
+            legend=dict(orientation="h", y=-0.25, x=0, font=dict(color="#9aa0aa")),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
         )
         st.plotly_chart(_fig_cum, use_container_width=True)
 
@@ -574,27 +691,46 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
 with tab1:
     st.header("Current Signal Snapshot")
 
+    def _kv_card(label, value, color="#9aa0aa"):
+        return (
+            f'<div style="padding:10px 14px;border-radius:7px;background:#151820;'
+            f'border:1px solid #1e2435;margin-bottom:6px">'
+            f'<span style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.5px;'
+            f'color:#4b5563">{label}</span><br>'
+            f'<span style="font-size:0.92rem;font-weight:600;color:{color}">{value}</span>'
+            f'</div>'
+        )
+
     left, right = st.columns(2)
 
     with left:
         st.subheader("Market Snapshot")
-        st.write(f"**Spread:** {latest.get('spread', 0):.2f}")
-        st.write(f"**Yield Curve Regime:** {latest.get('yield_curve_regime', 'N/A')}")
-        st.write(f"**Unemployment:** {latest.get('unemployment', 0):.1f}")
-        st.write(f"**HY Spread:** {latest.get('hy_spread', 0):.2f}")
-        st.write(f"**VIX:** {latest.get('vix', 0):.2f}")
-        st.write(f"**SP500:** {latest.get('sp500', 0):.2f}")
+        _yield_curve = str(latest.get('yield_curve_regime', 'N/A'))
+        _yc_color = "#e74c3c" if "Invert" in _yield_curve else \
+                    "#e67e22" if "Flat" in _yield_curve else "#27ae60"
+        st.markdown(
+            _kv_card("HY Spread", f"{latest.get('hy_spread', 0):.2f}%") +
+            _kv_card("VIX", f"{latest.get('vix', 0):.1f}") +
+            _kv_card("Unemployment", f"{latest.get('unemployment', 0):.1f}%") +
+            _kv_card("SP500", f"{latest.get('sp500', 0):,.0f}") +
+            _kv_card("Yield Curve", _yield_curve, _yc_color) +
+            _kv_card("Shock Flag", str(latest.get('shock_flag', 'No Shock')),
+                     "#e74c3c" if latest.get('shock_flag', 'No Shock') != 'No Shock' else "#27ae60"),
+            unsafe_allow_html=True,
+        )
 
     with right:
         st.subheader("Signal Regime")
-        st.write(f"**Macro Label:** {latest.get('macro_risk_label', 'N/A')}")
-        st.write(f"**Credit Label:** {latest.get('credit_market_risk_label', 'N/A')}")
-        st.write(f"**Liquidity Label:** {latest.get('liquidity_regime_label', 'N/A')}")
-        st.write(f"**Complacency Label:** {latest.get('complacency_label', 'N/A')}")
-        st.write(f"**Mean-Reversion Label:** {latest.get('mean_reversion_label', 'N/A')}")
-        st.write(f"**Composite Regime:** {latest.get('composite_risk_label', 'N/A')}")
-        st.write(f"**Transition Regime:** {latest.get('transition_regime', 'N/A')}")
-        st.write(f"**Transition Signal:** {latest.get('transition_signal', 'N/A')}")
+        st.markdown(
+            _kv_card("Macro Label",       str(latest.get('macro_risk_label', 'N/A'))) +
+            _kv_card("Credit Label",      str(latest.get('credit_market_risk_label', 'N/A'))) +
+            _kv_card("Liquidity Label",   str(latest.get('liquidity_regime_label', 'N/A'))) +
+            _kv_card("Complacency Label", str(latest.get('complacency_label', 'N/A'))) +
+            _kv_card("Mean Reversion",    str(latest.get('mean_reversion_label', 'N/A'))) +
+            _kv_card("Transition Signal", str(latest.get('transition_signal', 'N/A'))) +
+            _kv_card("Composite Regime",  str(latest.get('composite_risk_label', 'N/A'))),
+            unsafe_allow_html=True,
+        )
 
     st.subheader("Latest Text Report")
     if REPORT_PATH.exists():
@@ -1214,11 +1350,11 @@ with tab7:
         fig_dist.update_layout(
             xaxis_title="Annualised Sharpe", yaxis_title="Count",
             height=320, showlegend=False,
-            plot_bgcolor="white", paper_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=20, r=20, t=30, b=20),
         )
-        fig_dist.update_xaxes(showgrid=True, gridcolor="#eeeeee")
-        fig_dist.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+        fig_dist.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
+        fig_dist.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
         st.plotly_chart(fig_dist, use_container_width=True)
 
         # Tornado chart
@@ -1247,10 +1383,10 @@ with tab7:
                 yaxis_title="",
                 height=max(280, len(_tornado) * 42 + 80),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                plot_bgcolor="white", paper_bgcolor="white",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                 margin=dict(l=20, r=20, t=45, b=20),
             )
-            fig_torn.update_xaxes(showgrid=True, gridcolor="#eeeeee")
+            fig_torn.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
             st.plotly_chart(fig_torn, use_container_width=True)
 
         # Top-10 weight combinations
@@ -1681,13 +1817,13 @@ with tab11:
             height=420,
             hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            plot_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="white",
             margin=dict(l=20, r=20, t=45, b=20),
         )
-        fig_decay.update_xaxes(showgrid=True, gridcolor="#eeeeee",
+        fig_decay.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)",
                                tickvals=HORIZONS, ticktext=[f"{h}d" for h in HORIZONS])
-        fig_decay.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+        fig_decay.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
         st.plotly_chart(fig_decay, use_container_width=True)
 
         # ── Hit rate decay table ──────────────────────────────────────────────
@@ -1857,11 +1993,11 @@ with tab12:
             xaxis=dict(tickvals=n_comp, ticktext=[f"PC{i}" for i in n_comp]),
             height=360,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            plot_bgcolor="white", paper_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=20, r=20, t=45, b=20),
         )
-        fig_pca.update_xaxes(showgrid=True, gridcolor="#eeeeee")
-        fig_pca.update_yaxes(showgrid=True, gridcolor="#eeeeee", range=[0, 105])
+        fig_pca.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
+        fig_pca.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)", range=[0, 105])
         st.plotly_chart(fig_pca, use_container_width=True)
     else:
         st.info("Insufficient data for PCA decomposition.")
@@ -1891,11 +2027,11 @@ with tab12:
             yaxis=dict(range=[-1.05, 1.05]),
             height=360, hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            plot_bgcolor="white", paper_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=20, r=20, t=45, b=20),
         )
-        fig_roll.update_xaxes(showgrid=True, gridcolor="#eeeeee")
-        fig_roll.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+        fig_roll.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
+        fig_roll.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
         st.plotly_chart(fig_roll, use_container_width=True)
     else:
         st.info("Insufficient data for rolling correlations (need > 60 rows).")
@@ -1959,11 +2095,11 @@ with tab13:
         yaxis_tickformat=".1%", height=360,
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        plot_bgcolor="white", paper_bgcolor="white",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=20, r=20, t=45, b=20),
     )
-    fig_rcvar.update_xaxes(showgrid=True, gridcolor="#eeeeee")
-    fig_rcvar.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+    fig_rcvar.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
+    fig_rcvar.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
     st.plotly_chart(fig_rcvar, use_container_width=True)
 
     # ── Per-regime tail stats ─────────────────────────────────────────────────
@@ -2620,9 +2756,9 @@ with tab17:
             xaxis=dict(range=[0, 1], tickformat=".0%", title="Probability"),
             yaxis=dict(autorange="reversed"),
             margin=dict(l=180, r=60, t=20, b=40),
-            plot_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)",
         )
-        _fig_bar.update_xaxes(showgrid=True, gridcolor="#eee")
+        _fig_bar.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
         st.plotly_chart(_fig_bar, use_container_width=True)
 
         _p17c1, _p17c2, _p17c3 = st.columns(3)
@@ -2669,7 +2805,7 @@ with tab17:
                 legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0,
                             traceorder="reversed"),
                 margin=dict(l=50, r=20, t=50, b=40),
-                plot_bgcolor="white",
+                plot_bgcolor="rgba(0,0,0,0)",
                 hovermode="x unified",
             )
             st.plotly_chart(_fig_stack, use_container_width=True)
@@ -2697,7 +2833,7 @@ with tab17:
                 yaxis=dict(title="bits", range=[0, _max_ent17 * 1.1]),
                 xaxis=dict(title=None, showgrid=False),
                 margin=dict(l=50, r=20, t=20, b=40),
-                plot_bgcolor="white",
+                plot_bgcolor="rgba(0,0,0,0)",
                 showlegend=False,
             )
             st.plotly_chart(_fig_ent, use_container_width=True)
@@ -2830,11 +2966,11 @@ with tab18:
         _fan.update_layout(
             height=380,
             yaxis=dict(range=[0, 100], title="Composite Score", showgrid=True,
-                       gridcolor="#eee"),
+                       gridcolor="rgba(255,255,255,0.08)"),
             xaxis=dict(showgrid=False, title=None),
             legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
             margin=dict(l=50, r=20, t=50, b=40),
-            plot_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)",
             hovermode="x unified",
         )
         st.plotly_chart(_fan, use_container_width=True)
@@ -2886,9 +3022,9 @@ with tab18:
             xaxis=dict(range=[0, 1], tickformat=".0%", title="Probability"),
             yaxis=dict(autorange="reversed"),
             margin=dict(l=180, r=60, t=10, b=30),
-            plot_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)",
         )
-        _fig_rpa.update_xaxes(showgrid=True, gridcolor="#eee")
+        _fig_rpa.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.08)")
         st.plotly_chart(_fig_rpa, use_container_width=True)
 
         # ── Cross-horizon summary table ──────────────────────────────────────
@@ -3013,11 +3149,11 @@ with tab19:
                               annotation_position="bottom right")
         _fig_sharpe.update_layout(
             barmode="group", height=280,
-            yaxis=dict(title="Sharpe Ratio", showgrid=True, gridcolor="#eee"),
+            yaxis=dict(title="Sharpe Ratio", showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
             xaxis=dict(title=None),
             legend=dict(orientation="h", y=1.1, x=0),
             margin=dict(l=50, r=20, t=40, b=40),
-            plot_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(_fig_sharpe, use_container_width=True)
 
@@ -3042,11 +3178,11 @@ with tab19:
                 ))
             _fig_roll.update_layout(
                 height=260,
-                yaxis=dict(title="Sharpe", showgrid=True, gridcolor="#eee"),
+                yaxis=dict(title="Sharpe", showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
                 xaxis=dict(showgrid=False, title=None),
                 legend=dict(orientation="h", y=1.1, x=0),
                 margin=dict(l=50, r=20, t=40, b=40),
-                plot_bgcolor="white",
+                plot_bgcolor="rgba(0,0,0,0)",
                 hovermode="x unified",
             )
             st.plotly_chart(_fig_roll, use_container_width=True)
@@ -3067,10 +3203,10 @@ with tab19:
             ))
             _fig_beta19.update_layout(
                 height=220,
-                yaxis=dict(title="Beta", showgrid=True, gridcolor="#eee"),
+                yaxis=dict(title="Beta", showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
                 xaxis=dict(showgrid=False, title=None),
                 margin=dict(l=50, r=20, t=20, b=40),
-                plot_bgcolor="white",
+                plot_bgcolor="rgba(0,0,0,0)",
                 showlegend=False,
             )
             st.plotly_chart(_fig_beta19, use_container_width=True)
@@ -3186,11 +3322,11 @@ with tab20:
         _fig_sz.update_layout(
             height=320,
             yaxis=dict(title="Position Weight", tickformat=".0%",
-                       range=[-0.05, 1.10], showgrid=True, gridcolor="#eee"),
+                       range=[-0.05, 1.10], showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
             xaxis=dict(showgrid=False, title=None),
             legend=dict(orientation="h", y=1.12, x=0),
             margin=dict(l=60, r=20, t=50, b=40),
-            plot_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)",
             hovermode="x unified",
         )
         st.plotly_chart(_fig_sz, use_container_width=True)
@@ -3226,11 +3362,11 @@ with tab20:
             _fig_bt.update_layout(
                 height=340,
                 yaxis=dict(title="Cumulative Return (rebased 1.0)",
-                           showgrid=True, gridcolor="#eee"),
+                           showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
                 xaxis=dict(showgrid=False, title=None),
                 legend=dict(orientation="h", y=1.12, x=0),
                 margin=dict(l=60, r=20, t=50, b=40),
-                plot_bgcolor="white",
+                plot_bgcolor="rgba(0,0,0,0)",
                 hovermode="x unified",
             )
             st.plotly_chart(_fig_bt, use_container_width=True)
@@ -3418,11 +3554,11 @@ with tab21:
     ))
     _fig_comp.update_layout(
         barmode="group", height=280,
-        yaxis=dict(title="Score (0–100)", range=[0, 105], showgrid=True, gridcolor="#eee"),
+        yaxis=dict(title="Score (0–100)", range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
         xaxis=dict(title=None),
         legend=dict(orientation="h", y=1.12, x=0),
         margin=dict(l=50, r=20, t=50, b=40),
-        plot_bgcolor="white",
+        plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(_fig_comp, use_container_width=True)
 
@@ -3497,11 +3633,11 @@ with tab21:
         _fig_tor.add_vline(x=0, line_color="#333", line_width=1)
         _fig_tor.update_layout(
             height=max(220, len(_sc21_tornado) * 45),
-            xaxis=dict(title="Δ Composite Score", showgrid=True, gridcolor="#eee",
+            xaxis=dict(title="Δ Composite Score", showgrid=True, gridcolor="rgba(255,255,255,0.08)",
                        zeroline=False),
             yaxis=dict(title=None, autorange="reversed"),
             margin=dict(l=160, r=60, t=20, b=40),
-            plot_bgcolor="white",
+            plot_bgcolor="rgba(0,0,0,0)",
             showlegend=False,
         )
         st.plotly_chart(_fig_tor, use_container_width=True)
