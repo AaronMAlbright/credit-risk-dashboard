@@ -18,6 +18,7 @@ from src.weight_optimizer import (
     run_weight_optimization,
 )
 from src.tail_risk import run_tail_risk_analysis
+from src.stress_episodes import STRESS_EPISODES, run_stress_analysis
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -117,16 +118,23 @@ def load_signal_decay(_df):
 
 
 @st.cache_data
+def load_stress_analysis(_df):
+    """Run stress episode analysis (cached)."""
+    return run_stress_analysis(_df, STRESS_EPISODES)
+
+
+@st.cache_data
 def load_validation_audit(_df, _windows_df, _transition_counts):
     """Run full validation audit (cached)."""
     return run_validation_audit(_df, windows_df=_windows_df, transition_counts=_transition_counts)
 
 
 @st.cache_data
-def load_report_html(_df, _audit, _decay, _tail, _weight_opt, _attr):
+def load_report_html(_df, _audit, _decay, _tail, _weight_opt, _attr, _stress):
     """Generate the HTML signal report (cached against df hash)."""
     return generate_html_report(_df, audit=_audit, decay_results=_decay,
-                                 tail_risk=_tail, weight_opt=_weight_opt, attr=_attr)
+                                 tail_risk=_tail, weight_opt=_weight_opt, attr=_attr,
+                                 stress=_stress)
 
 
 df = load_data()
@@ -175,7 +183,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -189,6 +197,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Signal Decay",
     "Orthogonality",
     "Tail Risk",
+    "Stress Episodes",
 ])
 
 with tab1:
@@ -233,7 +242,8 @@ with tab1:
         _tail_t1 = load_tail_risk(df)
         _wopt_t1 = load_weight_optimization(df)
         _attr_t1 = load_attribution(df)
-        _html_report = load_report_html(df, _audit_t1, _decay_t1, _tail_t1, _wopt_t1, _attr_t1)
+        _stress_t1 = load_stress_analysis(df)
+        _html_report = load_report_html(df, _audit_t1, _decay_t1, _tail_t1, _wopt_t1, _attr_t1, _stress_t1)
     _report_date = _last_date_str
     st.download_button(
         label="⬇ Download HTML Report",
@@ -1548,3 +1558,131 @@ with tab13:
         )
     else:
         st.info("No future drawdown data available.")
+
+with tab14:
+    st.header("Stress Episode Analysis")
+    st.caption(
+        "How did the composite risk signal behave during known market stress periods? "
+        "Episodes within the dataset range show actual model statistics. "
+        "Historical episodes are reference markers only."
+    )
+
+    _stress = load_stress_analysis(df)
+    _ep_stats = _stress["episode_stats"]
+    _n_cov = _stress["n_covered"]
+    _n_hist = _stress["n_historical"]
+
+    # ── Summary banner ────────────────────────────────────────────────────────
+    _bc1, _bc2 = st.columns(2)
+    _bc1.metric("Covered episodes (in dataset)", _n_cov)
+    _bc2.metric("Historical reference episodes", _n_hist)
+
+    # ── Timeline chart ────────────────────────────────────────────────────────
+    st.subheader("Composite Risk Score — Stress Episode Overlay")
+    st.plotly_chart(_stress["timeline_chart"], use_container_width=True)
+
+    # ── Episode stats table ───────────────────────────────────────────────────
+    st.subheader("Episode Summary")
+    st.caption(
+        "Mean/peak composite score, SP500 drawdown, primary model decision, "
+        "and % of days in high-alert territory (composite ≥ 60). "
+        "Greyed rows = outside dataset range."
+    )
+
+    if not _ep_stats.empty:
+        _SEVERITY_BADGE = {"Severe": "🔴", "Moderate": "🟠", "Mild": "🟡"}
+
+        _ep_disp = _ep_stats[["label", "severity", "start", "end", "covered",
+                               "n_obs", "mean_composite", "peak_composite",
+                               "sp500_drawdown", "primary_decision", "high_alert_pct"]].copy()
+
+        # Coerce numerics
+        for _col in ["mean_composite", "peak_composite", "sp500_drawdown", "high_alert_pct"]:
+            _ep_disp[_col] = pd.to_numeric(_ep_disp[_col], errors="coerce")
+
+        _ep_disp = _ep_disp.rename(columns={
+            "label":            "Episode",
+            "severity":         "Severity",
+            "start":            "Start",
+            "end":              "End",
+            "covered":          "In Dataset",
+            "n_obs":            "N Days",
+            "mean_composite":   "Mean Score",
+            "peak_composite":   "Peak Score",
+            "sp500_drawdown":   "SP500 Drawdown",
+            "primary_decision": "Primary Decision",
+            "high_alert_pct":   "High Alert %",
+        })
+
+        def _style_episode_row(row):
+            if not row["In Dataset"]:
+                return ["color: #aaa"] * len(row)
+            return [""] * len(row)
+
+        _ep_fmt = {
+            "Mean Score":     lambda v: f"{v:.1f}" if pd.notna(v) else "—",
+            "Peak Score":     lambda v: f"{v:.1f}" if pd.notna(v) else "—",
+            "SP500 Drawdown": lambda v: f"{v:.2%}" if pd.notna(v) else "—",
+            "High Alert %":   lambda v: f"{v:.0%}" if pd.notna(v) else "—",
+        }
+
+        st.dataframe(
+            _ep_disp.style.apply(_style_episode_row, axis=1).format(_ep_fmt, na_rep="—"),
+            use_container_width=True,
+        )
+
+    # ── Per-episode score path drilldown ──────────────────────────────────────
+    _paths = _stress["score_paths"]
+    if _paths:
+        st.subheader("Score Path Drilldown")
+        st.caption("Select a covered episode to see the composite score trajectory with ±30-day context.")
+        _ep_names = list(_paths.keys())
+        _selected = st.selectbox("Episode", _ep_names)
+        if _selected and _selected in _paths:
+            _path_df = _paths[_selected]
+            _ep_meta = next((e for e in STRESS_EPISODES if e["name"] == _selected), None)
+
+            import plotly.graph_objects as _go
+            _pfig = _go.Figure()
+            _pfig.add_trace(_go.Scatter(
+                x=_path_df["date"],
+                y=_path_df["composite"] if "composite" in _path_df.columns else [],
+                mode="lines",
+                name="Composite Score",
+                line=dict(color="#1a1a2e", width=2),
+            ))
+            _pfig.add_hline(y=60, line_dash="dot", line_color="#e74c3c",
+                            line_width=1, annotation_text="High Alert (60)")
+            if _ep_meta:
+                _pfig.add_vrect(
+                    x0=_ep_meta["start"], x1=_ep_meta["end"],
+                    fillcolor="rgba(230,126,34,0.15)", opacity=1,
+                    layer="below", line_width=0,
+                    annotation_text=_selected, annotation_position="top left",
+                    annotation_font_size=10,
+                )
+            _pfig.update_layout(
+                title=f"Score Path — {_selected}",
+                xaxis_title="Date", yaxis_title="Composite Risk Score",
+                yaxis=dict(range=[0, 105]),
+                height=340, template="plotly_white",
+                margin=dict(l=50, r=20, t=50, b=40),
+            )
+            st.plotly_chart(_pfig, use_container_width=True)
+
+            # Decision breakdown for this episode
+            if "decision" in _path_df.columns:
+                _ep_start = pd.Timestamp(_ep_meta["start"]) if _ep_meta else _path_df["date"].min()
+                _ep_end   = pd.Timestamp(_ep_meta["end"])   if _ep_meta else _path_df["date"].max()
+                _in_ep = _path_df[(_path_df["date"] >= _ep_start) & (_path_df["date"] <= _ep_end)]
+                if not _in_ep.empty:
+                    _dec_counts = _in_ep["decision"].value_counts().reset_index()
+                    _dec_counts.columns = ["Decision", "Days"]
+                    _dec_counts["% of Episode"] = _dec_counts["Days"] / _dec_counts["Days"].sum()
+                    st.dataframe(
+                        _dec_counts.style.format({"% of Episode": "{:.0%}"}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+    else:
+        st.info("No covered episodes in the current dataset range.")

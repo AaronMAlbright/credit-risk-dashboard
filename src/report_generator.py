@@ -360,6 +360,56 @@ def _build_weights_section(weight_opt: dict | None) -> str:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _build_stress_section(stress: dict | None) -> str:
+    if not stress:
+        return ""
+    stats = stress.get("episode_stats")
+    if stats is None or stats.empty:
+        return ""
+
+    covered = stats[stats["covered"] == True]
+    if covered.empty:
+        return ""
+
+    rows = ""
+    for name, row in covered.iterrows():
+        dd = _pct(row.get("sp500_drawdown"))
+        mc = _fmt(row.get("mean_composite"))
+        pc = _fmt(row.get("peak_composite"))
+        ha = _pct(row.get("high_alert_pct"), 0)
+        pd_val = _safe_str(row.get("primary_decision"), "—")
+        sev = _safe_str(row.get("severity"), "—")
+        rows += f"""
+        <tr>
+          <td><b>{name}</b></td>
+          <td>{sev}</td>
+          <td>{mc}</td>
+          <td>{pc}</td>
+          <td class="neg">{dd}</td>
+          <td>{ha}</td>
+          <td style="font-size:11px">{pd_val}</td>
+        </tr>"""
+
+    n_cov = int(stress.get("n_covered", 0))
+    n_hist = int(stress.get("n_historical", 0))
+
+    return f"""
+    <div class="section">
+      <h2>Stress Episode Behaviour</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px">
+        {n_cov} episode(s) validated against dataset &nbsp;·&nbsp;
+        {n_hist} historical reference(s) outside dataset range.
+        High Alert = composite ≥ 60.</p>
+      <table>
+        <tr>
+          <th>Episode</th><th>Severity</th><th>Mean Score</th>
+          <th>Peak Score</th><th>SP500 DD</th><th>High Alert %</th><th>Primary Decision</th>
+        </tr>
+        {rows}
+      </table>
+    </div>"""
+
+
 def generate_html_report(
     df: pd.DataFrame,
     audit: dict | None = None,
@@ -367,6 +417,7 @@ def generate_html_report(
     tail_risk: dict | None = None,
     weight_opt: dict | None = None,
     attr: dict | None = None,
+    stress: dict | None = None,
 ) -> str:
     """
     Generate a self-contained HTML signal report.
@@ -395,6 +446,7 @@ def generate_html_report(
         _build_signal_section(latest),
         _build_confidence_section(audit),
         _build_drivers_section(drivers),
+        _build_stress_section(stress),
         _build_decay_section(decay_results, current_regime),
         _build_tail_section(tail_risk, current_regime),
         _build_weights_section(weight_opt),
