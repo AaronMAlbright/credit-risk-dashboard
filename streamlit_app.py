@@ -26,6 +26,13 @@ from src.regime_probability import run_regime_probability
 from src.monte_carlo import run_monte_carlo
 from src.subperiod_attribution import run_subperiod_attribution
 from src.position_sizing import REGIME_WEIGHTS, SCORE_BREAKPOINTS, run_position_sizing
+from src.scenario_analysis import (
+    DEFAULT_SHOCKS,
+    SCENARIO_PRESETS,
+    run_scenario,
+    run_scenario_grid,
+    build_tornado_data,
+)
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -163,6 +170,19 @@ def load_monte_carlo(_df, _current_probs_key: str):
 
 
 @st.cache_data
+def load_scenario_grid(_df):
+    """Run scenario grid over all presets (cached)."""
+    try:
+        from src.regime_probability import fit_naive_bayes
+        model = fit_naive_bayes(_df)
+    except Exception:
+        model = {}
+    grid    = run_scenario_grid(_df, SCENARIO_PRESETS, model)
+    tornado = build_tornado_data(_df, model)
+    return {"model": model, "grid": grid, "tornado": tornado}
+
+
+@st.cache_data
 def load_position_sizing(_df):
     """Run position sizing analysis (cached)."""
     rp = run_regime_probability(_df)
@@ -252,6 +272,7 @@ st.title("Macro Credit Risk Dashboard")
 
 decision    = str(latest.get("final_decision",    "N/A"))
 environment = str(latest.get("final_environment", "N/A"))
+action      = str(latest.get("final_action",      "N/A"))
 composite   = float(latest.get("composite_risk_score_smooth", 0))
 comp_label  = str(latest.get("composite_risk_label", "N/A"))
 
@@ -435,7 +456,7 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -456,6 +477,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Monte Carlo",
     "Sub-period Attribution",
     "Position Sizing",
+    "Scenario Analysis",
 ])
 
 with tab1:
@@ -3039,3 +3061,250 @@ with tab20:
                 "Half-Kelly uses 63-day rolling window · "
                 "Vol-target uses 21-day rolling window"
             )
+
+with tab21:
+    st.header("Scenario Analysis")
+    st.caption(
+        "Apply market shocks to the current observation and trace their effect through the full "
+        "risk scoring chain: derived features → component scores → composite → regime → sizing. "
+        "Uses a delta-on-smooth approach: shocked scores are the current smoothed value ± the "
+        "instantaneous raw-score change, so the existing trend is preserved."
+    )
+
+    import plotly.graph_objects as _go21
+
+    # ── Load pre-computed preset grid and tornado (cached) ───────────────────
+    _sc21_cache = load_scenario_grid(df)
+    _sc21_model  = _sc21_cache.get("model", {})
+    _sc21_grid   = _sc21_cache.get("grid",  pd.DataFrame())
+    _sc21_tornado = _sc21_cache.get("tornado", pd.DataFrame())
+
+    # ── Scenario selector ────────────────────────────────────────────────────
+    _preset_names = list(SCENARIO_PRESETS.keys())
+    _sel_preset = st.selectbox(
+        "Select scenario",
+        _preset_names + ["Custom"],
+        index=2,           # default: Moderate Stress
+        key="sc21_preset",
+    )
+
+    if _sel_preset == "Custom":
+        st.markdown("**Custom shocks** (add to current levels):")
+        _c1, _c2, _c3 = st.columns(3)
+        with _c1:
+            _vix_sh = st.slider("VIX Δ",          -15.0, +40.0, 0.0, 0.5, key="sc21_vix")
+            _hy_sh  = st.slider("HY Spread Δ (pp)", -1.0,  +5.0, 0.0, 0.1, key="sc21_hy")
+        with _c2:
+            _sp_sh  = st.slider("SP500 Δ (%)",    -40.0,  +20.0, 0.0, 1.0, key="sc21_sp") / 100.0
+            _spr_sh = st.slider("2/10 Spread Δ (pp)", -1.5, +1.0, 0.0, 0.05, key="sc21_spr")
+        with _c3:
+            _nfci_sh = st.slider("NFCI Δ",        -0.5,  +1.5, 0.0, 0.05, key="sc21_nfci")
+            _ue_sh   = st.slider("Unemployment Δ (pp)", -0.5, +2.0, 0.0, 0.1, key="sc21_ue")
+        _custom_shocks = {
+            "vix_shock":          _vix_sh,
+            "hy_spread_shock":    _hy_sh,
+            "sp500_shock":        _sp_sh,
+            "spread_shock":       _spr_sh,
+            "nfci_shock":         _nfci_sh,
+            "unemployment_shock": _ue_sh,
+        }
+        _active_shocks = _custom_shocks
+    else:
+        _active_shocks = SCENARIO_PRESETS[_sel_preset]
+
+    # Run the selected scenario (interactive; not cached)
+    _sc21_selected = run_scenario(df, _active_shocks, _sc21_model)
+    _sc21_base  = _sc21_selected.get("baseline", {})
+    _sc21_scen  = _sc21_selected.get("scenario", {})
+    _sc21_delta = _sc21_selected.get("delta",    {})
+    _sc21_sz    = _sc21_selected.get("sizing",   {})
+    _sc21_bsz   = _sc21_selected.get("baseline_sizing", {})
+
+    st.divider()
+
+    # ── Side-by-side comparison ──────────────────────────────────────────────
+    st.subheader("Baseline vs. Scenario")
+    _cL, _cR = st.columns(2)
+
+    def _decision_badge_sc(decision: str, env: str = "") -> str:
+        _DC = {
+            "Buy Stress":                   "#2ca02c",
+            "Watch Entry":                  "#1f77b4",
+            "Neutral":                      "#7f7f7f",
+            "Stress / Stabilization Watch": "#e74c3c",
+            "Hold / Do Not Chase":          "#9467bd",
+            "Divergence Warning":           "#ff7f0e",
+            "Wait":                         "#ff7f0e",
+            "Credit Warning":               "#e74c3c",
+            "Avoid Chasing Risk":           "#d62728",
+        }
+        clr = _DC.get(decision, "#aaa")
+        return (
+            f"<div style='background:{clr};color:white;padding:8px 14px;"
+            f"border-radius:6px;font-weight:600;font-size:1rem;display:inline-block'>"
+            f"{decision}</div>"
+            + (f"<br><small style='color:#888'>{env}</small>" if env else "")
+        )
+
+    with _cL:
+        st.markdown("**Current (Baseline)**")
+        st.markdown(_decision_badge_sc(
+            str(_sc21_base.get("final_decision", "—")), ""
+        ), unsafe_allow_html=True)
+        st.markdown("")
+        _bm1, _bm2, _bm3 = st.columns(3)
+        _bm1.metric("Composite", f"{_sc21_base.get('composite_risk_score_smooth', 0):.1f}")
+        _bm2.metric("Blend Sizing", f"{_sc21_bsz.get('blend', 0):.0%}")
+        _bm3.metric("VIX", f"{_sc21_base.get('vix', 0):.1f}")
+        _bm4, _bm5, _bm6 = st.columns(3)
+        _bm4.metric("HY Spread", f"{_sc21_base.get('hy_spread', 0):.2f}%")
+        _bm5.metric("SP500 DD", f"{_sc21_base.get('sp500_drawdown', 0):.1%}")
+        _bm6.metric("NFCI", f"{_sc21_base.get('nfci', 0):.2f}")
+
+    with _cR:
+        st.markdown(f"**Scenario: {_sel_preset}**")
+        st.markdown(_decision_badge_sc(
+            str(_sc21_scen.get("final_decision", "—")),
+            str(_sc21_scen.get("final_environment", "")),
+        ), unsafe_allow_html=True)
+        st.markdown("")
+        _sm1, _sm2, _sm3 = st.columns(3)
+        _comp_d = _sc21_delta.get("composite_risk_score_smooth", 0)
+        _sm1.metric("Composite", f"{_sc21_scen.get('composite_risk_score_smooth', 0):.1f}",
+                    delta=f"{_comp_d:+.1f}", delta_color="inverse")
+        _sm2.metric("Blend Sizing", f"{_sc21_sz.get('blend', 0):.0%}",
+                    delta=f"{(_sc21_sz.get('blend', 0) - _sc21_bsz.get('blend', 0)):+.0%}")
+        _sm3.metric("VIX", f"{_sc21_scen.get('vix', 0):.1f}",
+                    delta=f"{_active_shocks.get('vix_shock', 0):+.1f}", delta_color="inverse")
+        _sm4, _sm5, _sm6 = st.columns(3)
+        _sm4.metric("HY Spread", f"{_sc21_scen.get('hy_spread', 0):.2f}%",
+                    delta=f"{_active_shocks.get('hy_spread_shock', 0):+.2f}", delta_color="inverse")
+        _sm5.metric("SP500 DD", f"{_sc21_scen.get('sp500_drawdown', 0):.1%}",
+                    delta=f"{(_sc21_scen.get('sp500_drawdown', 0) - _sc21_base.get('sp500_drawdown', 0)):.1%}",
+                    delta_color="inverse")
+        _sm6.metric("NFCI", f"{_sc21_scen.get('nfci', 0):.2f}",
+                    delta=f"{_active_shocks.get('nfci_shock', 0):+.2f}", delta_color="inverse")
+
+    st.divider()
+
+    # ── Component score comparison chart ────────────────────────────────────
+    st.subheader("Component Score Impact")
+    _comp_labels = {
+        "macro_risk_score_smooth":         "Macro Risk",
+        "credit_market_risk_score_smooth": "Credit",
+        "liquidity_regime_score_smooth":   "Liquidity",
+        "treasury_stress_score_smooth":    "Treasury",
+        "complacency_score_smooth":        "Complacency",
+        "mean_reversion_score_smooth":     "Mean Reversion",
+    }
+    _comp_keys   = list(_comp_labels.keys())
+    _comp_names  = [_comp_labels[k] for k in _comp_keys]
+    _base_vals   = [float(_sc21_base.get(k, 0))  for k in _comp_keys]
+    _scen_vals   = [float(_sc21_scen.get(k, 0))  for k in _comp_keys]
+
+    _fig_comp = _go21.Figure()
+    _fig_comp.add_trace(_go21.Bar(
+        name="Baseline", x=_comp_names, y=_base_vals,
+        marker_color="#aaa", opacity=0.8,
+    ))
+    _fig_comp.add_trace(_go21.Bar(
+        name=f"Scenario ({_sel_preset})", x=_comp_names, y=_scen_vals,
+        marker_color=[
+            "#e74c3c" if s > b else "#2ca02c"
+            for s, b in zip(_scen_vals, _base_vals)
+        ],
+        opacity=0.9,
+    ))
+    _fig_comp.update_layout(
+        barmode="group", height=280,
+        yaxis=dict(title="Score (0–100)", range=[0, 105], showgrid=True, gridcolor="#eee"),
+        xaxis=dict(title=None),
+        legend=dict(orientation="h", y=1.12, x=0),
+        margin=dict(l=50, r=20, t=50, b=40),
+        plot_bgcolor="white",
+    )
+    st.plotly_chart(_fig_comp, use_container_width=True)
+
+    st.divider()
+
+    # ── Preset grid table ────────────────────────────────────────────────────
+    st.subheader("All Preset Scenarios")
+    if not _sc21_grid.empty:
+        _grid_display_cols = {
+            "composite_risk_score_smooth": "Composite",
+            "delta_composite":             "Δ Composite",
+            "final_decision":              "Decision",
+            "blend_sizing":                "Blend Weight",
+            "vix":                         "VIX",
+            "hy_spread":                   "HY Spread",
+            "sp500_drawdown":              "SP500 DD",
+            "shock_flag":                  "Shock Flag",
+        }
+        _disp_cols21 = [c for c in _grid_display_cols if c in _sc21_grid.columns]
+        _disp21 = _sc21_grid[_disp_cols21].copy().rename(columns=_grid_display_cols)
+
+        def _color_delta(v):
+            if pd.isna(v): return ""
+            if v >= 15:  return "background-color:#fee0d2;color:#c0392b"
+            if v >= 5:   return "background-color:#fff3cd;color:#856404"
+            if v <= -5:  return "background-color:#d4edda;color:#155724"
+            return ""
+
+        def _color_blend(v):
+            if pd.isna(v): return ""
+            if v >= 0.6: return "background-color:#d4edda;color:#155724"
+            if v >= 0.3: return "background-color:#fff3cd;color:#856404"
+            return "background-color:#fee0d2;color:#c0392b"
+
+        _fmt21 = {
+            "Composite":   "{:.1f}",
+            "Δ Composite": "{:+.1f}",
+            "Blend Weight":"{:.0%}",
+            "HY Spread":   "{:.2f}",
+            "SP500 DD":    "{:.1%}",
+            "VIX":         "{:.1f}",
+        }
+        _styled21 = _disp21.style
+        if "Δ Composite" in _disp21.columns:
+            _styled21 = _styled21.map(_color_delta, subset=["Δ Composite"])
+        if "Blend Weight" in _disp21.columns:
+            _styled21 = _styled21.map(_color_blend, subset=["Blend Weight"])
+        _styled21 = _styled21.format(_fmt21, na_rep="—")
+        st.dataframe(_styled21, use_container_width=True)
+
+    st.divider()
+
+    # ── Sensitivity tornado ──────────────────────────────────────────────────
+    st.subheader("Sensitivity: Single-Variable Impact on Composite Score")
+    st.caption(
+        "Each bar shows the change in composite risk score when one variable is shocked "
+        "independently (HY +1.5pp, VIX +15, SP500 -15%, NFCI +0.3, Spread -0.5pp, Unemp +0.5)."
+    )
+    if not _sc21_tornado.empty:
+        _tornado_colors = [
+            "#e74c3c" if d > 0 else "#2ca02c"
+            for d in _sc21_tornado["delta_composite"]
+        ]
+        _fig_tor = _go21.Figure(_go21.Bar(
+            x=_sc21_tornado["delta_composite"],
+            y=_sc21_tornado["variable"],
+            orientation="h",
+            marker_color=_tornado_colors,
+            text=[f"{v:+.1f}" for v in _sc21_tornado["delta_composite"]],
+            textposition="outside",
+        ))
+        _fig_tor.add_vline(x=0, line_color="#333", line_width=1)
+        _fig_tor.update_layout(
+            height=max(220, len(_sc21_tornado) * 45),
+            xaxis=dict(title="Δ Composite Score", showgrid=True, gridcolor="#eee",
+                       zeroline=False),
+            yaxis=dict(title=None, autorange="reversed"),
+            margin=dict(l=160, r=60, t=20, b=40),
+            plot_bgcolor="white",
+            showlegend=False,
+        )
+        st.plotly_chart(_fig_tor, use_container_width=True)
+        st.caption(
+            "Red bars → shock increases composite risk (bearish). "
+            "Green bars → shock reduces composite (e.g., SP500 decline breaks current complacency signal)."
+        )
