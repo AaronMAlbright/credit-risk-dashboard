@@ -40,6 +40,14 @@ from src.validation_guard import (
     CONFIDENCE_SIGILS,
     run_validation_audit,
 )
+from src.alert_engine import (
+    AlertConfig,
+    config_from_env,
+    extract_current_state,
+    format_alert_email,
+    load_alert_state,
+    run_alerts,
+)
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -272,6 +280,69 @@ with st.sidebar.expander("Source freshness"):
                 st.write(f"⚠ {info['label']}: {info['last_date']} ({info['days_stale']}d stale)")
             else:
                 st.write(f"⚠⚠ {info['label']}: {info['last_date']} ({info['days_stale']}d stale)")
+
+st.sidebar.divider()
+
+# ── Sidebar: Alert engine ─────────────────────────────────────────────────────
+_ALERT_STATE_PATH = Path("outputs/alert_state.json")
+_prev_alert_state = load_alert_state(_ALERT_STATE_PATH)
+
+st.sidebar.subheader("Alerts")
+
+_prev_decision = _prev_alert_state.get("decision", "")
+_prev_date     = _prev_alert_state.get("last_date", "")
+if _prev_decision:
+    st.sidebar.caption(
+        f"Last run: {_prev_alert_state.get('last_run','—')}\n\n"
+        f"Regime: **{_prev_decision}**\n\n"
+        f"Data date: {_prev_date}"
+    )
+else:
+    st.sidebar.caption("No previous alert state found.")
+
+_alert_col1, _alert_col2 = st.sidebar.columns(2)
+
+if _alert_col1.button("Test Alert", key="sidebar_test_alert",
+                       help="Run alert checks in dry-run mode (no email sent)"):
+    with st.sidebar:
+        with st.spinner("Checking…"):
+            _sizing_for_alert = load_position_sizing(df)
+            _alert_cfg = AlertConfig(dry_run=True, min_level="INFO")
+            _alert_result = run_alerts(df, config=_alert_cfg,
+                                       sizing=_sizing_for_alert,
+                                       state_path=_ALERT_STATE_PATH)
+    _fired = _alert_result["alerts"]
+    if _fired:
+        for _a in _fired:
+            _lv = _a["level"]
+            _msg = _a["message"]
+            if _lv == "ALERT":
+                st.sidebar.error(f"**{_lv}** — {_msg}")
+            elif _lv == "WARNING":
+                st.sidebar.warning(f"**{_lv}** — {_msg}")
+            else:
+                st.sidebar.info(f"**{_lv}** — {_msg}")
+    else:
+        st.sidebar.success("No alerts triggered.")
+
+if _alert_col2.button("Send Alert", key="sidebar_send_alert",
+                       help="Run alert checks and send email if triggered"):
+    with st.sidebar:
+        with st.spinner("Sending…"):
+            _sizing_for_alert = load_position_sizing(df)
+            _alert_cfg = config_from_env()
+            _alert_result = run_alerts(df, config=_alert_cfg,
+                                       sizing=_sizing_for_alert,
+                                       state_path=_ALERT_STATE_PATH)
+    _fired = _alert_result["alerts"]
+    if not _fired:
+        st.sidebar.success("No alerts triggered — nothing sent.")
+    elif _alert_result["email_sent"]:
+        st.sidebar.success(f"{len(_fired)} alert(s) sent.")
+    elif not _alert_cfg.smtp_host:
+        st.sidebar.warning("SMTP not configured. Set ALERT_SMTP_* env vars.")
+    else:
+        st.sidebar.error("Email send failed.")
 
 # ── Executive Overview ───────────────────────────────────────────────────────
 st.title("Macro Credit Risk Dashboard")
