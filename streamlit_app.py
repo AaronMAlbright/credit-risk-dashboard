@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
-from src.report_generator import generate_html_report
+from src.report_generator import generate_html_report, generate_excel_report
 from src.data_pipeline import check_api_key, run_pipeline, fetch_source_dates
 from src.bootstrap import run_bootstrap_analysis
 from src.regime_attribution import COMPOSITE_WEIGHTS, DISPLAY_NAMES, run_regime_attribution
@@ -197,11 +197,17 @@ def load_validation_audit(_df, _windows_df, _transition_counts):
 
 
 @st.cache_data
-def load_report_html(_df, _audit, _decay, _tail, _weight_opt, _attr, _stress):
+def load_report_html(_df, _audit, _decay, _tail, _weight_opt, _attr, _stress,
+                     _regime_prob=None, _position_sizing=None,
+                     _scenario_grid=None, _subperiod_table=None, _monte_carlo=None):
     """Generate the HTML signal report (cached against df hash)."""
-    return generate_html_report(_df, audit=_audit, decay_results=_decay,
-                                 tail_risk=_tail, weight_opt=_weight_opt, attr=_attr,
-                                 stress=_stress)
+    return generate_html_report(
+        _df, audit=_audit, decay_results=_decay,
+        tail_risk=_tail, weight_opt=_weight_opt, attr=_attr, stress=_stress,
+        regime_prob=_regime_prob, position_sizing=_position_sizing,
+        scenario_grid=_scenario_grid, subperiod_table=_subperiod_table,
+        monte_carlo=_monte_carlo,
+    )
 
 
 df = load_data()
@@ -511,27 +517,62 @@ with tab1:
     else:
         st.warning("No signal report found. Run `python app.py` first.")
 
-    # ── HTML report download ──────────────────────────────────────────────────
+    # ── Report export ─────────────────────────────────────────────────────────
     st.subheader("Export Signal Report")
     with st.spinner("Building report…"):
         _regime_results_t1 = load_regime_transition(df)
         _trans_counts_t1 = _regime_results_t1.get("transition_counts") if _regime_results_t1 else None
         _wf_windows_t1, _ = load_walk_forward()
-        _audit_t1 = load_validation_audit(df, _wf_windows_t1, _trans_counts_t1)
-        _decay_t1 = load_signal_decay(df)
-        _tail_t1 = load_tail_risk(df)
-        _wopt_t1 = load_weight_optimization(df)
-        _attr_t1 = load_attribution(df)
-        _stress_t1 = load_stress_analysis(df)
-        _html_report = load_report_html(df, _audit_t1, _decay_t1, _tail_t1, _wopt_t1, _attr_t1, _stress_t1)
+        _audit_t1    = load_validation_audit(df, _wf_windows_t1, _trans_counts_t1)
+        _decay_t1    = load_signal_decay(df)
+        _tail_t1     = load_tail_risk(df)
+        _wopt_t1     = load_weight_optimization(df)
+        _attr_t1     = load_attribution(df)
+        _stress_t1   = load_stress_analysis(df)
+        _rp_t1       = load_regime_probability(df)
+        _ps_t1       = load_position_sizing(df)
+        _sg_t1       = load_scenario_grid(df)
+        _sp_t1       = load_subperiod_attribution(df)
+        _mc_t1_key   = str(hash(str(_rp_t1.get("current", {}).get("probs", {}))))
+        _mc_t1       = load_monte_carlo(df, _mc_t1_key)
+
+        _html_report = load_report_html(
+            df, _audit_t1, _decay_t1, _tail_t1, _wopt_t1, _attr_t1, _stress_t1,
+            _regime_prob=_rp_t1,
+            _position_sizing=_ps_t1,
+            _scenario_grid=_sg_t1.get("grid"),
+            _subperiod_table=_sp_t1.get("table"),
+            _monte_carlo=_mc_t1,
+        )
+        _excel_report = generate_excel_report(
+            df,
+            position_sizing=_ps_t1,
+            scenario_grid=_sg_t1.get("grid"),
+            subperiod_table=_sp_t1.get("table"),
+            regime_prob=_rp_t1,
+            monte_carlo=_mc_t1,
+        )
+
     _report_date = _last_date_str
-    st.download_button(
-        label="⬇ Download HTML Report",
-        data=_html_report.encode("utf-8"),
-        file_name=f"macro_credit_signal_report_{_report_date}.html",
-        mime="text/html",
-    )
-    st.caption("Self-contained HTML — open in any browser. No external dependencies.")
+    _dl_col1, _dl_col2 = st.columns(2)
+    with _dl_col1:
+        st.download_button(
+            label="⬇ Download HTML Report",
+            data=_html_report.encode("utf-8"),
+            file_name=f"macro_credit_signal_report_{_report_date}.html",
+            mime="text/html",
+            use_container_width=True,
+        )
+        st.caption("Self-contained HTML — open in any browser.")
+    with _dl_col2:
+        st.download_button(
+            label="⬇ Download Excel Workbook",
+            data=_excel_report,
+            file_name=f"macro_credit_dashboard_{_report_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+        st.caption("6 sheets: Summary, Scores, Sizing, Scenarios, Attribution, Monte Carlo.")
 
 with tab2:
     st.header("Charts")
