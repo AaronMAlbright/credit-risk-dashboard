@@ -25,6 +25,7 @@ from src.factor_exposure import run_factor_analysis
 from src.regime_probability import run_regime_probability
 from src.monte_carlo import run_monte_carlo
 from src.subperiod_attribution import run_subperiod_attribution
+from src.position_sizing import REGIME_WEIGHTS, SCORE_BREAKPOINTS, run_position_sizing
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -159,6 +160,14 @@ def load_monte_carlo(_df, _current_probs_key: str):
     rp = run_regime_probability(_df)
     cur_probs = rp.get("current", {}).get("probs") or {}
     return run_monte_carlo(_df, current_probs=cur_probs or None)
+
+
+@st.cache_data
+def load_position_sizing(_df):
+    """Run position sizing analysis (cached)."""
+    rp = run_regime_probability(_df)
+    prob_history = rp.get("history")
+    return run_position_sizing(_df, prob_history=prob_history)
 
 
 @st.cache_data
@@ -426,7 +435,7 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -446,6 +455,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Regime Probability",
     "Monte Carlo",
     "Sub-period Attribution",
+    "Position Sizing",
 ])
 
 with tab1:
@@ -2867,4 +2877,165 @@ with tab19:
             st.caption(
                 "Each row sums to 100%. "
                 "Shift in regime frequency across periods indicates changing market conditions."
+            )
+
+with tab20:
+    st.header("Position Sizing")
+    st.caption(
+        "Four complementary position sizing methods applied to the composite risk signal. "
+        "Blend = mean of all four non-NaN methods. All weights clipped to [0%, 100%]."
+    )
+
+    import plotly.graph_objects as _go20
+
+    _ps20 = load_position_sizing(df)
+    _sizes20   = _ps20.get("sizes",   pd.DataFrame())
+    _cur20     = _ps20.get("current", {})
+    _bt20      = _ps20.get("backtest", pd.DataFrame())
+
+    if _sizes20.empty:
+        st.warning("Position sizing unavailable — check input data.")
+    else:
+        # ── Current weights strip ─────────────────────────────────────────────
+        st.subheader("Current Recommended Weights")
+        _meth_labels = {
+            "score_sizing":      "Score-Based",
+            "regime_prob_sizing":"Regime-Prob",
+            "kelly_sizing":      "Half-Kelly",
+            "vol_target_sizing": "Vol-Target",
+            "blend":             "Blend",
+        }
+        _cur_cols = st.columns(len(_meth_labels))
+        for _ci, (_key, _label) in enumerate(_meth_labels.items()):
+            _val = _cur20.get(_key)
+            if _val is not None:
+                _pct = f"{_val:.0%}"
+                if _val >= 0.75:   _delta_col = "normal"
+                elif _val >= 0.40: _delta_col = "off"
+                else:              _delta_col = "inverse"
+                _cur_cols[_ci].metric(_label, _pct)
+            else:
+                _cur_cols[_ci].metric(_label, "—")
+
+        _reg20 = _cur20.get("current_regime", "—")
+        _sc20  = _cur20.get("current_composite")
+        _sc_str = f"{_sc20:.1f}" if _sc20 is not None else "—"
+        st.caption(f"Current regime: **{_reg20}** · Composite score: **{_sc_str}**")
+
+        st.divider()
+
+        # ── Sizing time series ────────────────────────────────────────────────
+        st.subheader("Position Weight Over Time")
+        _fig_sz = _go20.Figure()
+        _sz_colors = {
+            "score_sizing":       "#1f77b4",
+            "regime_prob_sizing": "#ff7f0e",
+            "kelly_sizing":       "#2ca02c",
+            "vol_target_sizing":  "#9467bd",
+            "blend":              "#d62728",
+        }
+        _sz_dashes = {
+            "score_sizing":       "solid",
+            "regime_prob_sizing": "solid",
+            "kelly_sizing":       "dot",
+            "vol_target_sizing":  "dash",
+            "blend":              "solid",
+        }
+        _sz_widths = {k: (3 if k == "blend" else 1.2) for k in _sz_colors}
+
+        for _col in _sizes20.columns:
+            _label = _meth_labels.get(_col, _col)
+            _fig_sz.add_trace(_go20.Scatter(
+                x=_sizes20.index, y=_sizes20[_col],
+                name=_label, mode="lines",
+                line=dict(color=_sz_colors.get(_col, "#888"),
+                          width=_sz_widths.get(_col, 1.5),
+                          dash=_sz_dashes.get(_col, "solid")),
+                connectgaps=False,
+            ))
+
+        _fig_sz.add_hrect(y0=0.0, y1=0.25, fillcolor="rgba(231,76,60,0.06)",
+                          line_width=0, annotation_text="Underweight zone",
+                          annotation_position="top left",
+                          annotation_font=dict(size=10, color="#c0392b"))
+        _fig_sz.add_hline(y=1.0, line_dash="dot", line_color="#aaa", line_width=1)
+
+        _fig_sz.update_layout(
+            height=320,
+            yaxis=dict(title="Position Weight", tickformat=".0%",
+                       range=[-0.05, 1.10], showgrid=True, gridcolor="#eee"),
+            xaxis=dict(showgrid=False, title=None),
+            legend=dict(orientation="h", y=1.12, x=0),
+            margin=dict(l=60, r=20, t=50, b=40),
+            plot_bgcolor="white",
+            hovermode="x unified",
+        )
+        st.plotly_chart(_fig_sz, use_container_width=True)
+
+        st.divider()
+
+        # ── Sized backtest comparison ─────────────────────────────────────────
+        if not _bt20.empty:
+            st.subheader("Sized Backtest: Cumulative Returns")
+            st.caption("Each method's weight applied to strategy returns with a 1-day lag (no look-ahead).")
+
+            _fig_bt = _go20.Figure()
+            _bt_traces = {
+                "cum_full":              ("Full Allocation", "#aaa",      "dot",   1.5),
+                "cum_blend":             ("Blend",           "#d62728",   "solid", 2.5),
+                "cum_score_sizing":      ("Score-Based",     "#1f77b4",   "solid", 1.2),
+                "cum_regime_prob_sizing":("Regime-Prob",     "#ff7f0e",   "solid", 1.2),
+                "cum_kelly_sizing":      ("Half-Kelly",      "#2ca02c",   "dot",   1.2),
+                "cum_vol_target_sizing": ("Vol-Target",      "#9467bd",   "dash",  1.2),
+                "cum_sp500":             ("SP500",           "#17becf",   "dot",   1.5),
+            }
+            _date_col20 = _bt20["date"] if "date" in _bt20.columns else _bt20.index
+
+            for _k, (_lbl, _clr, _dsh, _wid) in _bt_traces.items():
+                if _k in _bt20.columns:
+                    _fig_bt.add_trace(_go20.Scatter(
+                        x=_date_col20, y=_bt20[_k],
+                        name=_lbl, mode="lines",
+                        line=dict(color=_clr, width=_wid, dash=_dsh),
+                    ))
+
+            _fig_bt.add_hline(y=1.0, line_dash="dot", line_color="#ccc", line_width=1)
+            _fig_bt.update_layout(
+                height=340,
+                yaxis=dict(title="Cumulative Return (rebased 1.0)",
+                           showgrid=True, gridcolor="#eee"),
+                xaxis=dict(showgrid=False, title=None),
+                legend=dict(orientation="h", y=1.12, x=0),
+                margin=dict(l=60, r=20, t=50, b=40),
+                plot_bgcolor="white",
+                hovermode="x unified",
+            )
+            st.plotly_chart(_fig_bt, use_container_width=True)
+
+        st.divider()
+
+        # ── Configuration reference ───────────────────────────────────────────
+        with st.expander("Sizing Configuration", expanded=False):
+            _col_bp, _col_rw = st.columns(2)
+
+            with _col_bp:
+                st.markdown("**Score → Weight Breakpoints**")
+                _bp_used = _ps20.get("breakpoints", SCORE_BREAKPOINTS)
+                _bp_df = pd.DataFrame(_bp_used, columns=["Composite Score", "Weight"])
+                _bp_df["Weight"] = _bp_df["Weight"].map(lambda x: f"{x:.0%}")
+                st.dataframe(_bp_df, use_container_width=True, hide_index=True)
+
+            with _col_rw:
+                st.markdown("**Regime Target Weights**")
+                _rw_used = _ps20.get("regime_weights", REGIME_WEIGHTS)
+                _rw_df = pd.DataFrame(
+                    [{"Regime": k, "Target Weight": f"{v:.0%}"}
+                     for k, v in sorted(_rw_used.items(), key=lambda x: -x[1])]
+                )
+                st.dataframe(_rw_df, use_container_width=True, hide_index=True)
+
+            st.caption(
+                f"Vol-target: {_ps20.get('target_vol', 0.10):.0%} annualised · "
+                "Half-Kelly uses 63-day rolling window · "
+                "Vol-target uses 21-day rolling window"
             )
