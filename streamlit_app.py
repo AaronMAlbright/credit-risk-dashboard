@@ -16,6 +16,7 @@ from src.weight_optimizer import (
     CURRENT_WEIGHTS,
     run_weight_optimization,
 )
+from src.tail_risk import run_tail_risk_analysis
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -91,6 +92,12 @@ def load_attribution(_df):
 
 
 @st.cache_data
+def load_tail_risk(_df):
+    """Run tail risk analysis (cached)."""
+    return run_tail_risk_analysis(_df)
+
+
+@st.cache_data
 def load_weight_optimization(_df):
     """Run weight optimisation (2000 Monte Carlo samples, cached)."""
     return run_weight_optimization(_df, n_samples=2000)
@@ -145,7 +152,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -158,6 +165,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.t
     "Timeline",
     "Signal Decay",
     "Orthogonality",
+    "Tail Risk",
 ])
 
 with tab1:
@@ -1356,3 +1364,143 @@ with tab12:
         st.plotly_chart(fig_roll, use_container_width=True)
     else:
         st.info("Insufficient data for rolling correlations (need > 60 rows).")
+
+with tab13:
+    st.header("Tail Risk")
+    st.caption(
+        "95% CVaR (Conditional Value at Risk / Expected Shortfall) by regime. "
+        "CVaR = mean return of the worst 5% of days. "
+        "More negative = worse left-tail exposure. "
+        "Bootstrap 95% CIs with 500 resamples."
+    )
+
+    _tr = load_tail_risk(df)
+    _rts  = _tr["regime_tail_stats"]
+    _sts  = _tr["strategy_tail_stats"]
+    _rcsp = _tr["rolling_cvar_sp500"]
+    _rcst = _tr["rolling_cvar_strat"]
+    _ddr  = _tr["drawdown_by_regime"]
+    _vsb  = _tr["vs_benchmark"]
+
+    # ── Strategy vs SP500 headline ────────────────────────────────────────────
+    st.subheader("Strategy vs SP500 — Full Sample Tail")
+    if _vsb:
+        _labels = {"strategy": "Strategy", "sp500": "SP500 Buy & Hold"}
+        _tc = st.columns(len(_vsb) * 3)
+        _ci = 0
+        for label, stats in _vsb.items():
+            _disp = _labels.get(label, label)
+            _tc[_ci].metric(f"{_disp} CVaR 95%",
+                            f"{stats['cvar']:.2%}" if pd.notna(stats.get('cvar')) else "—")
+            _tc[_ci + 1].metric(f"{_disp} VaR 95%",
+                                f"{stats['var']:.2%}" if pd.notna(stats.get('var')) else "—")
+            _tc[_ci + 2].metric(f"{_disp} Ann. Vol",
+                                f"{stats['ann_vol']:.1%}" if pd.notna(stats.get('ann_vol')) else "—")
+            _ci += 3
+
+    # ── Rolling CVaR chart ────────────────────────────────────────────────────
+    st.subheader("Rolling 60-Day CVaR (95%)")
+    st.caption("Mean return of worst 5% of days in each 60-day window. More negative = worse tail risk.")
+
+    import plotly.graph_objects as _trgo
+    fig_rcvar = _trgo.Figure()
+    if not _rcsp.empty:
+        fig_rcvar.add_trace(_trgo.Scatter(
+            x=_rcsp.index, y=_rcsp.values,
+            name="SP500", mode="lines",
+            line=dict(color="#e74c3c", width=1.6),
+            hovertemplate="SP500 CVaR: %{y:.2%}<br>%{x|%Y-%m-%d}<extra></extra>",
+        ))
+    if not _rcst.empty:
+        fig_rcvar.add_trace(_trgo.Scatter(
+            x=_rcst.index, y=_rcst.values,
+            name="Strategy", mode="lines",
+            line=dict(color="#27ae60", width=1.6),
+            hovertemplate="Strategy CVaR: %{y:.2%}<br>%{x|%Y-%m-%d}<extra></extra>",
+        ))
+    fig_rcvar.add_hline(y=0, line=dict(color="#cccccc", width=1), opacity=0.6)
+    fig_rcvar.update_layout(
+        xaxis_title="Date", yaxis_title="CVaR (95%)",
+        yaxis_tickformat=".1%", height=360,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        plot_bgcolor="white", paper_bgcolor="white",
+        margin=dict(l=20, r=20, t=45, b=20),
+    )
+    fig_rcvar.update_xaxes(showgrid=True, gridcolor="#eeeeee")
+    fig_rcvar.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+    st.plotly_chart(fig_rcvar, use_container_width=True)
+
+    # ── Per-regime tail stats ─────────────────────────────────────────────────
+    st.subheader("SP500 Tail Risk by Regime")
+    st.caption("Sorted worst-to-best CVaR. CI = 95% bootstrap confidence interval on CVaR.")
+    if not _rts.empty:
+        def _style_cvar(val):
+            if pd.isna(val):
+                return ""
+            v = pd.to_numeric(val, errors="coerce")
+            if pd.isna(v):
+                return ""
+            if v < -0.025:
+                return "background-color: #fde8e8; font-weight: bold"
+            if v < -0.015:
+                return "background-color: #fef9e7"
+            return "background-color: #d5f5e3"
+
+        _pct_cols = ["mean_return", "var_95", "cvar_95", "ci_lower", "ci_upper", "max_loss"]
+        _rts_disp = _rts[["n_obs"] + _pct_cols].copy()
+        for col in _pct_cols:
+            _rts_disp[col] = pd.to_numeric(_rts_disp[col], errors="coerce")
+        _rts_disp.columns = ["N Obs", "Mean Return", "VaR 95%", "CVaR 95%",
+                              "CI Lower", "CI Upper", "Max Loss"]
+        _pct_fmt = {c: lambda v: f"{v:.2%}" if pd.notna(v) else "—"
+                    for c in ["Mean Return", "VaR 95%", "CVaR 95%",
+                               "CI Lower", "CI Upper", "Max Loss"]}
+        st.dataframe(
+            _rts_disp.style.map(_style_cvar, subset=["CVaR 95%"]).format(_pct_fmt, na_rep="—"),
+            use_container_width=True,
+        )
+    else:
+        st.info("No regime tail stats available.")
+
+    # ── Strategy tail by regime ───────────────────────────────────────────────
+    if not _sts.empty:
+        with st.expander("Strategy Daily Return Tail by Regime", expanded=False):
+            _sts_pct = ["mean_return", "var_95", "cvar_95", "max_loss"]
+            _sts_disp = _sts[["n_obs"] + _sts_pct].copy()
+            for col in _sts_pct:
+                _sts_disp[col] = pd.to_numeric(_sts_disp[col], errors="coerce")
+            _sts_disp.columns = ["N Obs", "Mean Return", "VaR 95%", "CVaR 95%", "Max Loss"]
+            _sts_fmt = {c: lambda v: f"{v:.2%}" if pd.notna(v) else "—"
+                        for c in ["Mean Return", "VaR 95%", "CVaR 95%", "Max Loss"]}
+            st.dataframe(
+                _sts_disp.style.format(_sts_fmt, na_rep="—"),
+                use_container_width=True,
+            )
+
+    # ── Forward drawdown by regime ────────────────────────────────────────────
+    st.subheader("Future Drawdown at Regime Entry")
+    st.caption(
+        "Mean and worst SP500 drawdown in the 30/60 days following each regime observation. "
+        "Sorted worst mean 30d drawdown first."
+    )
+    if not _ddr.empty:
+        _ddr_disp = _ddr.copy()
+        dd_fmt_cols = [c for c in _ddr_disp.columns if "dd" in c]
+        for col in dd_fmt_cols:
+            _ddr_disp[col] = pd.to_numeric(_ddr_disp[col], errors="coerce")
+        col_rename = {
+            "n_obs": "N Obs",
+            "mean_dd_30d": "Mean DD 30d", "worst_dd_30d": "Worst DD 30d",
+            "mean_dd_60d": "Mean DD 60d", "worst_dd_60d": "Worst DD 60d",
+        }
+        _ddr_disp = _ddr_disp.rename(columns={k: v for k, v in col_rename.items()
+                                               if k in _ddr_disp.columns})
+        _dd_display_cols = [v for v in col_rename.values() if v in _ddr_disp.columns and v != "N Obs"]
+        _dd_fmt = {c: lambda v: f"{v:.2%}" if pd.notna(v) else "—" for c in _dd_display_cols}
+        st.dataframe(
+            _ddr_disp.style.format(_dd_fmt, na_rep="—"),
+            use_container_width=True,
+        )
+    else:
+        st.info("No future drawdown data available.")
