@@ -40,6 +40,13 @@ from src.scenario_analysis import (
     run_scenario_grid,
     build_tornado_data,
 )
+from src.portfolio_engine import generate_portfolio_weights
+from src.crisis_similarity import CRISIS_ANALOGS, compute_crisis_similarity
+from src.model_health_check import (
+    check_missing_values,
+    check_sample_sizes,
+    check_score_bounds,
+)
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -679,11 +686,13 @@ with tab2:
 with tab3:
     st.header("Portfolio Stance")
 
+    _pw = generate_portfolio_weights(latest)
+
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Equity Weight", f"{latest.get('equity_weight', 0):.0%}")
-    col2.metric("Credit Weight", f"{latest.get('credit_weight', 0):.0%}")
-    col3.metric("Cash Weight", f"{latest.get('cash_weight', 0):.0%}")
-    col4.metric("Duration Bias", latest.get("duration_bias", "N/A"))
+    col1.metric("Equity Weight",  f"{_pw['equity_weight']:.0%}")
+    col2.metric("Credit Weight",  f"{_pw['credit_weight']:.0%}")
+    col3.metric("Cash Weight",    f"{_pw['cash_weight']:.0%}")
+    col4.metric("Duration Bias",  _pw["duration_bias"])
 
     st.subheader("Decision Logic")
     st.write(f"**Decision:** {decision}")
@@ -691,6 +700,79 @@ with tab3:
     st.write(f"**Action:** {action}")
     st.write(f"**Buy Trigger:** {latest.get('buy_trigger', 'N/A')}")
     st.write(f"**Risk-Off Trigger:** {latest.get('risk_off_trigger', 'N/A')}")
+
+    # ── Crisis Similarity ─────────────────────────────────────────────────────
+    st.subheader("Historical Analog Similarity")
+    st.caption(
+        "Euclidean distance between today's component scores and "
+        "five historical regime archetypes. Higher = more similar."
+    )
+
+    _similarity = compute_crisis_similarity(latest)
+    _top_analog  = _similarity[0][0]
+    _top_score   = _similarity[0][1]
+
+    _sim_cols = st.columns(len(_similarity))
+    for _col, (_name, _score) in zip(_sim_cols, _similarity):
+        _color = "#27ae60" if _score >= 70 else "#e67e22" if _score >= 40 else "#95a5a6"
+        _col.markdown(
+            f"""<div style="text-align:center;padding:12px 8px;border-radius:8px;
+                            background:#1a1f2e;border:1px solid #2d3550">
+                  <div style="font-size:11px;color:#aaa;margin-bottom:6px">{_name}</div>
+                  <div style="font-size:24px;font-weight:700;color:{_color}">{_score:.0f}</div>
+                  <div style="font-size:10px;color:#888">/ 100</div>
+                </div>""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        f"Closest analog: **{_top_analog}** (similarity {_top_score:.0f}/100)",
+        help="Similarity = max(0, 100 − L2 distance) across macro, credit, "
+             "complacency, mean-reversion, and treasury stress scores.",
+    )
+
+    # ── Model Health Check ────────────────────────────────────────────────────
+    st.subheader("Model Health")
+
+    _score_cols = [
+        "macro_risk_score_smooth",
+        "credit_market_risk_score_smooth",
+        "liquidity_regime_score_smooth",
+        "cross_asset_divergence_score_smooth",
+        "market_internals_score_smooth",
+        "risk_appetite_score_smooth",
+        "complacency_score_smooth",
+        "mean_reversion_score_smooth",
+        "treasury_stress_score_smooth",
+    ]
+    _required_cols = _score_cols + ["final_decision"]
+
+    _missing  = check_missing_values(df, _required_cols)
+    _bounds   = check_score_bounds(df, _score_cols)
+    _samples  = check_sample_sizes(df, "final_decision")
+
+    _missing_issues  = {k: v for k, v in _missing.items() if v != 0}
+    _bounds_ok   = _bounds == "PASS"
+    _samples_ok  = _samples == "PASS"
+    _missing_ok  = len(_missing_issues) == 0
+
+    _hc1, _hc2, _hc3 = st.columns(3)
+    _hc1.metric("Score Bounds",    "✓ PASS" if _bounds_ok  else "✗ FAIL",
+                delta=None if _bounds_ok  else "out-of-range values detected")
+    _hc2.metric("Missing Values",  "✓ PASS" if _missing_ok else "✗ FAIL",
+                delta=None if _missing_ok else f"{len(_missing_issues)} column(s) flagged")
+    _hc3.metric("Regime Samples",  "✓ PASS" if _samples_ok else "⚠ WARN",
+                delta=None if _samples_ok else "some regimes < 30 obs")
+
+    if not _bounds_ok:
+        with st.expander("Score bounds detail"):
+            st.json(_bounds)
+    if not _missing_ok:
+        with st.expander("Missing values detail"):
+            st.json(_missing_issues)
+    if not _samples_ok:
+        with st.expander("Regime sample sizes"):
+            st.json(_samples)
 
 with tab4:
     st.header("Walk-Forward Validation")
