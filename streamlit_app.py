@@ -19,6 +19,7 @@ from src.weight_optimizer import (
 )
 from src.tail_risk import run_tail_risk_analysis
 from src.stress_episodes import STRESS_EPISODES, run_stress_analysis
+from src.performance_scorecard import run_performance_scorecard
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -124,6 +125,12 @@ def load_stress_analysis(_df):
 
 
 @st.cache_data
+def load_performance_scorecard(_df):
+    """Run performance scorecard (cached)."""
+    return run_performance_scorecard(_df)
+
+
+@st.cache_data
 def load_validation_audit(_df, _windows_df, _transition_counts):
     """Run full validation audit (cached)."""
     return run_validation_audit(_df, windows_df=_windows_df, transition_counts=_transition_counts)
@@ -183,7 +190,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -198,6 +205,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Orthogonality",
     "Tail Risk",
     "Stress Episodes",
+    "Performance",
 ])
 
 with tab1:
@@ -1686,3 +1694,223 @@ with tab14:
                     )
     else:
         st.info("No covered episodes in the current dataset range.")
+
+with tab15:
+    import plotly.graph_objects as _go
+
+    st.header("Performance Scorecard")
+    st.caption(
+        "Full-period and rolling risk-adjusted metrics for the strategy vs. SP500 "
+        "buy-and-hold. Rolling windows: 63 trading days (~3 months), "
+        "126 trading days (~6 months)."
+    )
+
+    _sc = load_performance_scorecard(df)
+    _fp = _sc["full_period"]
+    _roll = _sc["rolling"]
+    _rp = _sc["regime_perf"]
+    _cal = _sc["monthly_cal"]
+    _wins = _sc["windows"]
+
+    # ── Full-period headline metrics ──────────────────────────────────────────
+    st.subheader("Full-Period Summary")
+
+    if _fp:
+        _labels = [("strategy", "Strategy"), ("sp500", "SP500 Buy & Hold")]
+        _metric_rows = [
+            ("Total Return",     "total_return",  "{:.2%}"),
+            ("Ann. Return",      "ann_return",    "{:.2%}"),
+            ("Ann. Volatility",  "ann_vol",       "{:.2%}"),
+            ("Sharpe Ratio",     "sharpe",        "{:.2f}"),
+            ("Max Drawdown",     "max_drawdown",  "{:.2%}"),
+            ("Calmar Ratio",     "calmar",        "{:.2f}"),
+            ("Hit Rate",         "hit_rate",      "{:.1%}"),
+            ("Best Day",         "best_day",      "{:.2%}"),
+            ("Worst Day",        "worst_day",     "{:.2%}"),
+            ("Observations",     "n_obs",         "{:,}"),
+        ]
+
+        _fp_rows = []
+        for metric_label, key, fmt in _metric_rows:
+            row = {"Metric": metric_label}
+            for col_key, col_label in _labels:
+                val = _fp.get(col_key, {}).get(key)
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    row[col_label] = "—"
+                else:
+                    try:
+                        row[col_label] = fmt.format(val)
+                    except (ValueError, TypeError):
+                        row[col_label] = str(val)
+            _fp_rows.append(row)
+
+        _fp_disp = pd.DataFrame(_fp_rows)
+
+        def _style_fp(row):
+            styles = ["font-weight:600"] + [""] * (len(row) - 1)
+            metric = row["Metric"]
+            if metric in ("Sharpe Ratio", "Calmar Ratio", "Total Return",
+                          "Ann. Return", "Hit Rate", "Best Day"):
+                # higher is better
+                s_val = _fp.get("strategy", {}).get(
+                    {"Sharpe Ratio": "sharpe", "Calmar Ratio": "calmar",
+                     "Total Return": "total_return", "Ann. Return": "ann_return",
+                     "Hit Rate": "hit_rate", "Best Day": "best_day"}[metric])
+                b_val = _fp.get("sp500", {}).get(
+                    {"Sharpe Ratio": "sharpe", "Calmar Ratio": "calmar",
+                     "Total Return": "total_return", "Ann. Return": "ann_return",
+                     "Hit Rate": "hit_rate", "Best Day": "best_day"}[metric])
+                if s_val is not None and b_val is not None and not pd.isna(s_val) and not pd.isna(b_val):
+                    if "Strategy" in _fp_disp.columns:
+                        idx_s = _fp_disp.columns.get_loc("Strategy")
+                        if s_val > b_val:
+                            styles[idx_s] = "background-color:#e8f5e9"
+                        elif s_val < b_val:
+                            styles[idx_s] = "background-color:#fff3e0"
+            return styles
+
+        st.dataframe(_fp_disp.style.apply(_style_fp, axis=1),
+                     use_container_width=True, hide_index=True)
+    else:
+        st.info("No return data available.")
+
+    # ── Rolling Sharpe chart ──────────────────────────────────────────────────
+    st.subheader("Rolling Sharpe Ratio")
+    _win_choice = st.radio("Window", [f"{w}d" for w in _wins],
+                           horizontal=True, key="perf_window")
+    _w = int(_win_choice.replace("d", ""))
+
+    if _w in _roll and not _roll[_w].empty:
+        _rf = _roll[_w]
+        _rfig = _go.Figure()
+        if "strategy_sharpe" in _rf.columns:
+            _rfig.add_trace(_go.Scatter(
+                x=_rf.index, y=_rf["strategy_sharpe"],
+                mode="lines", name="Strategy",
+                line=dict(color="#1a1a2e", width=1.8),
+            ))
+        if "sp500_sharpe" in _rf.columns:
+            _rfig.add_trace(_go.Scatter(
+                x=_rf.index, y=_rf["sp500_sharpe"],
+                mode="lines", name="SP500",
+                line=dict(color="#95a5a6", width=1.2, dash="dot"),
+            ))
+        _rfig.add_hline(y=0, line_color="#e74c3c", line_width=1, line_dash="dash")
+        _rfig.update_layout(
+            xaxis_title="Date", yaxis_title=f"Rolling {_w}d Sharpe",
+            height=340, template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
+            margin=dict(l=50, r=20, t=40, b=40),
+        )
+        st.plotly_chart(_rfig, use_container_width=True)
+
+    # ── Rolling max drawdown chart ────────────────────────────────────────────
+    st.subheader("Rolling Max Drawdown")
+    if _w in _roll and not _roll[_w].empty:
+        _rf = _roll[_w]
+        _ddfig = _go.Figure()
+        if "strategy_max_dd" in _rf.columns:
+            _ddfig.add_trace(_go.Scatter(
+                x=_rf.index, y=_rf["strategy_max_dd"],
+                mode="lines", name="Strategy",
+                line=dict(color="#e74c3c", width=1.8),
+                fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+            ))
+        if "sp500_max_dd" in _rf.columns:
+            _ddfig.add_trace(_go.Scatter(
+                x=_rf.index, y=_rf["sp500_max_dd"],
+                mode="lines", name="SP500",
+                line=dict(color="#95a5a6", width=1.2, dash="dot"),
+            ))
+        _ddfig.update_layout(
+            xaxis_title="Date", yaxis_title=f"Rolling {_w}d Max Drawdown",
+            height=300, template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
+            margin=dict(l=50, r=20, t=40, b=40),
+        )
+        st.plotly_chart(_ddfig, use_container_width=True)
+
+    # ── Regime-conditional performance ────────────────────────────────────────
+    st.subheader("Performance by Regime")
+    st.caption(
+        "Strategy and SP500 returns grouped by the model's active regime. "
+        "Sorted by strategy Sharpe (best first). Requires ≥20 observations for "
+        "annualised metrics."
+    )
+    if not _rp.empty:
+        _rp_disp = _rp.copy()
+        _rp_disp = _rp_disp.rename(columns={
+            "n_obs":            "N Days",
+            "strat_mean":       "Strat Daily Mean",
+            "strat_hit_rate":   "Strat Hit Rate",
+            "strat_ann_return": "Strat Ann Return",
+            "strat_ann_vol":    "Strat Ann Vol",
+            "strat_sharpe":     "Strat Sharpe",
+            "sp500_mean":       "SP500 Daily Mean",
+            "sp500_sharpe":     "SP500 Sharpe",
+        })
+        _pct_cols = [c for c in _rp_disp.columns
+                     if any(k in c for k in ["Mean", "Return", "Vol", "Rate"])]
+        _num_cols = ["Strat Sharpe", "SP500 Sharpe"]
+        for _col in _pct_cols + _num_cols:
+            if _col in _rp_disp.columns:
+                _rp_disp[_col] = pd.to_numeric(_rp_disp[_col], errors="coerce")
+
+        _rp_fmt = {c: (lambda v: f"{v:.2%}" if pd.notna(v) else "—")
+                   for c in _pct_cols if c in _rp_disp.columns}
+        _rp_fmt.update({c: (lambda v: f"{v:.2f}" if pd.notna(v) else "—")
+                        for c in _num_cols if c in _rp_disp.columns})
+
+        def _style_sharpe(val):
+            if pd.isna(val):
+                return ""
+            if val > 0.5:
+                return "background-color:#e8f5e9"
+            if val < 0:
+                return "background-color:#fce4e4"
+            return ""
+
+        _display_cols = [c for c in ["N Days", "Strat Daily Mean", "Strat Hit Rate",
+                                      "Strat Ann Return", "Strat Ann Vol", "Strat Sharpe",
+                                      "SP500 Daily Mean", "SP500 Sharpe"]
+                         if c in _rp_disp.columns]
+        st.dataframe(
+            _rp_disp[_display_cols].style
+                .map(_style_sharpe, subset=[c for c in ["Strat Sharpe"] if c in _display_cols])
+                .format(_rp_fmt, na_rep="—"),
+            use_container_width=True,
+        )
+    else:
+        st.info("No regime performance data available.")
+
+    # ── Monthly return calendar ───────────────────────────────────────────────
+    st.subheader("Monthly Return Calendar")
+    _MONTH_NAMES = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
+                    7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
+
+    for _cal_label, _cal_title in [("strategy", "Strategy"), ("sp500", "SP500 Buy & Hold")]:
+        if _cal_label not in _cal:
+            continue
+        _pivot = _cal[_cal_label].copy()
+        _pivot.columns = [_MONTH_NAMES.get(c, c) for c in _pivot.columns]
+        _pivot.index.name = "Year"
+
+        def _fmt_cal(v):
+            return f"{v:.1%}" if pd.notna(v) else "—"
+
+        def _style_cal(val):
+            if pd.isna(val):
+                return "color:#ccc"
+            if val > 0.02:
+                return "background-color:#c8e6c9;color:#1b5e20"
+            if val > 0:
+                return "background-color:#e8f5e9"
+            if val > -0.02:
+                return "background-color:#fff3e0"
+            return "background-color:#ffcdd2;color:#b71c1c"
+
+        with st.expander(f"{_cal_title} — Monthly Returns", expanded=(_cal_label == "strategy")):
+            st.dataframe(
+                _pivot.style.map(_style_cal).format(_fmt_cal, na_rep="—"),
+                use_container_width=True,
+            )
