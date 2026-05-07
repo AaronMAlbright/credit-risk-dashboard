@@ -1,0 +1,253 @@
+"""
+Factor exposure and beta decomposition.
+
+Fits a single-factor OLS model (strategy ~ alpha + beta * SP500) over the
+full period and on rolling windows. Decomposes cumulative strategy returns
+into market-beta contribution and residual alpha. Reports regime-conditional
+beta to validate that the signal correctly modulates market exposure.
+
+Public API
+----------
+  compute_factor_regression      — full-period OLS stats
+  compute_rolling_factor_exposure — rolling beta / alpha / R² time series
+  compute_regime_beta            — per-regime beta and alpha breakdown
+  compute_return_decomposition   — daily and cumulative alpha/beta contributions
+  run_factor_analysis            — orchestrator
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+_ANNUALIZE    = 252
+_MIN_OBS      = 20        # below this, stats are NaN
+_WINDOWS      = [63, 126] # ~3 months, ~6 months
+
+_STRATEGY_COL = "strategy_daily_return"
+_SP500_COL    = "sp500_daily_return"
+_DECISION_COL = "final_decision"
+_DATE_COL     = "date"
+
+
+# ---------------------------------------------------------------------------
+# Core OLS helper
+# ---------------------------------------------------------------------------
+
+def _ols(y: np.ndarray, x: np.ndarray) -> tuple[float, float, float, float]:
+    """
+    Single-factor OLS: y = alpha + beta * x + residual.
+
+    Returns (alpha_daily, beta, r2, residual_std_daily).
+    All NaN when fewer than _MIN_OBS clean observations or zero variance in x.
+    """
+    mask = ~(np.isnan(x) | np.isnan(y))
+    xc, yc = x[mask], y[mask]
+    n = len(xc)
+    if n < _MIN_OBS:
+        return np.nan, np.nan, np.nan, np.nan
+
+    xm, ym  = xc.mean(), yc.mean()
+    var_x   = float(((xc - xm) ** 2).sum())
+    if var_x < 1e-14:
+        return np.nan, np.nan, np.nan, np.nan
+
+    beta    = float(((xc - xm) * (yc - ym)).sum() / var_x)
+    alpha   = float(ym - beta * xm)
+    resid   = yc - alpha - beta * xc
+    ss_tot  = float(((yc - ym) ** 2).sum())
+    r2      = float(1.0 - (resid ** 2).sum() / ss_tot) if ss_tot > 1e-14 else np.nan
+    dof     = max(n - 2, 1)
+    resid_std = float(np.sqrt((resid ** 2).sum() / dof))
+
+    return alpha, beta, r2, resid_std
+
+
+# ---------------------------------------------------------------------------
+# Public functions
+# ---------------------------------------------------------------------------
+
+def compute_factor_regression(df: pd.DataFrame) -> dict:
+    """
+    Full-period single-factor OLS: strategy ~ alpha + beta * SP500.
+
+    Returns dict with:
+      beta             — market exposure (0=cash, 1=fully invested)
+      alpha_daily      — daily alpha intercept
+      ann_alpha        — annualised alpha  (alpha_daily * 252)
+      r2               — fraction of strategy variance explained by SP500
+      residual_vol     — annualised residual (idiosyncratic) volatility
+      info_ratio       — ann_alpha / residual_vol  (risk-adjusted alpha)
+      tracking_error   — ann vol of (strategy − SP500) return differences
+      n_obs            — clean observations used
+    All values NaN when return columns are missing or insufficient data.
+    """
+    if _STRATEGY_COL not in df.columns or _SP500_COL not in df.columns or df.empty:
+        return {}
+
+    s = df[_STRATEGY_COL].values.astype(float)
+    b = df[_SP500_COL].values.astype(float)
+
+    alpha_d, beta, r2, resid_std_d = _ols(s, b)
+
+    ann_alpha    = float(alpha_d * _ANNUALIZE)      if not np.isnan(alpha_d) else np.nan
+    resid_vol    = float(resid_std_d * np.sqrt(_ANNUALIZE)) if not np.isnan(resid_std_d) else np.nan
+    info_ratio   = float(ann_alpha / resid_vol) if (not np.isnan(ann_alpha)
+                                                    and not np.isnan(resid_vol)
+                                                    and resid_vol > 1e-10) else np.nan
+
+    mask = ~(np.isnan(s) | np.isnan(b))
+    te   = float((s[mask] - b[mask]).std(ddof=1) * np.sqrt(_ANNUALIZE)) if mask.sum() > 1 else np.nan
+
+    return {
+        "beta":           round(beta,       4) if not np.isnan(beta)       else np.nan,
+        "alpha_daily":    round(alpha_d,    6) if not np.isnan(alpha_d)    else np.nan,
+        "ann_alpha":      round(ann_alpha,  5) if not np.isnan(ann_alpha)  else np.nan,
+        "r2":             round(r2,         4) if not np.isnan(r2)         else np.nan,
+        "residual_vol":   round(resid_vol,  5) if not np.isnan(resid_vol)  else np.nan,
+        "info_ratio":     round(info_ratio, 3) if not np.isnan(info_ratio) else np.nan,
+        "tracking_error": round(te,         5) if not np.isnan(te)         else np.nan,
+        "n_obs":          int(mask.sum()),
+    }
+
+
+def compute_rolling_factor_exposure(
+    df: pd.DataFrame,
+    windows: list[int] = _WINDOWS,
+) -> dict[int, pd.DataFrame]:
+    """
+    Rolling OLS beta, annualised alpha, and R² for each window.
+
+    Returns dict: {window: DataFrame} with columns:
+      beta, ann_alpha, r2
+    Index is datetime (from 'date' col) or integer. NaN until window is full.
+    """
+    if _STRATEGY_COL not in df.columns or _SP500_COL not in df.columns or df.empty:
+        return {w: pd.DataFrame() for w in windows}
+
+    s_series = df[_STRATEGY_COL].astype(float)
+    b_series = df[_SP500_COL].astype(float)
+    result   = {}
+
+    for w in windows:
+        betas, alphas, r2s = [], [], []
+
+        for end in range(len(df)):
+            start = end - w + 1
+            if start < 0:
+                betas.append(np.nan)
+                alphas.append(np.nan)
+                r2s.append(np.nan)
+                continue
+            yi = s_series.iloc[start : end + 1].values
+            xi = b_series.iloc[start : end + 1].values
+            a, be, r2, _ = _ols(yi, xi)
+            betas.append(be)
+            alphas.append(float(a * _ANNUALIZE) if not np.isnan(a) else np.nan)
+            r2s.append(r2)
+
+        frame = pd.DataFrame({"beta": betas, "ann_alpha": alphas, "r2": r2s})
+        if _DATE_COL in df.columns:
+            frame.index = pd.to_datetime(df[_DATE_COL].values)
+
+        result[w] = frame.round(4)
+
+    return result
+
+
+def compute_regime_beta(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Per-regime beta, annualised alpha, R², and n_obs.
+
+    Returns DataFrame indexed by regime, sorted by beta ascending
+    (lowest market exposure first). Rows with n < _MIN_OBS get NaN stats.
+    """
+    if (_STRATEGY_COL not in df.columns or _SP500_COL not in df.columns
+            or _DECISION_COL not in df.columns or df.empty):
+        return pd.DataFrame()
+
+    rows = []
+    for regime, grp in df.groupby(_DECISION_COL):
+        s = grp[_STRATEGY_COL].values.astype(float)
+        b = grp[_SP500_COL].values.astype(float)
+        n = int((~(np.isnan(s) | np.isnan(b))).sum())
+        a, be, r2, resid_std = _ols(s, b)
+
+        rows.append({
+            "regime":       regime,
+            "n_obs":        n,
+            "beta":         round(be,    4) if not np.isnan(be)    else np.nan,
+            "ann_alpha":    round(a * _ANNUALIZE, 4) if not np.isnan(a) else np.nan,
+            "r2":           round(r2,    4) if not np.isnan(r2)    else np.nan,
+            "residual_vol": round(float(resid_std * np.sqrt(_ANNUALIZE)), 4)
+                            if not np.isnan(resid_std) else np.nan,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    return (
+        pd.DataFrame(rows)
+        .set_index("regime")
+        .sort_values("beta", ascending=True)
+    )
+
+
+def compute_return_decomposition(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Decompose strategy returns into beta contribution and residual alpha.
+
+    Uses the full-period beta to split each day's strategy return:
+      beta_contribution_t  = beta * sp500_return_t
+      alpha_contribution_t = strategy_return_t − beta_contribution_t
+
+    Returns DataFrame with columns:
+      date (if present), strategy_return, sp500_return,
+      beta_contribution, alpha_contribution,
+      cum_strategy, cum_sp500, cum_beta, cum_alpha
+    All cumulative columns start at 1.0.
+    """
+    if _STRATEGY_COL not in df.columns or _SP500_COL not in df.columns or df.empty:
+        return pd.DataFrame()
+
+    reg = compute_factor_regression(df)
+    beta = reg.get("beta", np.nan)
+    if np.isnan(beta):
+        return pd.DataFrame()
+
+    out = df[[_DATE_COL, _STRATEGY_COL, _SP500_COL]].copy() if _DATE_COL in df.columns \
+        else df[[_STRATEGY_COL, _SP500_COL]].copy()
+
+    out = out.rename(columns={_STRATEGY_COL: "strategy_return",
+                               _SP500_COL:    "sp500_return"})
+
+    out["beta_contribution"]  = beta * out["sp500_return"]
+    out["alpha_contribution"] = out["strategy_return"] - out["beta_contribution"]
+
+    for col, src in [("cum_strategy", "strategy_return"),
+                     ("cum_sp500",    "sp500_return"),
+                     ("cum_beta",     "beta_contribution"),
+                     ("cum_alpha",    "alpha_contribution")]:
+        out[col] = (1.0 + out[src].fillna(0)).cumprod()
+
+    return out.reset_index(drop=True)
+
+
+def run_factor_analysis(df: pd.DataFrame) -> dict:
+    """
+    Full factor exposure analysis.
+
+    Returns dict with:
+      regression       — full-period OLS stats dict
+      rolling          — {window: DataFrame} rolling beta/alpha/R²
+      regime_beta      — per-regime beta DataFrame
+      decomposition    — return decomposition DataFrame
+      windows          — window sizes used
+    """
+    return {
+        "regression":    compute_factor_regression(df),
+        "rolling":       compute_rolling_factor_exposure(df),
+        "regime_beta":   compute_regime_beta(df),
+        "decomposition": compute_return_decomposition(df),
+        "windows":       _WINDOWS,
+    }

@@ -20,6 +20,7 @@ from src.weight_optimizer import (
 from src.tail_risk import run_tail_risk_analysis
 from src.stress_episodes import STRESS_EPISODES, run_stress_analysis
 from src.performance_scorecard import run_performance_scorecard
+from src.factor_exposure import run_factor_analysis
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -131,6 +132,12 @@ def load_performance_scorecard(_df):
 
 
 @st.cache_data
+def load_factor_analysis(_df):
+    """Run factor exposure analysis (cached)."""
+    return run_factor_analysis(_df)
+
+
+@st.cache_data
 def load_validation_audit(_df, _windows_df, _transition_counts):
     """Run full validation audit (cached)."""
     return run_validation_audit(_df, windows_df=_windows_df, transition_counts=_transition_counts)
@@ -190,7 +197,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -206,6 +213,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Tail Risk",
     "Stress Episodes",
     "Performance",
+    "Factor Exposure",
 ])
 
 with tab1:
@@ -1914,3 +1922,186 @@ with tab15:
                 _pivot.style.map(_style_cal).format(_fmt_cal, na_rep="—"),
                 use_container_width=True,
             )
+
+with tab16:
+    import plotly.graph_objects as _go16
+
+    st.header("Factor Exposure & Beta Decomposition")
+    st.caption(
+        "Single-factor OLS: strategy return = α + β × SP500 return + ε. "
+        "Quantifies how much of the strategy's return and risk is market beta "
+        "vs. genuine alpha. Rolling windows show how exposure shifts across regimes."
+    )
+
+    _fa = load_factor_analysis(df)
+    _reg = _fa["regression"]
+    _fa_roll = _fa["rolling"]
+    _rb = _fa["regime_beta"]
+    _decomp = _fa["decomposition"]
+    _fa_wins = _fa["windows"]
+
+    # ── Full-period headline metrics ──────────────────────────────────────────
+    if _reg:
+        st.subheader("Full-Period Regression")
+        _fc1, _fc2, _fc3, _fc4, _fc5 = st.columns(5)
+        _fc1.metric("Market Beta",      f"{_reg.get('beta', float('nan')):.3f}")
+        _fc2.metric("Ann. Alpha",       f"{_reg.get('ann_alpha', float('nan')):.2%}")
+        _fc3.metric("R²",               f"{_reg.get('r2', float('nan')):.3f}")
+        _fc4.metric("Info Ratio",       f"{_reg.get('info_ratio', float('nan')):.3f}")
+        _fc5.metric("Tracking Error",   f"{_reg.get('tracking_error', float('nan')):.2%}")
+
+        with st.expander("Interpretation", expanded=False):
+            _beta_v = _reg.get("beta", float("nan"))
+            _ir_v   = _reg.get("info_ratio", float("nan"))
+            _r2_v   = _reg.get("r2", float("nan"))
+            st.markdown(
+                f"- **Beta {_beta_v:.2f}**: strategy holds ~{_beta_v:.0%} of market exposure "
+                f"on average — lower than 1 confirms the signal actively manages equity weight.\n"
+                f"- **R² {_r2_v:.2f}**: {_r2_v:.0%} of strategy variance is explained by SP500 "
+                f"moves; the remaining {1-_r2_v:.0%} is idiosyncratic.\n"
+                f"- **Info Ratio {_ir_v:.2f}**: annualised alpha per unit of residual risk. "
+                f"{'Positive — alpha is additive.' if not pd.isna(_ir_v) and _ir_v > 0 else 'Negative or insufficient data.'}\n"
+                f"- **Tracking Error {_reg.get('tracking_error', float('nan')):.2%}**: "
+                f"annualised standard deviation of daily return differences vs. buy-and-hold."
+            )
+
+    # ── Rolling beta chart ────────────────────────────────────────────────────
+    st.subheader("Rolling Market Beta")
+    _fa_win_choice = st.radio(
+        "Window", [f"{w}d" for w in _fa_wins], horizontal=True, key="fa_window"
+    )
+    _fa_w = int(_fa_win_choice.replace("d", ""))
+
+    if _fa_w in _fa_roll and not _fa_roll[_fa_w].empty:
+        _rfr = _fa_roll[_fa_w]
+        _beta_fig = _go16.Figure()
+        if "beta" in _rfr.columns:
+            _beta_fig.add_trace(_go16.Scatter(
+                x=_rfr.index, y=_rfr["beta"],
+                mode="lines", name=f"Rolling {_fa_w}d Beta",
+                line=dict(color="#1a1a2e", width=1.8),
+            ))
+        _beta_fig.add_hline(
+            y=_reg.get("beta", 0), line_dash="dot",
+            line_color="#e67e22", line_width=1,
+            annotation_text=f"Full-period β={_reg.get('beta', 0):.2f}",
+            annotation_position="top right", annotation_font_size=10,
+        )
+        _beta_fig.add_hline(y=1.0, line_dash="dash", line_color="#95a5a6",
+                             line_width=1, annotation_text="β=1 (Buy & Hold)",
+                             annotation_position="bottom right", annotation_font_size=10)
+        _beta_fig.add_hline(y=0.0, line_color="#ddd", line_width=1)
+        _beta_fig.update_layout(
+            xaxis_title="Date", yaxis_title="Rolling Beta",
+            height=340, template="plotly_white",
+            margin=dict(l=50, r=20, t=40, b=40),
+        )
+        st.plotly_chart(_beta_fig, use_container_width=True)
+
+    # ── Rolling alpha chart ───────────────────────────────────────────────────
+    st.subheader("Rolling Annualised Alpha")
+    if _fa_w in _fa_roll and not _fa_roll[_fa_w].empty:
+        _rfr = _fa_roll[_fa_w]
+        _alpha_fig = _go16.Figure()
+        if "ann_alpha" in _rfr.columns:
+            _alpha_vals = _rfr["ann_alpha"]
+            _alpha_fig.add_trace(_go16.Scatter(
+                x=_rfr.index, y=_alpha_vals,
+                mode="lines", name=f"Rolling {_fa_w}d Ann. Alpha",
+                line=dict(color="#27ae60", width=1.8),
+                fill="tozeroy",
+                fillcolor="rgba(39,174,96,0.08)",
+            ))
+        _alpha_fig.add_hline(y=0, line_color="#e74c3c", line_width=1, line_dash="dash")
+        _alpha_fig.update_layout(
+            xaxis_title="Date", yaxis_title="Annualised Alpha",
+            yaxis_tickformat=".1%",
+            height=300, template="plotly_white",
+            margin=dict(l=50, r=20, t=40, b=40),
+        )
+        st.plotly_chart(_alpha_fig, use_container_width=True)
+
+    # ── Regime beta table ─────────────────────────────────────────────────────
+    st.subheader("Market Beta by Regime")
+    st.caption(
+        "Average market exposure in each model regime. "
+        "Low beta in risk-off regimes and high beta in entry regimes "
+        "validates that the signal correctly modulates market exposure. "
+        "Sorted lowest beta first."
+    )
+    if not _rb.empty:
+        _rb_disp = _rb.copy()
+        for _col in ["beta", "ann_alpha", "r2", "residual_vol"]:
+            if _col in _rb_disp.columns:
+                _rb_disp[_col] = pd.to_numeric(_rb_disp[_col], errors="coerce")
+        _rb_disp = _rb_disp.rename(columns={
+            "n_obs":        "N Days",
+            "beta":         "Beta",
+            "ann_alpha":    "Ann Alpha",
+            "r2":           "R²",
+            "residual_vol": "Residual Vol",
+        })
+        _rb_fmt = {
+            "Beta":         lambda v: f"{v:.3f}" if pd.notna(v) else "—",
+            "Ann Alpha":    lambda v: f"{v:.2%}" if pd.notna(v) else "—",
+            "R²":           lambda v: f"{v:.3f}" if pd.notna(v) else "—",
+            "Residual Vol": lambda v: f"{v:.2%}" if pd.notna(v) else "—",
+        }
+
+        def _style_beta(val):
+            if pd.isna(val):
+                return ""
+            if val < 0.35:
+                return "background-color:#e3f2fd"   # very low — blue tint
+            if val > 0.80:
+                return "background-color:#fff3e0"   # high — amber tint
+            return ""
+
+        _rb_display_cols = [c for c in ["N Days", "Beta", "Ann Alpha", "R²", "Residual Vol"]
+                            if c in _rb_disp.columns]
+        st.dataframe(
+            _rb_disp[_rb_display_cols].style
+                .map(_style_beta, subset=["Beta"])
+                .format(_rb_fmt, na_rep="—"),
+            use_container_width=True,
+        )
+
+    # ── Cumulative return decomposition chart ─────────────────────────────────
+    st.subheader("Cumulative Return Decomposition")
+    st.caption(
+        "Strategy return decomposed into market-beta contribution "
+        "(β × SP500) and residual alpha. If alpha curve rises over time, "
+        "the signal is generating genuine excess return beyond market exposure."
+    )
+    if not _decomp.empty:
+        _decomp_date = _decomp["date"] if "date" in _decomp.columns else _decomp.index
+        _decomp_fig = _go16.Figure()
+        _decomp_fig.add_trace(_go16.Scatter(
+            x=_decomp_date, y=_decomp["cum_strategy"],
+            mode="lines", name="Strategy (total)",
+            line=dict(color="#1a1a2e", width=2),
+        ))
+        _decomp_fig.add_trace(_go16.Scatter(
+            x=_decomp_date, y=_decomp["cum_sp500"],
+            mode="lines", name="SP500 Buy & Hold",
+            line=dict(color="#95a5a6", width=1.2, dash="dot"),
+        ))
+        _decomp_fig.add_trace(_go16.Scatter(
+            x=_decomp_date, y=_decomp["cum_beta"],
+            mode="lines", name="Beta contribution (β × SP500)",
+            line=dict(color="#e67e22", width=1.5, dash="dash"),
+        ))
+        _decomp_fig.add_trace(_go16.Scatter(
+            x=_decomp_date, y=_decomp["cum_alpha"],
+            mode="lines", name="Alpha contribution (residual)",
+            line=dict(color="#27ae60", width=1.5),
+            fill="tozeroy", fillcolor="rgba(39,174,96,0.07)",
+        ))
+        _decomp_fig.add_hline(y=1.0, line_color="#ddd", line_width=1)
+        _decomp_fig.update_layout(
+            xaxis_title="Date", yaxis_title="Cumulative Return (rebased to 1.0)",
+            height=400, template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
+            margin=dict(l=50, r=20, t=50, b=40),
+        )
+        st.plotly_chart(_decomp_fig, use_container_width=True)
