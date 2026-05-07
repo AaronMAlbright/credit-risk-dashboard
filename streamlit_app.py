@@ -10,6 +10,7 @@ from src.regime_charts import (
     build_sp500_with_regime_overlay,
 )
 from src.regime_transition import run_regime_analysis
+from src.signal_decay import HORIZONS, run_signal_decay
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -85,6 +86,12 @@ def load_attribution(_df):
 
 
 @st.cache_data
+def load_signal_decay(_df):
+    """Run signal decay analysis (cached)."""
+    return run_signal_decay(_df)
+
+
+@st.cache_data
 def load_validation_audit(_df, _windows_df, _transition_counts):
     """Run full validation audit (cached)."""
     return run_validation_audit(_df, windows_df=_windows_df, transition_counts=_transition_counts)
@@ -121,7 +128,7 @@ col9, col10 = st.columns(2)
 col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
 col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -132,6 +139,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Regime Transitions",
     "Attribution",
     "Timeline",
+    "Signal Decay",
 ])
 
 with tab1:
@@ -913,3 +921,143 @@ with tab10:
         build_score_history(df, date_start=date_start, date_end=date_end),
         use_container_width=True,
     )
+
+with tab11:
+    st.header("Signal Decay")
+    st.caption(
+        "How long does each regime's forward-return edge persist? "
+        "Horizons: 7, 14, 30, 60, 90 trading days. "
+        "Bootstrap 95% CIs with 500 resamples. "
+        "NaN = fewer than 5 clean observations at that horizon."
+    )
+
+    _decay = load_signal_decay(df)
+    _decay_df = _decay["decay_by_regime"]
+    _corr_df  = _decay["score_correlations"]
+
+    if _decay_df.empty:
+        st.warning("No decay data — ensure final_decision and sp500 columns are present.")
+    else:
+        # ── Mean return by horizon (line chart) ──────────────────────────────
+        st.subheader("Mean Forward Return by Holding Period")
+        st.caption("Each line = one regime. Shaded bands = 95% bootstrap CI.")
+
+        import plotly.graph_objects as go
+        from src.regime_charts import DECISION_COLORS
+
+        fig_decay = go.Figure()
+        regimes_in_decay = _decay_df.index.get_level_values("regime").unique()
+
+        for regime in regimes_in_decay:
+            grp = _decay_df.loc[regime].reset_index()
+            color = DECISION_COLORS.get(regime, "#95a5a6")
+            has_ci = grp["ci_lower"].notna().any()
+
+            # CI band
+            if has_ci:
+                x_band = (
+                    grp["horizon"].tolist()
+                    + grp["horizon"].tolist()[::-1]
+                )
+                y_band = (
+                    grp["ci_upper"].tolist()
+                    + grp["ci_lower"].tolist()[::-1]
+                )
+                fig_decay.add_trace(go.Scatter(
+                    x=x_band, y=y_band,
+                    fill="toself",
+                    fillcolor=color,
+                    opacity=0.10,
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    name=f"{regime}_band",
+                ))
+
+            fig_decay.add_trace(go.Scatter(
+                x=grp["horizon"],
+                y=grp["mean_return"],
+                mode="lines+markers",
+                name=regime,
+                line=dict(color=color, width=2),
+                marker=dict(size=6),
+                hovertemplate=(
+                    f"<b>{regime}</b><br>"
+                    "Horizon: %{x}d<br>"
+                    "Mean Return: %{y:.2%}<extra></extra>"
+                ),
+            ))
+
+        fig_decay.add_hline(
+            y=0, line=dict(color="#888888", width=1, dash="dash"), opacity=0.5
+        )
+        fig_decay.update_layout(
+            xaxis_title="Holding Period (Trading Days)",
+            yaxis_title="Mean Forward Return",
+            yaxis_tickformat=".1%",
+            height=420,
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            margin=dict(l=20, r=20, t=45, b=20),
+        )
+        fig_decay.update_xaxes(showgrid=True, gridcolor="#eeeeee",
+                               tickvals=HORIZONS, ticktext=[f"{h}d" for h in HORIZONS])
+        fig_decay.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+        st.plotly_chart(fig_decay, use_container_width=True)
+
+        # ── Hit rate decay table ──────────────────────────────────────────────
+        st.subheader("Hit Rate by Holding Period")
+        st.caption("% of periods with positive forward return at each horizon.")
+
+        _hr_pivot = _decay_df["hit_rate"].unstack("horizon")
+        _hr_pivot.columns = [f"{h}d" for h in _hr_pivot.columns]
+
+        def _style_hit_rate(val):
+            if pd.isna(val):
+                return ""
+            if val >= 0.60:
+                return "background-color: #d5f5e3; font-weight: bold"
+            if val >= 0.50:
+                return "background-color: #fdfefe"
+            return "background-color: #fde8e8"
+
+        styled_hr = _hr_pivot.style.map(_style_hit_rate).format(
+            lambda v: f"{v:.0%}" if pd.notna(v) else "—"
+        )
+        st.dataframe(styled_hr, use_container_width=True)
+
+        # ── N obs table ───────────────────────────────────────────────────────
+        with st.expander("Observation counts per (regime, horizon)", expanded=False):
+            _n_pivot = _decay_df["n_obs"].unstack("horizon")
+            _n_pivot.columns = [f"{h}d" for h in _n_pivot.columns]
+            st.dataframe(_n_pivot, use_container_width=True)
+
+    # ── Score correlation decay ───────────────────────────────────────────────
+    st.subheader("Score Predictive Power vs Holding Period")
+    st.caption(
+        "Pearson correlation between each smoothed score and forward SP500 return "
+        "at each horizon. Positive = score rise predicts positive returns; "
+        "negative = score rise predicts lower returns (risk-off signal working)."
+    )
+
+    if _corr_df.empty:
+        st.info("No score correlation data available.")
+    else:
+        _corr_disp = _corr_df.copy()
+        _corr_disp.columns = [f"{h}d" for h in _corr_disp.columns]
+
+        def _style_corr(val):
+            if pd.isna(val):
+                return ""
+            if val <= -0.15:
+                return "background-color: #d5f5e3; font-weight: bold"
+            if val >= 0.15:
+                return "background-color: #fde8e8"
+            return ""
+
+        styled_corr = _corr_disp.style.map(_style_corr).format(
+            lambda v: f"{v:.3f}" if pd.notna(v) else "—"
+        )
+        st.dataframe(styled_corr, use_container_width=True)
