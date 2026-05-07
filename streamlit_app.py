@@ -24,6 +24,7 @@ from src.performance_scorecard import run_performance_scorecard
 from src.factor_exposure import run_factor_analysis
 from src.regime_probability import run_regime_probability
 from src.monte_carlo import run_monte_carlo
+from src.subperiod_attribution import run_subperiod_attribution
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -144,6 +145,12 @@ def load_factor_analysis(_df):
 def load_regime_probability(_df):
     """Run regime probability nowcast (cached)."""
     return run_regime_probability(_df)
+
+
+@st.cache_data
+def load_subperiod_attribution(_df):
+    """Run rolling sub-period attribution (cached)."""
+    return run_subperiod_attribution(_df)
 
 
 @st.cache_data
@@ -419,7 +426,7 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19 = st.tabs([
     "Current Signal",
     "Charts",
     "Portfolio",
@@ -438,6 +445,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Factor Exposure",
     "Regime Probability",
     "Monte Carlo",
+    "Sub-period Attribution",
 ])
 
 with tab1:
@@ -2669,4 +2677,194 @@ with tab18:
             st.dataframe(
                 pd.DataFrame(_rows_xh).set_index("Horizon"),
                 use_container_width=True,
+            )
+
+with tab19:
+    st.header("Sub-period Attribution")
+    st.caption(
+        "Performance, factor, and regime statistics broken down by calendar year. "
+        "Answers whether the model's edge is consistent or concentrated in a single window."
+    )
+
+    import plotly.graph_objects as _go19
+
+    _sp19 = load_subperiod_attribution(df)
+    _tbl19 = _sp19["table"]
+    _roll19 = _sp19["rolling"]
+    _rf19  = _sp19["regime_freq"]
+
+    if _tbl19.empty:
+        st.warning("Sub-period attribution unavailable — check input data.")
+    else:
+        # ── Key metrics table ────────────────────────────────────────────────
+        st.subheader("Period-by-Period Metrics")
+
+        _DISPLAY_COLS = {
+            "n_obs":           "N",
+            "strat_ann_ret":   "Strat Ann Ret",
+            "strat_ann_vol":   "Strat Ann Vol",
+            "strat_sharpe":    "Strat Sharpe",
+            "strat_max_dd":    "Strat Max DD",
+            "sp500_sharpe":    "SP500 Sharpe",
+            "excess_ann_ret":  "Excess Ann Ret",
+            "beta":            "Beta",
+            "ann_alpha":       "Ann Alpha",
+            "r2":              "R²",
+            "mean_composite":  "Mean Composite",
+        }
+        _disp_cols = [c for c in _DISPLAY_COLS if c in _tbl19.columns]
+        _disp = _tbl19[_disp_cols].copy().rename(columns=_DISPLAY_COLS)
+
+        # Format for display
+        _fmt = {}
+        for orig, label in _DISPLAY_COLS.items():
+            if "Ret" in label or "Alpha" in label or "Vol" in label or "DD" in label:
+                _fmt[label] = "{:.1%}"
+            elif label in ("Strat Sharpe", "SP500 Sharpe", "Beta", "R²"):
+                _fmt[label] = "{:.2f}"
+            elif label == "Mean Composite":
+                _fmt[label] = "{:.1f}"
+
+        def _color_sharpe(v):
+            if pd.isna(v): return ""
+            if v >= 1.0: return "background-color:#d4edda;color:#155724"
+            if v >= 0.5: return "background-color:#fff3cd;color:#856404"
+            return "background-color:#fee0d2;color:#c0392b"
+
+        def _color_dd(v):
+            if pd.isna(v): return ""
+            if v >= -0.05: return "background-color:#d4edda;color:#155724"
+            if v >= -0.15: return "background-color:#fff3cd;color:#856404"
+            return "background-color:#fee0d2;color:#c0392b"
+
+        def _color_alpha(v):
+            if pd.isna(v): return ""
+            if v > 0.02:  return "background-color:#d4edda;color:#155724"
+            if v > -0.02: return "background-color:#fff3cd;color:#856404"
+            return "background-color:#fee0d2;color:#c0392b"
+
+        _styled = _disp.style
+        if "Strat Sharpe" in _disp.columns:
+            _styled = _styled.map(_color_sharpe, subset=["Strat Sharpe"])
+        if "SP500 Sharpe" in _disp.columns:
+            _styled = _styled.map(_color_sharpe, subset=["SP500 Sharpe"])
+        if "Strat Max DD" in _disp.columns:
+            _styled = _styled.map(_color_dd, subset=["Strat Max DD"])
+        if "Ann Alpha" in _disp.columns:
+            _styled = _styled.map(_color_alpha, subset=["Ann Alpha"])
+        _styled = _styled.format(_fmt, na_rep="—")
+
+        st.dataframe(_styled, use_container_width=True)
+
+        st.divider()
+
+        # ── Sharpe comparison bar chart ──────────────────────────────────────
+        st.subheader("Sharpe Ratio by Period")
+        _periods_plot = [p for p in _tbl19.index if p != "Full Period"]
+        _strat_sharpes = _tbl19.loc[_periods_plot, "strat_sharpe"] if "strat_sharpe" in _tbl19.columns else pd.Series()
+        _sp500_sharpes = _tbl19.loc[_periods_plot, "sp500_sharpe"] if "sp500_sharpe" in _tbl19.columns else pd.Series()
+
+        _fig_sharpe = _go19.Figure()
+        if not _strat_sharpes.empty:
+            _fig_sharpe.add_trace(_go19.Bar(
+                x=_periods_plot, y=_strat_sharpes.values,
+                name="Strategy", marker_color="#1f77b4",
+            ))
+        if not _sp500_sharpes.empty:
+            _fig_sharpe.add_trace(_go19.Bar(
+                x=_periods_plot, y=_sp500_sharpes.values,
+                name="SP500", marker_color="#aaa",
+            ))
+        _fig_sharpe.add_hline(y=1.0, line_dash="dot", line_color="#e74c3c",
+                              annotation_text="Sharpe = 1",
+                              annotation_position="bottom right")
+        _fig_sharpe.update_layout(
+            barmode="group", height=280,
+            yaxis=dict(title="Sharpe Ratio", showgrid=True, gridcolor="#eee"),
+            xaxis=dict(title=None),
+            legend=dict(orientation="h", y=1.1, x=0),
+            margin=dict(l=50, r=20, t=40, b=40),
+            plot_bgcolor="white",
+        )
+        st.plotly_chart(_fig_sharpe, use_container_width=True)
+
+        # ── Rolling 63-day Sharpe ────────────────────────────────────────────
+        if not _roll19.empty and "strat_sharpe" in _roll19.columns:
+            st.subheader(f"Rolling {_sp19['roll_window']}-Day Sharpe Ratio")
+            _fig_roll = _go19.Figure()
+            _fig_roll.add_hline(y=0, line_color="#ccc", line_width=1)
+            _fig_roll.add_hline(y=1.0, line_dash="dot", line_color="#e74c3c",
+                                line_width=1, annotation_text="Sharpe = 1",
+                                annotation_position="bottom right")
+            _fig_roll.add_trace(_go19.Scatter(
+                x=_roll19.index, y=_roll19["strat_sharpe"],
+                name="Strategy", mode="lines",
+                line=dict(color="#1f77b4", width=1.5),
+            ))
+            if "sp500_sharpe" in _roll19.columns:
+                _fig_roll.add_trace(_go19.Scatter(
+                    x=_roll19.index, y=_roll19["sp500_sharpe"],
+                    name="SP500", mode="lines",
+                    line=dict(color="#aaa", width=1.5, dash="dot"),
+                ))
+            _fig_roll.update_layout(
+                height=260,
+                yaxis=dict(title="Sharpe", showgrid=True, gridcolor="#eee"),
+                xaxis=dict(showgrid=False, title=None),
+                legend=dict(orientation="h", y=1.1, x=0),
+                margin=dict(l=50, r=20, t=40, b=40),
+                plot_bgcolor="white",
+                hovermode="x unified",
+            )
+            st.plotly_chart(_fig_roll, use_container_width=True)
+
+        # ── Rolling beta ────────────────────────────────────────────────────
+        if not _roll19.empty and "beta" in _roll19.columns:
+            st.subheader(f"Rolling {_sp19['roll_window']}-Day Beta")
+            _fig_beta19 = _go19.Figure()
+            _fig_beta19.add_hline(y=1.0, line_dash="dot", line_color="#aaa",
+                                   line_width=1, annotation_text="β = 1 (buy & hold)",
+                                   annotation_position="bottom right")
+            _fig_beta19.add_trace(_go19.Scatter(
+                x=_roll19.index, y=_roll19["beta"],
+                mode="lines", name="Beta",
+                line=dict(color="#ff7f0e", width=1.5),
+                fill="tozeroy",
+                fillcolor="rgba(255,127,14,0.07)",
+            ))
+            _fig_beta19.update_layout(
+                height=220,
+                yaxis=dict(title="Beta", showgrid=True, gridcolor="#eee"),
+                xaxis=dict(showgrid=False, title=None),
+                margin=dict(l=50, r=20, t=20, b=40),
+                plot_bgcolor="white",
+                showlegend=False,
+            )
+            st.plotly_chart(_fig_beta19, use_container_width=True)
+
+        # ── Regime frequency heatmap ─────────────────────────────────────────
+        if not _rf19.empty:
+            st.subheader("Regime Frequency by Period")
+            _heat_z   = _rf19.values * 100          # convert to %
+            _heat_x   = list(_rf19.columns)
+            _heat_y   = list(_rf19.index)
+            _text_z   = [[f"{v:.0f}%" for v in row] for row in _heat_z]
+
+            _fig_heat = _go19.Figure(_go19.Heatmap(
+                z=_heat_z, x=_heat_x, y=_heat_y,
+                text=_text_z, texttemplate="%{text}",
+                colorscale="Blues", showscale=True,
+                colorbar=dict(title="% time", ticksuffix="%"),
+                zmin=0, zmax=60,
+            ))
+            _fig_heat.update_layout(
+                height=max(200, len(_heat_y) * 55),
+                xaxis=dict(tickangle=-30, title=None),
+                yaxis=dict(title=None),
+                margin=dict(l=130, r=20, t=20, b=80),
+            )
+            st.plotly_chart(_fig_heat, use_container_width=True)
+            st.caption(
+                "Each row sums to 100%. "
+                "Shift in regime frequency across periods indicates changing market conditions."
             )
