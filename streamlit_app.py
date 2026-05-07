@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
+from src.report_generator import generate_html_report
 from src.bootstrap import run_bootstrap_analysis
 from src.regime_attribution import COMPOSITE_WEIGHTS, DISPLAY_NAMES, run_regime_attribution
 from src.regime_charts import (
@@ -121,9 +122,31 @@ def load_validation_audit(_df, _windows_df, _transition_counts):
     return run_validation_audit(_df, windows_df=_windows_df, transition_counts=_transition_counts)
 
 
+@st.cache_data
+def load_report_html(_df, _audit, _decay, _tail, _weight_opt, _attr):
+    """Generate the HTML signal report (cached against df hash)."""
+    return generate_html_report(_df, audit=_audit, decay_results=_decay,
+                                 tail_risk=_tail, weight_opt=_weight_opt, attr=_attr)
+
+
 df = load_data()
 history = load_history()
 latest = df.iloc[-1]
+
+# ── Sidebar: data staleness indicator ────────────────────────────────────────
+_last_date = pd.to_datetime(df["date"].max()).normalize()
+_today = pd.Timestamp.now().normalize()
+_bdays_stale = max(0, len(pd.bdate_range(_last_date + pd.Timedelta(days=1), _today)))
+_last_date_str = _last_date.strftime("%Y-%m-%d")
+
+st.sidebar.title("Data Status")
+if _bdays_stale == 0:
+    st.sidebar.success(f"Data current — {_last_date_str}")
+elif _bdays_stale == 1:
+    st.sidebar.warning(f"1 trading day stale — last: {_last_date_str}")
+else:
+    st.sidebar.error(f"{_bdays_stale} trading days stale — last: {_last_date_str}")
+st.sidebar.caption(f"Dataset rows: {len(df):,}")
 
 st.title("Macro Credit Risk Dashboard")
 st.caption("Macro, credit, liquidity, complacency, and mean-reversion regime engine.")
@@ -198,6 +221,27 @@ with tab1:
         st.text(REPORT_PATH.read_text())
     else:
         st.warning("No signal report found. Run `python app.py` first.")
+
+    # ── HTML report download ──────────────────────────────────────────────────
+    st.subheader("Export Signal Report")
+    with st.spinner("Building report…"):
+        _regime_results_t1 = load_regime_transition(df)
+        _trans_counts_t1 = _regime_results_t1.get("transition_counts") if _regime_results_t1 else None
+        _wf_windows_t1, _ = load_walk_forward()
+        _audit_t1 = load_validation_audit(df, _wf_windows_t1, _trans_counts_t1)
+        _decay_t1 = load_signal_decay(df)
+        _tail_t1 = load_tail_risk(df)
+        _wopt_t1 = load_weight_optimization(df)
+        _attr_t1 = load_attribution(df)
+        _html_report = load_report_html(df, _audit_t1, _decay_t1, _tail_t1, _wopt_t1, _attr_t1)
+    _report_date = _last_date_str
+    st.download_button(
+        label="⬇ Download HTML Report",
+        data=_html_report.encode("utf-8"),
+        file_name=f"macro_credit_signal_report_{_report_date}.html",
+        mime="text/html",
+    )
+    st.caption("Self-contained HTML — open in any browser. No external dependencies.")
 
 with tab2:
     st.header("Charts")
