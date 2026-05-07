@@ -10,6 +10,13 @@ from src.regime_charts import (
     build_sp500_with_regime_overlay,
 )
 from src.regime_transition import run_regime_analysis
+from src.validation_guard import (
+    CONFIDENCE_EXPLORATORY,
+    CONFIDENCE_INDICATIVE,
+    CONFIDENCE_ROBUST,
+    CONFIDENCE_SIGILS,
+    run_validation_audit,
+)
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -75,6 +82,12 @@ def load_bootstrap(_df, _windows_df):
 def load_attribution(_df):
     """Run regime attribution analysis (cached against df hash)."""
     return run_regime_attribution(_df)
+
+
+@st.cache_data
+def load_validation_audit(_df, _windows_df, _transition_counts):
+    """Run full validation audit (cached)."""
+    return run_validation_audit(_df, windows_df=_windows_df, transition_counts=_transition_counts)
 
 
 df = load_data()
@@ -196,6 +209,87 @@ with tab4:
     st.header("Walk-Forward Validation")
 
     wf_windows, wf_regimes = load_walk_forward()
+
+    # ── Statistical Confidence Summary ───────────────────────────────────────
+    _regime_results = load_regime_transition(df)
+    _trans_counts = _regime_results.get("transition_counts") if _regime_results else None
+    _audit = load_validation_audit(df, wf_windows, _trans_counts)
+    _summary = _audit.get("summary", {})
+    _overall = _summary.get("overall_confidence", CONFIDENCE_EXPLORATORY)
+
+    _badge_color = {
+        CONFIDENCE_ROBUST:      "green",
+        CONFIDENCE_INDICATIVE:  "orange",
+        CONFIDENCE_EXPLORATORY: "red",
+    }.get(_overall, "gray")
+
+    st.markdown(
+        f"**System Confidence:** :{_badge_color}[{CONFIDENCE_SIGILS[_overall]} {_overall}]  "
+        f"&nbsp;&nbsp; Robust: **{_summary.get('n_robust', 0)}** · "
+        f"Indicative: **{_summary.get('n_indicative', 0)}** · "
+        f"Exploratory: **{_summary.get('n_exploratory', 0)}**"
+    )
+
+    _warnings = _audit.get("warnings", [])
+    if _warnings:
+        with st.expander(f"Confidence Warnings ({len(_warnings)})", expanded=(_overall == CONFIDENCE_EXPLORATORY)):
+            for w in _warnings:
+                st.warning(w)
+    else:
+        st.success("No confidence warnings. All analytical layers meet robust thresholds.")
+
+    with st.expander("Regime Confidence Detail", expanded=False):
+        _regime_stats_audit = _audit.get("regime_stats")
+        _trans_audit = _audit.get("transition_matrix")
+        _wf_audit = _audit.get("walk_forward", {})
+        _corr_audit = _audit.get("correlations")
+
+        if _regime_stats_audit is not None and not _regime_stats_audit.empty:
+            st.markdown("**Per-Regime Observation Counts**")
+            _rs_disp = _regime_stats_audit[["n_obs", "mean_return", "hit_rate", "confidence"]].copy()
+            _rs_disp["mean_return"] = _rs_disp["mean_return"].map(
+                lambda x: f"{x:.2%}" if pd.notna(x) else "—"
+            )
+            _rs_disp["hit_rate"] = _rs_disp["hit_rate"].map(
+                lambda x: f"{x:.0%}" if pd.notna(x) else "—"
+            )
+            _rs_disp["confidence"] = _rs_disp["confidence"].map(
+                lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
+            )
+            _rs_disp.columns = ["N Obs", "Mean Return", "Hit Rate", "Confidence"]
+            st.dataframe(_rs_disp, use_container_width=True)
+
+        if _trans_audit is not None and not _trans_audit.empty:
+            st.markdown("**Transition Confidence by From-Regime**")
+            _td_disp = _trans_audit[["n_outgoing", "confidence"]].copy()
+            _td_disp["confidence"] = _td_disp["confidence"].map(
+                lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
+            )
+            _td_disp.columns = ["N Outgoing", "Confidence"]
+            st.dataframe(_td_disp, use_container_width=True)
+
+        if _corr_audit is not None and not _corr_audit.empty:
+            st.markdown("**Signal–Return Correlations**")
+            _ca_disp = _corr_audit[["correlation", "n_obs", "informative", "confidence"]].copy()
+            _ca_disp["correlation"] = _ca_disp["correlation"].map(
+                lambda x: f"{x:.3f}" if pd.notna(x) else "—"
+            )
+            _ca_disp["informative"] = _ca_disp["informative"].map(
+                lambda x: "Yes" if x else "No"
+            )
+            _ca_disp["confidence"] = _ca_disp["confidence"].map(
+                lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
+            )
+            _ca_disp.columns = ["Correlation", "N Obs", "Informative", "Confidence"]
+            st.dataframe(_ca_disp, use_container_width=True)
+
+        _wf_conf = _wf_audit.get("confidence", CONFIDENCE_EXPLORATORY)
+        st.markdown(
+            f"**Walk-Forward:** {CONFIDENCE_SIGILS[_wf_conf]} {_wf_conf} "
+            f"({_wf_audit.get('n_windows', 0)} windows)"
+        )
+
+    st.divider()
 
     if wf_windows is None:
         st.warning("No walk-forward results found. Run `python app.py` to generate them.")
