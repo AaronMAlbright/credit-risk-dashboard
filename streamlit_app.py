@@ -215,32 +215,155 @@ with st.sidebar.expander("Source freshness"):
             else:
                 st.write(f"⚠⚠ {info['label']}: {info['last_date']} ({info['days_stale']}d stale)")
 
+# ── Executive Overview ───────────────────────────────────────────────────────
 st.title("Macro Credit Risk Dashboard")
-st.caption("Macro, credit, liquidity, complacency, and mean-reversion regime engine.")
 
-decision = latest.get("final_decision", "N/A")
-environment = latest.get("final_environment", "N/A")
-action = latest.get("final_action", "N/A")
+decision    = str(latest.get("final_decision",    "N/A"))
+environment = str(latest.get("final_environment", "N/A"))
+composite   = float(latest.get("composite_risk_score_smooth", 0))
+comp_label  = str(latest.get("composite_risk_label", "N/A"))
 
-st.subheader(f"Current Decision: {decision}")
-st.write(f"**Environment:** {environment}")
-st.write(f"**Action:** {action}")
+_DECISION_COLORS = {
+    "Avoid Chasing Risk":   "#d62728",
+    "Buy Stress":           "#2ca02c",
+    "Watch Entry":          "#ff7f0e",
+    "Wait":                 "#1f77b4",
+    "Neutral":              "#7f7f7f",
+    "Hold / Do Not Chase":  "#9467bd",
+    "Hold":                 "#9467bd",
+}
+_badge_bg = _DECISION_COLORS.get(decision, "#555555")
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Macro Risk", round(latest.get("macro_risk_score_smooth", 0), 1))
-col2.metric("Credit Risk", round(latest.get("credit_market_risk_score_smooth", 0), 1))
-col3.metric("Complacency", round(latest.get("complacency_score_smooth", 0), 1))
-col4.metric("Mean Reversion", round(latest.get("mean_reversion_score_smooth", 0), 1))
+if _bdays_stale == 0:
+    _stale_txt = "🟢 Current"
+elif _bdays_stale == 1:
+    _stale_txt = "🟡 1d stale"
+else:
+    _stale_txt = f"🔴 {_bdays_stale}d stale"
 
-col5, col6, col7, col8 = st.columns(4)
-col5.metric("Liquidity", round(latest.get("liquidity_regime_score_smooth", 0), 1))
-col6.metric("Risk Appetite", round(latest.get("risk_appetite_score_smooth", 0), 1))
-col7.metric("Treasury Stress", round(latest.get("treasury_stress_score_smooth", 0), 1))
-col8.metric("SP500 Drawdown", f"{latest.get('sp500_drawdown', 0):.2%}")
+st.markdown(
+    f'<div style="display:flex;align-items:center;gap:16px;margin-bottom:4px">'
+    f'<span style="background:{_badge_bg};color:#fff;padding:5px 14px;'
+    f'border-radius:6px;font-size:1.05em;font-weight:600;letter-spacing:.3px">'
+    f'{decision}</span>'
+    f'<span style="color:#555;font-size:0.95em">{environment}</span>'
+    f'<span style="margin-left:auto;color:#777;font-size:0.9em">'
+    f'{_stale_txt}&nbsp;&nbsp;·&nbsp;&nbsp;{_last_date_str}</span>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
 
-col9, col10 = st.columns(2)
-col9.metric("Composite Risk", round(latest.get("composite_risk_score_smooth", 0), 1))
-col10.metric("Composite Regime", latest.get("composite_risk_label", "N/A"))
+# Key metrics strip
+_perf_ov = load_performance_scorecard(df)
+_fa_ov   = load_factor_analysis(df)
+_strat   = _perf_ov.get("full_period", {}).get("strategy", {})
+_sharpe  = _strat.get("sharpe",       float("nan"))
+_max_dd  = _strat.get("max_drawdown", float("nan"))
+_hit_rt  = _strat.get("hit_rate",     float("nan"))
+_beta    = _fa_ov.get("regression",   {}).get("beta", float("nan"))
+
+mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
+mc1.metric("Composite Score", f"{composite:.1f} / 100")
+mc2.metric("Composite Label", comp_label)
+mc3.metric("Strategy Sharpe", f"{_sharpe:.2f}" if not pd.isna(_sharpe) else "—")
+mc4.metric("Market Beta",     f"{_beta:.2f}"   if not pd.isna(_beta)   else "—",
+           help="β vs. SP500 — full-period OLS")
+mc5.metric("Max Drawdown",    f"{_max_dd:.1%}" if not pd.isna(_max_dd) else "—")
+mc6.metric("Hit Rate",        f"{_hit_rt:.1%}" if not pd.isna(_hit_rt) else "—",
+           help="% of trading days with positive strategy return")
+
+st.divider()
+
+# Two-column overview body
+_ov_l, _ov_r = st.columns([1, 2])
+
+with _ov_l:
+    st.subheader("Score Breakdown")
+    _scores = [
+        ("Macro Risk",      latest.get("macro_risk_score_smooth")),
+        ("Credit Risk",     latest.get("credit_market_risk_score_smooth")),
+        ("Liquidity",       latest.get("liquidity_regime_score_smooth")),
+        ("Complacency",     latest.get("complacency_score_smooth")),
+        ("Mean Reversion",  latest.get("mean_reversion_score_smooth")),
+        ("Risk Appetite",   latest.get("risk_appetite_score_smooth")),
+        ("Treasury Stress", latest.get("treasury_stress_score_smooth")),
+    ]
+    _sdf = pd.DataFrame(_scores, columns=["Component", "Score"]).set_index("Component")
+    _sdf["Score"] = pd.to_numeric(_sdf["Score"], errors="coerce").round(1)
+
+    def _ov_color(v):
+        if pd.isna(v): return ""
+        if v >= 70: return "background-color:#fee0d2;color:#c0392b"
+        if v >= 50: return "background-color:#fff3cd;color:#856404"
+        return "background-color:#d4edda;color:#155724"
+
+    st.dataframe(
+        _sdf.style.map(_ov_color, subset=["Score"]).format({"Score": "{:.1f}"}),
+        use_container_width=True,
+        height=282,
+    )
+
+with _ov_r:
+    import plotly.graph_objects as _ov_go
+
+    _recent90 = df.tail(90).copy()
+    _fig_ov = _ov_go.Figure()
+    _fig_ov.add_trace(_ov_go.Scatter(
+        x=_recent90["date"],
+        y=_recent90["composite_risk_score_smooth"],
+        mode="lines",
+        line=dict(color="#1f77b4", width=2),
+        fill="tozeroy",
+        fillcolor="rgba(31,119,180,0.08)",
+        name="Composite",
+    ))
+    _fig_ov.add_hrect(y0=70, y1=100, fillcolor="rgba(214,39,40,0.07)",  line_width=0,
+                      annotation_text="Elevated", annotation_position="top left")
+    _fig_ov.add_hrect(y0=50, y1=70,  fillcolor="rgba(255,127,14,0.07)", line_width=0,
+                      annotation_text="Caution",  annotation_position="top left")
+    _fig_ov.update_layout(
+        title="Composite Score — Last 90 Trading Days",
+        height=240,
+        margin=dict(l=0, r=8, t=32, b=8),
+        xaxis=dict(showgrid=False, title=None),
+        yaxis=dict(range=[0, 100], showgrid=True, gridcolor="#eee", title=None),
+        showlegend=False,
+        plot_bgcolor="white",
+    )
+    st.plotly_chart(_fig_ov, use_container_width=True)
+
+    if "strategy_daily_return" in df.columns and "sp500_daily_return" in df.columns:
+        _cum_s = (1 + df["strategy_daily_return"].fillna(0)).cumprod()
+        _cum_m = (1 + df["sp500_daily_return"].fillna(0)).cumprod()
+        _fig_cum = _ov_go.Figure()
+        _fig_cum.add_trace(_ov_go.Scatter(x=df["date"], y=_cum_s,
+                                          name="Strategy",
+                                          line=dict(color="#1f77b4", width=1.5)))
+        _fig_cum.add_trace(_ov_go.Scatter(x=df["date"], y=_cum_m,
+                                          name="SP500",
+                                          line=dict(color="#aaa", width=1.5, dash="dot")))
+        _fig_cum.update_layout(
+            title="Cumulative Return — Full Period",
+            height=200,
+            margin=dict(l=0, r=8, t=32, b=0),
+            xaxis=dict(showgrid=False, title=None),
+            yaxis=dict(showgrid=True, gridcolor="#eee", title=None),
+            legend=dict(orientation="h", y=-0.25, x=0),
+            plot_bgcolor="white",
+        )
+        st.plotly_chart(_fig_cum, use_container_width=True)
+
+# Alerts banner
+if _bdays_stale >= 2:
+    st.warning(
+        f"Data is **{_bdays_stale} trading days stale** (last: {_last_date_str}). "
+        f"Use '⟳ Refresh Data' in the sidebar to fetch the latest FRED data."
+    )
+if composite >= 70:
+    st.warning(
+        f"Composite risk is **elevated at {composite:.1f}**. "
+        f"Current decision: **{decision}**. Review signal carefully before acting."
+    )
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
     "Current Signal",
