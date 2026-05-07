@@ -3,6 +3,7 @@ import streamlit as st
 from pathlib import Path
 
 from src.report_generator import generate_html_report
+from src.data_pipeline import check_api_key, run_pipeline, fetch_source_dates
 from src.bootstrap import run_bootstrap_analysis
 from src.regime_attribution import COMPOSITE_WEIGHTS, DISPLAY_NAMES, run_regime_attribution
 from src.regime_charts import (
@@ -155,7 +156,7 @@ df = load_data()
 history = load_history()
 latest = df.iloc[-1]
 
-# ── Sidebar: data staleness indicator ────────────────────────────────────────
+# ── Sidebar: data status + live refresh ──────────────────────────────────────
 _last_date = pd.to_datetime(df["date"].max()).normalize()
 _today = pd.Timestamp.now().normalize()
 _bdays_stale = max(0, len(pd.bdate_range(_last_date + pd.Timedelta(days=1), _today)))
@@ -163,12 +164,56 @@ _last_date_str = _last_date.strftime("%Y-%m-%d")
 
 st.sidebar.title("Data Status")
 if _bdays_stale == 0:
-    st.sidebar.success(f"Data current — {_last_date_str}")
+    st.sidebar.success(f"Current — {_last_date_str}")
 elif _bdays_stale == 1:
-    st.sidebar.warning(f"1 trading day stale — last: {_last_date_str}")
+    st.sidebar.warning(f"1 trading day stale — {_last_date_str}")
 else:
-    st.sidebar.error(f"{_bdays_stale} trading days stale — last: {_last_date_str}")
+    st.sidebar.error(f"{_bdays_stale} trading days stale — {_last_date_str}")
 st.sidebar.caption(f"Dataset rows: {len(df):,}")
+
+# API key status
+_key_info = check_api_key()
+if _key_info["available"]:
+    st.sidebar.caption(f"FRED key: {_key_info['key_preview']}")
+else:
+    st.sidebar.caption("⚠ FRED_API_KEY not set — refresh disabled")
+
+st.sidebar.divider()
+
+# Refresh button
+_refresh_disabled = not _key_info["available"]
+if st.sidebar.button("⟳ Refresh Data", disabled=_refresh_disabled,
+                     help="Fetch latest FRED data and re-score the model (takes ~30–60s)"):
+    with st.sidebar:
+        with st.spinner("Running pipeline…"):
+            _result = run_pipeline()
+    if _result["success"]:
+        st.sidebar.success(
+            f"Updated to {_result['csv_last_date']} "
+            f"in {_result['elapsed_s']:.0f}s"
+        )
+        st.cache_data.clear()
+        st.rerun()
+    else:
+        st.sidebar.error(f"Refresh failed: {_result['error']}")
+        if _result.get("stderr"):
+            with st.sidebar.expander("Error details"):
+                st.code(_result["stderr"][-800:])
+
+# Source freshness expander (slow — only loads when expanded)
+with st.sidebar.expander("Source freshness"):
+    if st.button("Check FRED freshness", key="check_freshness"):
+        with st.spinner("Querying FRED…"):
+            _src = fetch_source_dates()
+        for sid, info in _src.items():
+            if not info["available"]:
+                st.write(f"❌ {info['label']}: unavailable")
+            elif info["days_stale"] == 0:
+                st.write(f"✓ {info['label']}: {info['last_date']}")
+            elif info["days_stale"] <= 5:
+                st.write(f"⚠ {info['label']}: {info['last_date']} ({info['days_stale']}d stale)")
+            else:
+                st.write(f"⚠⚠ {info['label']}: {info['last_date']} ({info['days_stale']}d stale)")
 
 st.title("Macro Credit Risk Dashboard")
 st.caption("Macro, credit, liquidity, complacency, and mean-reversion regime engine.")
