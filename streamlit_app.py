@@ -792,11 +792,15 @@ with tab9:
     if shifts.empty:
         st.info("No regime transitions found in the dataset.")
     else:
-        delta_cols = [c for c in shifts.columns if c.endswith("_delta")]
+        delta_cols = [c for c in shifts.columns if c.endswith("_delta") and c != "composite_delta"]
         display_cols = ["date", "from_regime", "to_regime",
                         "primary_driver", "secondary_driver",
                         "composite_delta", "direction"] + delta_cols
+        # Deduplicate while preserving order (safety net)
+        seen: set = set()
+        display_cols = [c for c in display_cols if not (c in seen or seen.add(c))]
         shift_disp = shifts[[c for c in display_cols if c in shifts.columns]].copy()
+        assert len(shift_disp.columns) == len(set(shift_disp.columns)), "Duplicate columns in shift_disp"
         if "date" in shift_disp.columns:
             shift_disp["date"] = pd.to_datetime(shift_disp["date"]).dt.strftime("%Y-%m-%d")
 
