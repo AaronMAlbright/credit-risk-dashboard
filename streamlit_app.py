@@ -1354,90 +1354,165 @@ with tab4:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with tab5:
+    from src.backtester import OOS_CUTOFF, compute_oos_split
+    import plotly.graph_objects as _bt_go
+
     st.header("Backtest")
+    st.caption(
+        f"Transaction costs: 10 bps per rebalance. "
+        f"**In-sample** = signal development period (before {OOS_CUTOFF}). "
+        f"**Out-of-sample** = honest forward test (from {OOS_CUTOFF} onward). "
+        f"Credit spread proxy: Moody's Baa (BAA10Y) — ICE BofA series unavailable pre-2023."
+    )
 
-    required_cols = [
-        "strategy_equity_curve",
-        "sp500_equity_curve",
-        "strategy_daily_return",
-        "sp500_daily_return",
-        "strategy_drawdown",
-        "sp500_backtest_drawdown",
-    ]
-
+    required_cols = ["strategy_equity_curve", "sp500_equity_curve",
+                     "strategy_daily_return", "sp500_daily_return",
+                     "strategy_drawdown", "sp500_backtest_drawdown"]
     missing_cols = [c for c in required_cols if c not in df.columns]
 
     if missing_cols:
         st.warning(f"Missing backtest columns: {missing_cols}. Run `python app.py` first.")
     else:
-        strategy_total = df["strategy_equity_curve"].iloc[-1] - 1
-        sp500_total = df["sp500_equity_curve"].iloc[-1] - 1
-        strategy_total = df["strategy_equity_curve"].iloc[-1] - 1
-        sp500_total = df["sp500_equity_curve"].iloc[-1] - 1
+        _split = compute_oos_split(df, cutoff=OOS_CUTOFF)
+        _is  = _split["in_sample"]
+        _oos = _split["out_of_sample"]
+        _fp  = _split["full_period"]
 
-        strategy_vol = df["strategy_daily_return"].std() * (252 ** 0.5)
-        sp500_vol = df["sp500_daily_return"].std() * (252 ** 0.5)
+        def _pct(v, fallback="—"):
+            return f"{v:.2%}" if isinstance(v, float) and not pd.isna(v) else fallback
 
-        strategy_sharpe = (
-                                  df["strategy_daily_return"].mean()
-                                  / df["strategy_daily_return"].std()
-                          ) * (252 ** 0.5)
+        def _f2(v, fallback="—"):
+            return f"{v:.2f}" if isinstance(v, float) and not pd.isna(v) else fallback
 
-        sp500_sharpe = (
-                               df["sp500_daily_return"].mean()
-                               / df["sp500_daily_return"].std()
-                       ) * (252 ** 0.5)
+        # ── IS vs OOS summary table ───────────────────────────────────────────
+        _bt_metrics = {
+            "Period":          [f"In-Sample ({_split['is_start']} → {_split['is_end']})",
+                                f"Out-of-Sample ({_split['oos_start']} → {_split['oos_end']})",
+                                f"Full Period"],
+            "Trading Days":    [_split["is_n_days"], _split["oos_n_days"],
+                                _split["is_n_days"] + _split["oos_n_days"]],
+            "Strategy Return": [_pct(_is.get("strategy_total_return")),
+                                _pct(_oos.get("strategy_total_return")),
+                                _pct(_fp.get("strategy_total_return"))],
+            "SP500 Return":    [_pct(_is.get("sp500_total_return")),
+                                _pct(_oos.get("sp500_total_return")),
+                                _pct(_fp.get("sp500_total_return"))],
+            "Strategy Sharpe": [_f2(_is.get("strategy_sharpe")),
+                                _f2(_oos.get("strategy_sharpe")),
+                                _f2(_fp.get("strategy_sharpe"))],
+            "SP500 Sharpe":    [_f2(_is.get("sp500_sharpe")),
+                                _f2(_oos.get("sp500_sharpe")),
+                                _f2(_fp.get("sp500_sharpe"))],
+            "Max Drawdown":    [_pct(_is.get("strategy_max_drawdown")),
+                                _pct(_oos.get("strategy_max_drawdown")),
+                                _pct(_fp.get("strategy_max_drawdown"))],
+            "Volatility":      [_pct(_is.get("strategy_volatility")),
+                                _pct(_oos.get("strategy_volatility")),
+                                _pct(_fp.get("strategy_volatility"))],
+            "Hit Rate":        [_pct(_is.get("strategy_hit_rate")),
+                                _pct(_oos.get("strategy_hit_rate")),
+                                _pct(_fp.get("strategy_hit_rate"))],
+        }
+        _bt_df = pd.DataFrame(_bt_metrics).set_index("Period")
 
-        capture_ratio = (
-            strategy_total / sp500_total
-            if sp500_total != 0
-            else 0
+        def _bt_row_color(row):
+            colors = []
+            for col in row.index:
+                if col in ("Strategy Sharpe", "Strategy Return", "Hit Rate"):
+                    try:
+                        v = float(str(row[col]).replace("%", ""))
+                        if v > 0:
+                            colors.append("background-color:rgba(39,174,96,0.15);color:#27ae60")
+                        else:
+                            colors.append("background-color:rgba(231,76,60,0.15);color:#e74c3c")
+                    except Exception:
+                        colors.append("")
+                else:
+                    colors.append("")
+            return colors
+
+        st.dataframe(
+            _bt_df.style.apply(_bt_row_color, axis=1),
+            use_container_width=True,
         )
 
-        drawdown_improvement = (
-                abs(df["sp500_backtest_drawdown"].min())
-                - abs(df["strategy_drawdown"].min())
+        st.info(
+            "**How to read this:** The out-of-sample period is the only honest test. "
+            "The in-sample period is where signal thresholds were developed — "
+            "good performance there is expected and not informative.",
+            icon="ℹ️",
         )
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Strategy Total Return", f"{strategy_total:.2%}")
-        col2.metric("SP500 Total Return", f"{sp500_total:.2%}")
-        col3.metric("Strategy Max Drawdown", f"{df['strategy_drawdown'].min():.2%}")
-        col4.metric("SP500 Max Drawdown", f"{df['sp500_backtest_drawdown'].min():.2%}")
-        col5, col6, col7, col8 = st.columns(4)
+        # ── Equity curve with IS/OOS shading ─────────────────────────────────
+        st.subheader("Equity Curve — Strategy vs SP500")
+        _bt_df2 = df[["date", "strategy_equity_curve", "sp500_equity_curve"]].copy()
+        _bt_df2["date"] = pd.to_datetime(_bt_df2["date"])
+        _cutoff_ts = pd.Timestamp(OOS_CUTOFF)
 
-        col5.metric(
-            "Strategy Volatility",
-            f"{strategy_vol:.2%}"
+        _fig_bt = _bt_go.Figure()
+
+        # IS shading
+        _is_dates = _bt_df2[_bt_df2["date"] < _cutoff_ts]["date"]
+        if not _is_dates.empty:
+            _fig_bt.add_vrect(
+                x0=str(_is_dates.iloc[0].date()),
+                x1=str(_is_dates.iloc[-1].date()),
+                fillcolor="rgba(255,255,255,0.03)",
+                line_width=0,
+                annotation_text="In-Sample",
+                annotation_position="top left",
+                annotation_font=dict(color="rgba(150,150,150,0.7)", size=10),
+            )
+
+        # OOS shading
+        _oos_dates = _bt_df2[_bt_df2["date"] >= _cutoff_ts]["date"]
+        if not _oos_dates.empty:
+            _fig_bt.add_vrect(
+                x0=str(_oos_dates.iloc[0].date()),
+                x1=str(_oos_dates.iloc[-1].date()),
+                fillcolor="rgba(79,142,247,0.04)",
+                line_width=0,
+                annotation_text="Out-of-Sample",
+                annotation_position="top left",
+                annotation_font=dict(color="rgba(79,142,247,0.7)", size=10),
+            )
+
+        # Cutoff line
+        _fig_bt.add_vline(
+            x=OOS_CUTOFF, line_color="rgba(79,142,247,0.4)",
+            line_dash="dash", line_width=1.5,
         )
 
-        col6.metric(
-            "SP500 Volatility",
-            f"{sp500_vol:.2%}"
+        _fig_bt.add_trace(_bt_go.Scatter(
+            x=_bt_df2["date"],
+            y=(_bt_df2["strategy_equity_curve"] - 1) * 100,
+            name="Strategy", line=dict(color="#4f8ef7", width=2.5),
+            fill="tozeroy", fillcolor="rgba(79,142,247,0.07)",
+        ))
+        _fig_bt.add_trace(_bt_go.Scatter(
+            x=_bt_df2["date"],
+            y=(_bt_df2["sp500_equity_curve"] - 1) * 100,
+            name="SP500", line=dict(color="#6b7280", width=1.8, dash="dot"),
+        ))
+        _fig_bt.add_hline(y=0, line_color="rgba(255,255,255,0.12)", line_width=1)
+        _fig_bt.update_layout(
+            height=320,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            margin=dict(l=8, r=8, t=32, b=8),
+            xaxis=dict(showgrid=False, color="#6b7280"),
+            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                       color="#6b7280", title="Cumulative Return %"),
+            legend=dict(orientation="h", y=1.1, bgcolor="rgba(0,0,0,0)"),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                            font=dict(color="#e2e8f0")),
         )
-
-        col7.metric(
-            "Strategy Sharpe",
-            f"{strategy_sharpe:.2f}"
-        )
-
-        col8.metric(
-            "Capture Ratio",
-            f"{capture_ratio:.2f}"
-        )
-        chart_path = CHART_DIR / "backtest_equity_curve.png"
-        if chart_path.exists():
-            st.image(str(chart_path), use_container_width=True)
+        st.plotly_chart(_fig_bt, use_container_width=True)
 
         st.subheader("Recent Strategy Weights")
-        weight_cols = [
-            "date",
-            "final_decision",
-            "composite_risk_label",
-            "strategy_weight",
-            "strategy_weight_lagged",
-            "strategy_daily_return",
-        ]
+        weight_cols = ["date", "final_decision", "composite_risk_label",
+                       "strategy_weight", "strategy_weight_lagged",
+                       "strategy_daily_return"]
         existing_weight_cols = [c for c in weight_cols if c in df.columns]
         st.dataframe(df[existing_weight_cols].tail(50), use_container_width=True)
 

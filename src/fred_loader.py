@@ -9,7 +9,7 @@ load_dotenv()
 fred = Fred(api_key=os.getenv("FRED_API_KEY"))
 
 
-def get_series(series_id, start_date="2020-01-01", retries=3, delay=2):
+def get_series(series_id, start_date="2015-01-01", retries=3, delay=2):
     last_error = None
 
     for attempt in range(retries):

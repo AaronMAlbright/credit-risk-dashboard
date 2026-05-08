@@ -1,4 +1,9 @@
 import numpy as np
+import pandas as pd
+
+# Hard OOS cutoff — thresholds and signal weights were developed on data
+# before this date. Everything from here onward is a genuine out-of-sample test.
+OOS_CUTOFF = "2020-01-01"
 
 
 def assign_strategy_return(row):
@@ -60,26 +65,129 @@ def build_strategy_backtest(df):
     return df
 
 
-def compute_backtest_summary(df):
-    valid = df.dropna(subset=["strategy_forward_30d_return"])
+def compute_backtest_summary(df, tc_bps=10):
+    """
+    Compute backtest summary stats with optional transaction costs.
+
+    tc_bps : basis points charged per day of weight change (default 10 bps).
+             Applied when strategy_weight_lagged differs from the prior day.
+    """
+    d = df.copy()
+
+    # Transaction cost: deduct tc_bps on days where weight changes
+    if "strategy_weight_lagged" in d.columns and tc_bps > 0:
+        weight_change = d["strategy_weight_lagged"].diff().abs().fillna(0)
+        tc = weight_change * (tc_bps / 10_000)
+        d["strategy_daily_return"] = d["strategy_daily_return"] - tc
+
+    valid = d.dropna(subset=["strategy_forward_30d_return"])
 
     summary = {
         "avg_strategy_30d_return": valid["strategy_forward_30d_return"].mean(),
-        "avg_sp500_30d_return": valid["sp500_forward_30d_return"].mean(),
-        "strategy_hit_rate": (valid["strategy_forward_30d_return"] > 0).mean(),
-        "sp500_hit_rate": (valid["sp500_forward_30d_return"] > 0).mean(),
+        "avg_sp500_30d_return":    valid["sp500_forward_30d_return"].mean(),
+        "strategy_hit_rate":  (valid["strategy_forward_30d_return"] > 0).mean(),
+        "sp500_hit_rate":     (valid["sp500_forward_30d_return"] > 0).mean(),
         "strategy_worst_5pct": valid["strategy_forward_30d_return"].quantile(0.05),
-        "sp500_worst_5pct": valid["sp500_forward_30d_return"].quantile(0.05),
+        "sp500_worst_5pct":    valid["sp500_forward_30d_return"].quantile(0.05),
     }
 
-    if "strategy_equity_curve" in df.columns:
+    if "strategy_equity_curve" in d.columns:
+        # Recompute equity curve with transaction costs applied
+        eq = (1 + d["strategy_daily_return"].fillna(0)).cumprod()
+        sp = (1 + d["sp500_daily_return"].fillna(0)).cumprod()
+        dd_strat = (eq / eq.cummax() - 1).min()
+        dd_sp    = (sp / sp.cummax() - 1).min()
         summary.update({
-            "strategy_total_return": df["strategy_equity_curve"].iloc[-1] - 1,
-            "sp500_total_return": df["sp500_equity_curve"].iloc[-1] - 1,
-            "strategy_volatility": df["strategy_daily_return"].std() * np.sqrt(252),
-            "sp500_volatility": df["sp500_daily_return"].std() * np.sqrt(252),
-            "strategy_max_drawdown": df["strategy_drawdown"].min(),
-            "sp500_max_drawdown": df["sp500_backtest_drawdown"].min(),
+            "strategy_total_return": eq.iloc[-1] - 1,
+            "sp500_total_return":    sp.iloc[-1] - 1,
+            "strategy_volatility":   d["strategy_daily_return"].std() * np.sqrt(252),
+            "sp500_volatility":      d["sp500_daily_return"].std() * np.sqrt(252),
+            "strategy_max_drawdown": dd_strat,
+            "sp500_max_drawdown":    dd_sp,
+            "strategy_sharpe": (
+                d["strategy_daily_return"].mean() /
+                d["strategy_daily_return"].std() * np.sqrt(252)
+                if d["strategy_daily_return"].std() > 0 else np.nan
+            ),
+            "sp500_sharpe": (
+                d["sp500_daily_return"].mean() /
+                d["sp500_daily_return"].std() * np.sqrt(252)
+                if d["sp500_daily_return"].std() > 0 else np.nan
+            ),
         })
 
     return summary
+
+
+def compute_oos_split(df, cutoff=OOS_CUTOFF, tc_bps=10):
+    """
+    Split the backtest into in-sample and out-of-sample periods and compute
+    separate performance stats for each.
+
+    Parameters
+    ----------
+    df      : output of build_strategy_backtest()
+    cutoff  : ISO date string — first date of the OOS period
+    tc_bps  : transaction cost in basis points per day of weight change
+
+    Returns dict:
+        cutoff          — the cutoff date used
+        in_sample       — summary dict for IS period
+        out_of_sample   — summary dict for OOS period
+        full_period     — summary dict for full history
+        is_start        — first IS date (str)
+        is_end          — last IS date (str)
+        oos_start       — first OOS date (str)
+        oos_end         — last OOS date (str)
+        is_n_days       — number of IS trading days
+        oos_n_days      — number of OOS trading days
+    """
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"] if "date" in d.columns else d.index)
+
+    cutoff_ts = pd.Timestamp(cutoff)
+    is_mask   = d["date"] < cutoff_ts
+    oos_mask  = d["date"] >= cutoff_ts
+
+    is_df  = d[is_mask].copy()
+    oos_df = d[oos_mask].copy()
+
+    def _safe_summary(sub):
+        if sub.empty:
+            return {}
+        # Rebase equity curves to 1.0 for the sub-period
+        sub = sub.copy()
+        if "strategy_daily_return" in sub.columns:
+            sub["strategy_equity_curve"] = (
+                1 + sub["strategy_daily_return"].fillna(0)
+            ).cumprod()
+            sub["sp500_equity_curve"] = (
+                1 + sub["sp500_daily_return"].fillna(0)
+            ).cumprod()
+            sub["strategy_drawdown"] = (
+                sub["strategy_equity_curve"] /
+                sub["strategy_equity_curve"].cummax() - 1
+            )
+            sub["sp500_backtest_drawdown"] = (
+                sub["sp500_equity_curve"] /
+                sub["sp500_equity_curve"].cummax() - 1
+            )
+        return compute_backtest_summary(sub, tc_bps=tc_bps)
+
+    def _date_str(sub, which="first"):
+        if sub.empty:
+            return "—"
+        return str(sub["date"].iloc[0 if which == "first" else -1].date())
+
+    return {
+        "cutoff":        cutoff,
+        "in_sample":     _safe_summary(is_df),
+        "out_of_sample": _safe_summary(oos_df),
+        "full_period":   _safe_summary(d),
+        "is_start":      _date_str(is_df, "first"),
+        "is_end":        _date_str(is_df, "last"),
+        "oos_start":     _date_str(oos_df, "first"),
+        "oos_end":       _date_str(oos_df, "last"),
+        "is_n_days":     int(is_mask.sum()),
+        "oos_n_days":    int(oos_mask.sum()),
+    }
