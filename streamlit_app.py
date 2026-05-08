@@ -1201,46 +1201,66 @@ with _analytics_sub1:
         _wf_audit = _audit.get("walk_forward", {})
         _corr_audit = _audit.get("correlations")
 
+        # ── Grouped regime stats (5 buckets — more obs per cell) ─────────────
+        if "grouped_regime" in df.columns and "sp500_forward_30d_return" in df.columns:
+            _grp = (
+                df.groupby("grouped_regime")["sp500_forward_30d_return"]
+                .agg(n="count", mean_fwd=("mean"), hit_rate=lambda x: (x > 0).mean())
+                .sort_values("mean_fwd")
+                .rename(columns={"n": "N Obs", "mean_fwd": "Mean Fwd 30d", "hit_rate": "Hit Rate"})
+            )
+            _grp["Sample Flag"] = _grp["N Obs"].apply(_sample_flag)
+            _ORDER = ["Recovery / Buy Stress", "Risk-On", "Neutral", "Caution", "Stress"]
+            _grp = _grp.reindex([r for r in _ORDER if r in _grp.index])
+            st.markdown("**Grouped Regime Forward Returns (5 buckets)**")
+            st.caption(
+                "Simplified regimes improve observation counts vs 9-label detail view. "
+                "Sample reliability: Exploratory=n<20 · Indicative=n<50 · Reliable=n≥50"
+            )
+            st.dataframe(
+                _grp.style.format({"Mean Fwd 30d": "{:.2%}", "Hit Rate": "{:.0%}"}),
+                use_container_width=True,
+            )
         if _regime_stats_audit is not None and not _regime_stats_audit.empty:
-            st.markdown("**Per-Regime Observation Counts**")
-            st.caption("Sample reliability: Exploratory = n<20 · Indicative = n<50 · Reliable = n≥50")
-            _rs_disp = _regime_stats_audit[["n_obs", "mean_return", "hit_rate", "confidence"]].copy()
-            _rs_disp["mean_return"] = _rs_disp["mean_return"].map(
-                lambda x: f"{x:.2%}" if pd.notna(x) else "—"
-            )
-            _rs_disp["hit_rate"] = _rs_disp["hit_rate"].map(
-                lambda x: f"{x:.0%}" if pd.notna(x) else "—"
-            )
-            _rs_disp["confidence"] = _rs_disp["confidence"].map(
-                lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
-            )
-            _rs_disp["Sample Flag"] = _regime_stats_audit["n_obs"].apply(_sample_flag)
-            _rs_disp.columns = ["N Obs", "Mean Return", "Hit Rate", "Confidence", "Sample Flag"]
-            st.dataframe(_rs_disp, use_container_width=True)
+            with st.expander("Detailed regime stats (9 labels)"):
+                st.caption("Sample reliability: Exploratory = n<20 · Indicative = n<50 · Reliable = n≥50")
+                _rs_disp = _regime_stats_audit[["n_obs", "mean_return", "hit_rate", "confidence"]].copy()
+                _rs_disp["mean_return"] = _rs_disp["mean_return"].map(
+                    lambda x: f"{x:.2%}" if pd.notna(x) else "—"
+                )
+                _rs_disp["hit_rate"] = _rs_disp["hit_rate"].map(
+                    lambda x: f"{x:.0%}" if pd.notna(x) else "—"
+                )
+                _rs_disp["confidence"] = _rs_disp["confidence"].map(
+                    lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
+                )
+                _rs_disp["Sample Flag"] = _regime_stats_audit["n_obs"].apply(_sample_flag)
+                _rs_disp.columns = ["N Obs", "Mean Return", "Hit Rate", "Confidence", "Sample Flag"]
+                st.dataframe(_rs_disp, use_container_width=True)
 
-        if _trans_audit is not None and not _trans_audit.empty:
-            st.markdown("**Transition Confidence by From-Regime**")
-            _td_disp = _trans_audit[["n_outgoing", "confidence"]].copy()
-            _td_disp["confidence"] = _td_disp["confidence"].map(
-                lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
-            )
-            _td_disp.columns = ["N Outgoing", "Confidence"]
-            st.dataframe(_td_disp, use_container_width=True)
+                if _trans_audit is not None and not _trans_audit.empty:
+                    st.markdown("**Transition Confidence by From-Regime**")
+                    _td_disp = _trans_audit[["n_outgoing", "confidence"]].copy()
+                    _td_disp["confidence"] = _td_disp["confidence"].map(
+                        lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
+                    )
+                    _td_disp.columns = ["N Outgoing", "Confidence"]
+                    st.dataframe(_td_disp, use_container_width=True)
 
-        if _corr_audit is not None and not _corr_audit.empty:
-            st.markdown("**Signal–Return Correlations**")
-            _ca_disp = _corr_audit[["correlation", "n_obs", "informative", "confidence"]].copy()
-            _ca_disp["correlation"] = _ca_disp["correlation"].map(
-                lambda x: f"{x:.3f}" if pd.notna(x) else "—"
-            )
-            _ca_disp["informative"] = _ca_disp["informative"].map(
-                lambda x: "Yes" if x else "No"
-            )
-            _ca_disp["confidence"] = _ca_disp["confidence"].map(
-                lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
-            )
-            _ca_disp.columns = ["Correlation", "N Obs", "Informative", "Confidence"]
-            st.dataframe(_ca_disp, use_container_width=True)
+                if _corr_audit is not None and not _corr_audit.empty:
+                    st.markdown("**Signal–Return Correlations**")
+                    _ca_disp = _corr_audit[["correlation", "n_obs", "informative", "confidence"]].copy()
+                    _ca_disp["correlation"] = _ca_disp["correlation"].map(
+                        lambda x: f"{x:.3f}" if pd.notna(x) else "—"
+                    )
+                    _ca_disp["informative"] = _ca_disp["informative"].map(
+                        lambda x: "Yes" if x else "No"
+                    )
+                    _ca_disp["confidence"] = _ca_disp["confidence"].map(
+                        lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
+                    )
+                    _ca_disp.columns = ["Correlation", "N Obs", "Informative", "Confidence"]
+                    st.dataframe(_ca_disp, use_container_width=True)
 
         _wf_conf = _wf_audit.get("confidence", CONFIDENCE_EXPLORATORY)
         st.markdown(
@@ -1431,7 +1451,7 @@ with _analytics_sub1:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with tab4:
-    from src.backtester import OOS_CUTOFF, compute_oos_split
+    from src.backtester import OOS_CUTOFF, build_strategy_backtest, compute_oos_split
     import plotly.graph_objects as _bt_go
 
     st.header("Backtest")
@@ -1473,7 +1493,16 @@ with tab4:
     if missing_cols:
         st.warning(f"Missing backtest columns: {missing_cols}. Run `python app.py` first.")
     else:
-        _split = compute_oos_split(df, cutoff=OOS_CUTOFF, tc_bps=_bt_tc)
+        # Re-run backtest live with current config panel settings so sliders
+        # are truly interactive (fast — just weight math, no API calls).
+        _bt_live = build_strategy_backtest(
+            df,
+            equity_floor   = _cfg_equity_floor / 100,
+            equity_cap     = _cfg_equity_cap / 100,
+            target_vol     = _cfg_target_vol / 100,
+            ma_window      = _cfg_momentum_lookback,
+        )
+        _split = compute_oos_split(_bt_live, cutoff=OOS_CUTOFF, tc_bps=_bt_tc)
         _is  = _split["in_sample"]
         _oos = _split["out_of_sample"]
         _fp  = _split["full_period"]
@@ -1545,7 +1574,7 @@ with tab4:
 
         # ── Equity curve with IS/OOS shading ─────────────────────────────────
         st.subheader("Equity Curve — Strategy vs SP500")
-        _bt_df2 = df[["date", "strategy_equity_curve", "sp500_equity_curve"]].copy()
+        _bt_df2 = _bt_live[["date", "strategy_equity_curve", "sp500_equity_curve"]].copy()
         _bt_df2["date"] = pd.to_datetime(_bt_df2["date"])
         _cutoff_ts = pd.Timestamp(OOS_CUTOFF)
 
@@ -1611,8 +1640,8 @@ with tab4:
 
         # ── Turnover & transaction cost analysis ─────────────────────────────
         st.subheader("Turnover & Transaction Cost Analysis")
-        if "strategy_turnover" in df.columns:
-            _to_daily  = df["strategy_turnover"].mean()
+        if "strategy_turnover" in _bt_live.columns:
+            _to_daily  = _bt_live["strategy_turnover"].mean()
             _to_annual = _to_daily * 252
             _tc_annual = _to_annual * (_bt_tc / 10_000) * 100
             _tc_5yr    = _tc_annual * 5
@@ -1628,9 +1657,9 @@ with tab4:
                         help="Cumulative cost over 5 years at this TC assumption")
 
             # Regime turnover breakdown
-            if "final_decision" in df.columns:
+            if "final_decision" in _bt_live.columns:
                 _regime_to = (
-                    df.groupby("final_decision")["strategy_turnover"]
+                    _bt_live.groupby("final_decision")["strategy_turnover"]
                     .agg(["mean", "count"])
                     .rename(columns={"mean": "Avg Daily Turnover", "count": "Days"})
                     .sort_values("Avg Daily Turnover", ascending=False)
@@ -1646,12 +1675,22 @@ with tab4:
                         "Exploratory: n<20 · Indicative: n<50 · Reliable: n≥50"
                     )
 
-        st.subheader("Recent Strategy Weights")
-        weight_cols = ["date", "final_decision", "composite_risk_label",
-                       "strategy_weight", "strategy_weight_lagged",
-                       "strategy_turnover", "strategy_daily_return"]
-        existing_weight_cols = [c for c in weight_cols if c in df.columns]
-        st.dataframe(df[existing_weight_cols].tail(50), use_container_width=True)
+        st.subheader("Recent Strategy Weights (4-Method Blend)")
+        weight_cols = ["date", "final_decision",
+                       "score_weight", "regime_weight", "vol_target_weight",
+                       "momentum_weight", "strategy_weight_raw",
+                       "strategy_weight", "strategy_turnover"]
+        existing_weight_cols = [c for c in weight_cols if c in _bt_live.columns]
+        st.dataframe(
+            _bt_live[existing_weight_cols].tail(50)
+            .style.format({c: "{:.3f}" for c in existing_weight_cols if c not in ("date", "final_decision")}),
+            use_container_width=True,
+        )
+        st.caption(
+            "score = piecewise composite score · regime = decision-label map · "
+            "vol_target = target_vol/realised_vol · momentum = score×trend_scalar · "
+            "raw = mean of all four · strategy = raw clipped to [floor, cap]"
+        )
 
 with tab7:
     st.header("Model Run History")

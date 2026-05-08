@@ -5,34 +5,37 @@ import pandas as pd
 # before this date. Everything from here onward is a genuine out-of-sample test.
 OOS_CUTOFF = "2020-01-01"
 
-# Minimum equity allocation regardless of how bearish the signal is.
-# Prevents going to near-zero exposure and missing sharp V-shaped recoveries.
-_EQUITY_FLOOR = 0.40
+# Default sizing parameters — all overridable via build_strategy_backtest kwargs
+_EQUITY_FLOOR     = 0.40   # minimum equity allocation
+_EQUITY_CAP       = 1.00   # maximum equity allocation
+_TREND_MA_WINDOW  = 200    # days for momentum trend filter
+_TREND_BOOST      = 1.15   # weight scalar when SP500 > MA
+_TREND_DAMP       = 0.85   # weight scalar when SP500 < MA
+_VOL_TARGET       = 0.10   # annualised vol target for vol-targeting component
+_VOL_WINDOW       = 21     # rolling window for realised vol estimate
+_MIN_PERSISTENCE  = 3      # EWM span to smooth rapid weight flips (days)
 
-# Trend filter: SP500 vs its 200-day MA scales position up/down.
-# Boosts allocation during confirmed uptrends, dampens during downtrends.
-_TREND_MA_WINDOW = 200
-_TREND_BOOST     = 1.15   # multiplier when price > 200-day MA
-_TREND_DAMP      = 0.85   # multiplier when price < 200-day MA
-
+# Regime → target weight map (used as the regime-probability component)
 _DECISION_WEIGHTS = {
-    "Buy Stress":         1.00,
-    "Watch Entry":        0.85,
-    "Risk On":            0.85,
-    "Neutral":            0.70,
-    "Hold / Do Not Chase": 0.55,
-    "Avoid Chasing Risk": 0.55,
-    "Credit Warning":     0.45,
-    "Reduce Risk":        0.45,
-    "Active Stress":      0.40,
-    "Wait":               0.40,
+    "Buy Stress":                   1.00,
+    "Watch Entry":                  0.85,
+    "Risk On":                      0.85,
+    "Neutral":                      0.70,
+    "Stress / Stabilization Watch": 0.60,
+    "Hold / Do Not Chase":          0.55,
+    "Divergence Warning":           0.50,
+    "Avoid Chasing Risk":           0.45,
+    "Credit Warning":               0.40,
+    "Reduce Risk":                  0.40,
+    "Active Stress":                0.40,
+    "Wait":                         0.40,
 }
 
 
 def _trend_scalar(sp500: pd.Series, window: int = _TREND_MA_WINDOW) -> pd.Series:
     """
-    Per-row multiplier based on whether SP500 is above or below its rolling MA.
-    Returns 1.0 for rows where the MA hasn't warmed up yet (no look-ahead).
+    Per-row multiplier: _TREND_BOOST when SP500 > rolling MA, _TREND_DAMP when below.
+    Returns 1.0 during MA warm-up (no look-ahead).
     """
     ma = sp500.rolling(window, min_periods=window).mean()
     scalar = np.where(sp500 > ma, _TREND_BOOST, _TREND_DAMP)
@@ -51,28 +54,78 @@ def assign_strategy_return(row):
     )
 
 
-def build_strategy_backtest(df):
-    df = df.copy()
+def build_strategy_backtest(
+    df,
+    equity_floor: float    = _EQUITY_FLOOR,
+    equity_cap: float      = _EQUITY_CAP,
+    target_vol: float      = _VOL_TARGET,
+    vol_window: int        = _VOL_WINDOW,
+    ma_window: int         = _TREND_MA_WINDOW,
+    min_persistence: int   = _MIN_PERSISTENCE,
+):
+    """
+    Build a full strategy backtest from a scored DataFrame.
 
+    Four complementary sizing methods are blended into a single equity weight:
+
+      1. score_weight     — piecewise-linear map from composite_risk_score_smooth
+      2. regime_weight    — decision label → target weight lookup
+      3. vol_target_weight — target_vol / rolling_SP500_vol (avoids circular dependency)
+      4. momentum_weight  — score_weight scaled by the SP500 vs MA trend filter
+
+    The blend is the row-wise mean of all four methods.  An EWM with span
+    min_persistence then smooths rapid flip-flopping before the floor/cap clip.
+    """
+    df = df.copy()
     df["sp500_daily_return"] = df["sp500"].pct_change()
 
-    # Use piecewise score-based sizing when the composite score is available.
-    # Falls back to decision-bucket lookup for data that lacks the score column.
+    # ── 1. Score-based weight ─────────────────────────────────────────────────
     if "composite_risk_score_smooth" in df.columns and df["composite_risk_score_smooth"].notna().any():
         from src.position_sizing import compute_score_sizing, SCORE_BREAKPOINTS
-        score_weights = compute_score_sizing(df, SCORE_BREAKPOINTS)
-        df["strategy_weight"] = score_weights.values
+        score_s = compute_score_sizing(df, SCORE_BREAKPOINTS)
+        df["score_weight"] = score_s.values
     else:
-        df["strategy_weight"] = df["final_decision"].map(_DECISION_WEIGHTS).fillna(0.60)
+        df["score_weight"] = 0.60
 
-    # Momentum overlay: scale weight up/down based on SP500 vs 200-day MA.
-    # Boosts exposure during confirmed uptrends; reduces it during downtrends.
-    # Applied before the floor so the floor still acts as a hard lower bound.
-    df["trend_scalar"] = _trend_scalar(df["sp500"]).values
-    df["strategy_weight"] = df["strategy_weight"] * df["trend_scalar"]
+    # ── 2. Regime-label weight ────────────────────────────────────────────────
+    if "final_decision" in df.columns:
+        df["regime_weight"] = df["final_decision"].map(_DECISION_WEIGHTS).fillna(0.60)
+    else:
+        df["regime_weight"] = 0.60
 
-    # Apply minimum equity floor — never go below 40% regardless of signal
-    df["strategy_weight"] = df["strategy_weight"].clip(lower=_EQUITY_FLOOR, upper=1.0)
+    # ── 3. Volatility-target weight ───────────────────────────────────────────
+    # Uses SP500 realised vol — no circular dependency on strategy returns.
+    _sp_ret = df["sp500_daily_return"].fillna(0)
+    _realised_vol = _sp_ret.rolling(vol_window, min_periods=5).std() * np.sqrt(252)
+    _realised_vol = _realised_vol.replace(0, np.nan)
+    df["vol_target_weight"] = (target_vol / _realised_vol).clip(
+        lower=equity_floor, upper=equity_cap
+    )
+    # Fill warm-up NaNs with score weight so blend stays meaningful
+    df["vol_target_weight"] = df["vol_target_weight"].fillna(df["score_weight"])
+
+    # ── 4. Momentum-adjusted weight ───────────────────────────────────────────
+    df["trend_scalar"] = _trend_scalar(df["sp500"], window=ma_window).values
+    df["momentum_weight"] = (df["score_weight"] * df["trend_scalar"]).clip(
+        lower=equity_floor, upper=equity_cap
+    )
+
+    # ── Blend: row-wise mean of all four components ───────────────────────────
+    _sizing_cols = ["score_weight", "regime_weight", "vol_target_weight", "momentum_weight"]
+    df["strategy_weight_raw"] = df[_sizing_cols].mean(axis=1)
+
+    # ── Persistence smoothing: EWM reduces rapid day-to-day flipping ──────────
+    if min_persistence > 1:
+        df["strategy_weight_raw"] = (
+            df["strategy_weight_raw"]
+            .ewm(span=min_persistence, adjust=False)
+            .mean()
+        )
+
+    # ── Apply floor and cap ───────────────────────────────────────────────────
+    df["strategy_weight"] = df["strategy_weight_raw"].clip(
+        lower=equity_floor, upper=equity_cap
+    )
 
     df["strategy_weight_lagged"] = df["strategy_weight"].shift(1)
     df["strategy_turnover"] = df["strategy_weight"].diff().abs().fillna(0)

@@ -446,6 +446,23 @@ df["final_decision"] = df["final_decision_obj"].apply(lambda x: x["final_decisio
 df["final_environment"] = df["final_decision_obj"].apply(lambda x: x["environment"])
 df["final_action"] = df["final_decision_obj"].apply(lambda x: x["action"])
 
+# Simplified 5-bucket grouped regime for validation (more observations per bucket)
+_GROUPED_REGIMES = {
+    "Buy Stress":                   "Recovery / Buy Stress",
+    "Watch Entry":                  "Risk-On",
+    "Risk On":                      "Risk-On",
+    "Neutral":                      "Neutral",
+    "Stress / Stabilization Watch": "Caution",
+    "Hold / Do Not Chase":          "Neutral",
+    "Divergence Warning":           "Caution",
+    "Wait":                         "Caution",
+    "Credit Warning":               "Stress",
+    "Avoid Chasing Risk":           "Stress",
+    "Active Stress":                "Stress",
+    "Reduce Risk":                  "Stress",
+}
+df["grouped_regime"] = df["final_decision"].map(_GROUPED_REGIMES).fillna("Neutral")
+
 
 # =====================
 # 10. Portfolio / Attribution / Analogs

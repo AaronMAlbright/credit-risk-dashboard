@@ -75,11 +75,18 @@ class TestBuildStrategyBacktest:
         df = _make_df(n=n, scores=high_scores)
         assert (df["strategy_weight"] >= 0.40).all()
 
-    def test_low_score_gives_high_weight(self):
-        # Score of 28 is at the p20 breakpoint → full allocation (1.0)
+    def test_low_score_gives_higher_weight_than_high_score(self):
+        # Low risk score → higher blend weight than high risk score
+        n = 50
+        df_low  = _make_df(n=n, scores=np.full(n, 28.0))  # low risk
+        df_high = _make_df(n=n, scores=np.full(n, 45.0))  # high risk
+        assert df_low["strategy_weight"].mean() > df_high["strategy_weight"].mean()
+
+    def test_low_score_weight_above_midpoint(self):
+        # A low-risk score should yield a well-above-floor weight (>= 0.60)
         n = 50
         df = _make_df(n=n, scores=np.full(n, 28.0))
-        assert (df["strategy_weight"] >= 0.99).all()
+        assert df["strategy_weight"].mean() >= 0.60
 
     def test_fallback_without_score_column(self):
         # When composite_risk_score_smooth is absent, decision-bucket fallback runs
