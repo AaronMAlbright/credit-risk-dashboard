@@ -146,6 +146,80 @@ def validate_signals_vs_returns(
 
 
 # ---------------------------------------------------------------------------
+# Multi-horizon correlation grid
+# ---------------------------------------------------------------------------
+
+# Signal role taxonomy derived from empirical multi-horizon analysis
+SIGNAL_ROLES: dict[str, str] = {
+    "treasury_stress":          "Leading (all horizons)",
+    "complacency":              "Leading (short ≤63d)",
+    "fx_commodity":             "Leading (weak, all horizons)",
+    "enhanced_funding_stress":  "Lagging (medium 42-189d)",
+    "rates_stress":             "Lagging (long 126-252d)",
+    "credit_market_risk":       "Concurrent (barely flips at 126d+)",
+    "liquidity_regime":         "Concurrent (flips at 126d+)",
+    "macro_risk":               "Concurrent (never negative)",
+    "banking_stress":           "Contra-indicator (wrong direction all horizons)",
+    "composite_risk":           "Mixed",
+}
+
+_MULTI_HORIZONS = [21, 42, 63, 126, 189, 252]
+
+
+def validate_signals_multi_horizon(
+    df: pd.DataFrame,
+    horizons: list[int] = _MULTI_HORIZONS,
+    oos_cutoff: str = "2022-01-01",
+) -> pd.DataFrame:
+    """
+    Compute Spearman correlation of each signal vs. forward SP500 return
+    at multiple horizons, split IS / OOS.
+
+    Returns a DataFrame with MultiIndex columns (horizon, split) where
+    split ∈ {'IS', 'OOS'}, indexed by signal short name.
+
+    Negative correlation = high score preceded lower returns (correct direction).
+    """
+    if "sp500" not in df.columns:
+        return pd.DataFrame()
+
+    cutoff = pd.Timestamp(oos_cutoff)
+    avail = [col for col in _SIGNAL_COLS if col in df.columns]
+
+    records: dict[str, dict] = {col: {} for col in avail}
+
+    for h in horizons:
+        fwd = df["sp500"].shift(-h) / df["sp500"] - 1
+        for col in avail:
+            pair = pd.concat([df[col], fwd], axis=1).dropna()
+            pair.columns = ["sig", "fwd"]
+            for split, mask in (("IS", pair.index < cutoff), ("OOS", pair.index >= cutoff)):
+                sub = pair.loc[mask]
+                if len(sub) < 20:
+                    records[col][(h, split)] = None
+                else:
+                    r = float(sub["sig"].rank().corr(sub["fwd"].rank()))
+                    records[col][(h, split)] = round(r, 3)
+
+    col_idx = pd.MultiIndex.from_tuples(
+        [(h, s) for h in horizons for s in ("IS", "OOS")],
+        names=["horizon_d", "split"],
+    )
+    rows = []
+    for col in avail:
+        short = col.replace("_score_smooth", "").replace("_smooth", "")
+        row = [records[col].get((h, s)) for h in horizons for s in ("IS", "OOS")]
+        rows.append((short, row))
+
+    result = pd.DataFrame(
+        [r for _, r in rows],
+        index=[name for name, _ in rows],
+        columns=col_idx,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Stress episode table
 # ---------------------------------------------------------------------------
 

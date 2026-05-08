@@ -42,7 +42,12 @@ from src.scenario_analysis import (
 )
 from src.portfolio_engine import generate_portfolio_weights
 from src.crisis_similarity import CRISIS_ANALOGS, compute_crisis_similarity
-from src.signal_validation import validate_signals_vs_returns, compute_stress_episode_stats
+from src.signal_validation import (
+    validate_signals_vs_returns,
+    validate_signals_multi_horizon,
+    compute_stress_episode_stats,
+    SIGNAL_ROLES,
+)
 from src.model_health_check import (
     check_missing_values,
     check_sample_sizes,
@@ -348,6 +353,12 @@ def load_position_sizing(_df):
 def load_signal_validation(_df, _oos_cutoff="2022-01-01"):
     """Run IS/OOS signal validation against forward returns (cached)."""
     return validate_signals_vs_returns(_df, oos_cutoff=_oos_cutoff)
+
+
+@st.cache_data
+def load_signal_horizon_grid(_df, _oos_cutoff="2022-01-01"):
+    """Compute multi-horizon Spearman correlation grid (cached)."""
+    return validate_signals_multi_horizon(_df, oos_cutoff=_oos_cutoff)
 
 
 @st.cache_data
@@ -2344,58 +2355,120 @@ with _models_sub2:
             + (f"- Thinly observed regimes (n<30): **{', '.join(_thin_regimes)}**. "
                f"Stats for these regimes are exploratory only.\n"
                if _thin_regimes else "")
-            + "\n**This system is a tactical risk overlay, not a proven alpha model. "
-            f"It currently improves risk control more than total return.**"
+            + "\n**This is a risk management system, not a return-timing model.**\n\n"
+            "Signal roles differ by design: treasury stress and complacency are leading "
+            "indicators (negative r at 21-63d horizons). Credit and macro are concurrent "
+            "stress indicators — they do not predict returns forward, but they confirm "
+            "active crises and prevent full re-investment during drawdowns. "
+            "The composite therefore has near-zero forward-return correlation, which is "
+            "expected and acceptable. Its value is drawdown reduction, not alpha generation."
         )
 
-    # ── Cross-Asset Signal Validation ─────────────────────────────────────────
+    # ── Signal Horizon Grid ────────────────────────────────────────────────────
     st.divider()
-    st.subheader("Cross-Asset Signal Validation")
+    st.subheader("Signal Predictive Horizon Grid")
     st.caption(
-        "IS / OOS Spearman correlation and hit rate for each signal vs. "
-        "forward SP500 returns. OOS cutoff: 2022-01-01. "
-        "Hit rate = % of high-score (>50) periods where the subsequent return was negative."
+        "Spearman correlation of each signal vs. forward SP500 return at 6 horizons "
+        "(IS = pre-2022, OOS = 2022+). Negative = high risk score preceded lower returns "
+        "(correct direction). Green cells = predictive; red = wrong direction or noise."
     )
 
     try:
-        _sig_val_report = load_signal_validation(df)
-        _val_results = _sig_val_report.get("results", {})
-        if _val_results:
-            _val_rows = []
-            for _sig, _ret_dict in _val_results.items():
-                _short = _sig.replace("_score_smooth", "").replace("_smooth", "")
-                for _ret_col, _splits in _ret_dict.items():
-                    _short_ret = _ret_col.replace("sp500_forward_", "fwd ").replace("_return", "")
-                    _is  = _splits.get("is",  {})
-                    _oos = _splits.get("oos", {})
-                    _val_rows.append({
-                        "Signal":    _short,
-                        "Horizon":   _short_ret,
-                        "IS r":      _is.get("spearman_r"),
-                        "IS hit%":   f"{_is['hit_rate']:.0%}" if _is.get("hit_rate") else "—",
-                        "IS n":      _is.get("n"),
-                        "OOS r":     _oos.get("spearman_r"),
-                        "OOS hit%":  f"{_oos['hit_rate']:.0%}" if _oos.get("hit_rate") else "—",
-                        "OOS n":     _oos.get("n"),
-                    })
-            if _val_rows:
-                _val_df = pd.DataFrame(_val_rows)
-                st.dataframe(
-                    _val_df.style.format({
-                        "IS r":  lambda v: f"{v:+.3f}" if v is not None else "—",
-                        "OOS r": lambda v: f"{v:+.3f}" if v is not None else "—",
-                    }),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                st.caption(
-                    "Spearman r: negative = higher score preceded lower returns (correct). "
-                    "Hit rate: > 60% = consistent directional accuracy on high-risk calls."
-                )
+        _horizon_grid = load_signal_horizon_grid(df)
+        if not _horizon_grid.empty:
+            import plotly.graph_objects as _hg_go
+
+            _hz_labels = [f"{h}d" for h in [21, 42, 63, 126, 189, 252]]
+            _is_cols  = [(h, "IS")  for h in [21, 42, 63, 126, 189, 252]]
+            _oos_cols = [(h, "OOS") for h in [21, 42, 63, 126, 189, 252]]
+
+            # Build display: IS columns only for the heatmap; show OOS in table below
+            _grid_is = _horizon_grid[_is_cols].copy()
+            _grid_is.columns = _hz_labels
+
+            # Add role column
+            _grid_is.insert(0, "Role", [
+                SIGNAL_ROLES.get(idx, "—") for idx in _grid_is.index
+            ])
+
+            # Color heatmap: green for negative r, red for positive r
+            _z = _grid_is.drop(columns=["Role"]).values.tolist()
+            _y = _grid_is.index.tolist()
+            _fig_hg = _hg_go.Figure(_hg_go.Heatmap(
+                z=_z, x=_hz_labels, y=_y,
+                colorscale=[
+                    [0.0, "#27ae60"], [0.5, "rgba(40,44,60,0.5)"], [1.0, "#e74c3c"]
+                ],
+                zmid=0, zmin=-0.15, zmax=0.15,
+                texttemplate="%{text}",
+                text=[[f"{v:+.3f}" if v is not None else "—" for v in row] for row in _z],
+                colorbar=dict(title="r", tickfont=dict(color="#9aa0aa"),
+                              titlefont=dict(color="#9aa0aa")),
+                hovertemplate="Signal: %{y}<br>Horizon: %{x}<br>IS Spearman r: %{text}<extra></extra>",
+            ))
+            _fig_hg.update_layout(
+                height=max(280, len(_y) * 36 + 80),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                margin=dict(l=8, r=8, t=8, b=8),
+                xaxis=dict(color="#6b7280", title="Forward horizon"),
+                yaxis=dict(color="#6b7280", autorange="reversed"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                                font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig_hg, use_container_width=True)
+            st.caption(
+                "Green = signal correctly predicts direction at that horizon. "
+                "Red = wrong direction. White = no signal. "
+                "Banking stress excluded from composite (wrong direction at every horizon)."
+            )
+
+            # Role table
+            with st.expander("Signal role taxonomy"):
+                _role_df = pd.DataFrame([
+                    {"Signal": sig, "Role": role}
+                    for sig, role in SIGNAL_ROLES.items()
+                ])
+                st.dataframe(_role_df, use_container_width=True, hide_index=True)
         else:
             st.info("Run `python app.py` to populate signal columns.")
     except Exception as _val_err:
-        st.info(f"Signal validation unavailable. ({_val_err})")
+        st.info(f"Signal horizon grid unavailable. ({_val_err})")
+
+    # ── IS/OOS Summary Table ───────────────────────────────────────────────────
+    with st.expander("IS / OOS detail (30d and 60d horizons)"):
+        try:
+            _sig_val_report = load_signal_validation(df)
+            _val_results = _sig_val_report.get("results", {})
+            if _val_results:
+                _val_rows = []
+                for _sig, _ret_dict in _val_results.items():
+                    _short = _sig.replace("_score_smooth", "").replace("_smooth", "")
+                    for _ret_col, _splits in _ret_dict.items():
+                        _short_ret = _ret_col.replace("sp500_forward_", "fwd ").replace("_return", "")
+                        _is  = _splits.get("is",  {})
+                        _oos = _splits.get("oos", {})
+                        _val_rows.append({
+                            "Signal":   _short,
+                            "Horizon":  _short_ret,
+                            "IS r":     _is.get("spearman_r"),
+                            "IS hit%":  f"{_is['hit_rate']:.0%}" if _is.get("hit_rate") else "—",
+                            "IS n":     _is.get("n"),
+                            "OOS r":    _oos.get("spearman_r"),
+                            "OOS hit%": f"{_oos['hit_rate']:.0%}" if _oos.get("hit_rate") else "—",
+                            "OOS n":    _oos.get("n"),
+                        })
+                if _val_rows:
+                    st.dataframe(
+                        pd.DataFrame(_val_rows).style.format({
+                            "IS r":  lambda v: f"{v:+.3f}" if v is not None else "—",
+                            "OOS r": lambda v: f"{v:+.3f}" if v is not None else "—",
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+        except Exception:
+            pass
 
     # ── Stress Episode Stats ───────────────────────────────────────────────────
     st.subheader("Signal Behavior During Named Stress Episodes")

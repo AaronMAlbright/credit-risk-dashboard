@@ -31,13 +31,15 @@ import pandas as pd
 # Keys must match composite_engine.py column usage.
 # Kept in sync with _WEIGHTS in composite_engine.py.
 SCORE_COL_MAP: dict[str, str] = {
-    "macro_risk":       "macro_risk_score_smooth",
-    "credit_risk":      "credit_market_risk_score_smooth",
-    "complacency":      "complacency_score_smooth",
-    "liquidity":        "liquidity_regime_score_smooth",
     "treasury":         "treasury_stress_score_smooth",
-    "fx_commodity":     "fx_commodity_score_smooth",
+    "complacency":      "complacency_score_smooth",
+    "credit_risk":      "credit_market_risk_score_smooth",
+    "macro_risk":       "macro_risk_score_smooth",
+    "liquidity":        "liquidity_regime_score_smooth",
     "enhanced_funding": "enhanced_funding_stress_score_smooth",
+    "fx_commodity":     "fx_commodity_score_smooth",
+    # banking_stress excluded from optimizer: wrong direction at all horizons.
+    # Include if you want to confirm empirically via MC sampling.
 }
 
 # No signals currently inverted in the composite engine.
@@ -45,14 +47,15 @@ INVERTED: set[str] = set()
 
 # Current production weights — must sum to 1.0.
 # Matches _WEIGHTS dict in composite_engine.py.
+# Ordered by empirical predictive strength (multi-horizon Spearman r grid).
 CURRENT_WEIGHTS: dict[str, float] = {
-    "macro_risk":       0.25,
-    "credit_risk":      0.25,
-    "complacency":      0.20,
-    "liquidity":        0.10,
-    "treasury":         0.10,
-    "fx_commodity":     0.05,
-    "enhanced_funding": 0.05,
+    "treasury":         0.20,  # strongest leading signal (all horizons)
+    "complacency":      0.20,  # strong short-horizon leading
+    "credit_risk":      0.20,  # concurrent, slightly reduced from 0.25
+    "macro_risk":       0.15,  # concurrent, reduced from 0.25 (never negative r)
+    "liquidity":        0.10,  # concurrent, flips at 126d+
+    "enhanced_funding": 0.10,  # lagging, good at 42-189d
+    "fx_commodity":     0.05,  # weak but consistent leading
 }
 
 # Optimisation objective blending factor.

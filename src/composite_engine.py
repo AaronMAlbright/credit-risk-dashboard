@@ -12,18 +12,32 @@ def classify_composite_risk(score):
 
 
 # Composite weights — must sum to 1.0.
-# Cross-asset signals (fx_commodity, enhanced_funding) added at conservative
-# initial weights after 2-year OOS hold-out. liquidity_regime trimmed 15→10%
-# to make room; mean_reversion removed (redundant with complacency overlap).
+#
+# Calibrated against multi-horizon Spearman correlation grid (21d–252d) using
+# full IS history (2000-2022). Signals categorised by empirical role:
+#
+#   Leading (negative r at short horizons): treasury, complacency, fx_commodity
+#   Lagging/medium (negative r at 42-189d): enhanced_funding
+#   Concurrent (barely negative at 126d+):  credit, liquidity
+#   Concurrent (never negative):            macro_risk — reduced from 25%
+#   Contra-indicator (wrong direction):     banking_stress — excluded (weight 0)
+#
+# Changes vs prior version:
+#   treasury        10% → 20%  (strongest signal at every horizon)
+#   enhanced_funding 5% → 10%  (good medium-horizon signal at 42-189d)
+#   macro_risk      25% → 15%  (concurrent, not leading)
+#   credit_risk     25% → 20%  (concurrent, reduces slightly)
+#   banking_stress excluded     (wrong direction at all horizons)
 _WEIGHTS = {
-    "macro_risk_score_smooth":            0.25,
-    "credit_market_risk_score_smooth":    0.25,
-    "liquidity_regime_score_smooth":      0.10,  # was 0.15
-    "treasury_stress_score_smooth":       0.10,
-    "complacency_score_smooth":           0.20,
-    "fx_commodity_score_smooth":          0.05,  # new cross-asset signal
-    "enhanced_funding_stress_score_smooth": 0.05, # new cross-asset signal
-    # mean_reversion_risk_component dropped (weight→0; reduces overfitting)
+    "treasury_stress_score_smooth":           0.20,  # was 0.10 — strongest leading signal
+    "complacency_score_smooth":               0.20,  # unchanged — strong short-horizon
+    "credit_market_risk_score_smooth":        0.20,  # was 0.25 — concurrent, slightly reduced
+    "macro_risk_score_smooth":                0.15,  # was 0.25 — concurrent, not leading
+    "liquidity_regime_score_smooth":          0.10,  # unchanged
+    "enhanced_funding_stress_score_smooth":   0.10,  # was 0.05 — good medium-horizon
+    "fx_commodity_score_smooth":              0.05,  # unchanged — weak leading
+    # banking_stress excluded: wrong direction at all horizons (r > 0 up to 252d)
+    # mean_reversion excluded: redundant with complacency
 }
 
 

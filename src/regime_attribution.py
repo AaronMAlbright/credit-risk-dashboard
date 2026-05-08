@@ -13,13 +13,14 @@ import pandas as pd
 # Matches _WEIGHTS in composite_engine.py exactly.
 # mean_reversion removed from composite (weight → 0; redundant with complacency).
 COMPOSITE_WEIGHTS = OrderedDict([
-    ("macro_risk",       0.25),
-    ("credit_risk",      0.25),
-    ("complacency",      0.20),
-    ("liquidity",        0.10),   # was 0.15
-    ("treasury",         0.10),
-    ("fx_commodity",     0.05),   # new
-    ("enhanced_funding", 0.05),   # new
+    ("treasury",         0.20),   # was 0.10 — strongest leading signal
+    ("complacency",      0.20),   # unchanged
+    ("credit_risk",      0.20),   # was 0.25 — concurrent, reduced
+    ("macro_risk",       0.15),   # was 0.25 — concurrent, not leading
+    ("liquidity",        0.10),   # unchanged
+    ("enhanced_funding", 0.10),   # was 0.05 — good medium-horizon
+    ("fx_commodity",     0.05),   # unchanged
+    # banking_stress excluded: wrong direction at all horizons
 ])
 
 # Additional tracked scores — informative for attribution but not in composite.
