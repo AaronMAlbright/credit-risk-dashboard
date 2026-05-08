@@ -682,13 +682,14 @@ _ov_l, _ov_r = st.columns([1, 2])
 with _ov_l:
     st.subheader("Score Breakdown")
     _scores = [
-        ("Macro Risk",      latest.get("macro_risk_score_smooth")),
-        ("Credit Risk",     latest.get("credit_market_risk_score_smooth")),
-        ("Liquidity",       latest.get("liquidity_regime_score_smooth")),
-        ("Complacency",     latest.get("complacency_score_smooth")),
-        ("Mean Reversion",  latest.get("mean_reversion_score_smooth")),
-        ("Risk Appetite",   latest.get("risk_appetite_score_smooth")),
         ("Treasury Stress", latest.get("treasury_stress_score_smooth")),
+        ("Complacency",     latest.get("complacency_score_smooth")),
+        ("Credit Risk",     latest.get("credit_market_risk_score_smooth")),
+        ("Macro Risk",      latest.get("macro_risk_score_smooth")),
+        ("Liquidity",       latest.get("liquidity_regime_score_smooth")),
+        ("Funding Stress",  latest.get("enhanced_funding_stress_score_smooth")),
+        ("FX / Commodity",  latest.get("fx_commodity_score_smooth")),
+        ("Mean Reversion †", latest.get("mean_reversion_score_smooth")),
     ]
     _sdf = pd.DataFrame(_scores, columns=["Component", "Score"]).set_index("Component")
     _sdf["Score"] = pd.to_numeric(_sdf["Score"], errors="coerce").round(1)
@@ -702,8 +703,9 @@ with _ov_l:
     st.dataframe(
         _sdf.style.map(_ov_color, subset=["Score"]).format({"Score": "{:.1f}"}),
         use_container_width=True,
-        height=282,
+        height=310,
     )
+    st.caption("† Mean Reversion is tracked but excluded from composite (redundant with Complacency).")
 
 with _ov_r:
     import plotly.graph_objects as _ov_go
@@ -827,7 +829,7 @@ with tab1:
         ("rates_stress_score_smooth",            "Rates Stress",   None),
         ("enhanced_funding_stress_score_smooth", "Funding Stress", None),
         ("fx_commodity_score_smooth",            "FX/Commodity",   None),
-        ("banking_stress_score_smooth",          "Banking Stress", None),
+        ("banking_stress_score_smooth",          "Banking Stress †", None),
     ]
     _ca_available = [(col, label, c) for col, label, c in _ca_score_cols if col in df.columns]
     if _ca_available:
@@ -841,6 +843,7 @@ with tab1:
                     _kv_card(label, f"{_val:.1f} / 100", _color),
                     unsafe_allow_html=True,
                 )
+        st.caption("† Banking Stress is informational only — excluded from composite (wrong-direction forward correlation at all horizons).")
         # MOVE index card
         if "move_index" in df.columns:
             _mv_val = latest.get("move_index", float("nan"))
@@ -2033,7 +2036,7 @@ with tab7:
             "macro_risk",
             "credit_risk",
             "complacency",
-            "mean_reversion",
+            "treasury",
         ]
 
         available_history_cols = [c for c in chart_cols if c in history.columns]
@@ -2050,7 +2053,7 @@ with _models_sub1:
     # ── Live weight optimisation ──────────────────────────────────────────────
     st.subheader("Composite Weight Optimisation")
     st.caption(
-        "2,000 weight vectors sampled from the 6-score simplex (Dirichlet uniform). "
+        "2,000 weight vectors sampled from the 7-score simplex (Dirichlet uniform). "
         "Strategy return = equity_weight × SP500 daily return, "
         "where equity_weight = 1 − composite/100. "
         "In-sample Sharpe only — treat as directional, not predictive."
@@ -2081,9 +2084,13 @@ with _models_sub1:
         # Current vs optimal weights bar chart
         st.markdown("**Current vs Best-Found Weights**")
         _score_display = {
-            "macro_risk": "Macro Risk", "credit_risk": "Credit Risk",
-            "complacency": "Complacency", "liquidity": "Liquidity",
-            "treasury": "Treasury", "mean_reversion": "Mean Reversion",
+            "treasury":         "Treasury",
+            "complacency":      "Complacency",
+            "credit_risk":      "Credit Risk",
+            "macro_risk":       "Macro Risk",
+            "liquidity":        "Liquidity",
+            "enhanced_funding": "Funding Stress",
+            "fx_commodity":     "FX / Commodity",
         }
         _w_compare = pd.DataFrame({
             "Current": {_score_display.get(k, k): v for k, v in CURRENT_WEIGHTS.items()},
