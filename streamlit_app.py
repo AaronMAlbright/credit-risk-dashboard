@@ -1270,6 +1270,88 @@ with _analytics_sub1:
 
     st.divider()
 
+    # ── Regime Persistence ────────────────────────────────────────────────────
+    st.subheader("Regime Persistence")
+    st.caption(
+        "How many days does the model typically stay in each regime before transitioning? "
+        "Regimes with very short mean duration (< 3 days) are likely label noise — "
+        "treat their forward-return stats with extra caution even when n-obs is adequate."
+    )
+
+    import plotly.graph_objects as _pers_go
+
+    _fd_results = _regime_results.get("final_decision", {}) if _regime_results else {}
+    _dur = _fd_results.get("durations")
+    _fwd = _fd_results.get("forward_returns")
+
+    if _dur is not None and not _dur.empty:
+        _dur_sorted = _dur.sort_values("mean_days", ascending=True)
+        _pers_colors = [
+            "#e74c3c" if v < 3 else "#f39c12" if v < 10 else "#27ae60"
+            for v in _dur_sorted["mean_days"]
+        ]
+
+        _p_col1, _p_col2 = st.columns([3, 2])
+
+        with _p_col1:
+            st.caption("Mean episode duration by regime (trading days) — error bars = ±1 SE")
+            _fig_pers = _pers_go.Figure(_pers_go.Bar(
+                y=_dur_sorted.index.tolist(),
+                x=_dur_sorted["mean_days"].round(1).tolist(),
+                orientation="h",
+                marker_color=_pers_colors,
+                error_x=dict(
+                    type="data",
+                    array=(_dur_sorted["std_days"] / _dur_sorted["count"].pow(0.5)).round(1).tolist(),
+                    visible=True,
+                    color="rgba(200,200,200,0.35)",
+                ),
+                hovertemplate="%{y}<br>Mean: %{x:.1f}d · Episodes: %{customdata}<extra></extra>",
+                customdata=_dur_sorted["count"].tolist(),
+            ))
+            _fig_pers.add_vline(
+                x=3, line_color="rgba(231,76,60,0.45)", line_dash="dot", line_width=1.5,
+                annotation_text="Noise threshold",
+                annotation_font=dict(color="rgba(231,76,60,0.65)", size=9),
+                annotation_position="top right",
+            )
+            _fig_pers.update_layout(
+                height=max(240, len(_dur_sorted) * 34 + 60),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                margin=dict(l=8, r=8, t=8, b=8),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Mean Duration (trading days)"),
+                yaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                                font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig_pers, use_container_width=True)
+
+        with _p_col2:
+            st.caption("Persistence vs. signal reliability")
+            _dur_tbl = _dur[["mean_days", "count"]].copy()
+            if _fwd is not None and not _fwd.empty:
+                _fwd_col = _fwd.get("sp500_forward_30d_return", pd.Series(dtype=float))
+                _dur_tbl = _dur_tbl.join(_fwd_col.rename("mean_fwd_30d"), how="left")
+            _dur_tbl["reliability"] = _dur_tbl["mean_days"].apply(
+                lambda d: "Stable" if d >= 10 else ("Moderate" if d >= 3 else "Noisy")
+            )
+            _dur_tbl = _dur_tbl.sort_values("mean_days", ascending=False)
+            _dur_tbl.index.name = "Regime"
+            _fmt = {"mean_days": "{:.1f}", "count": "{:.0f}"}
+            if "mean_fwd_30d" in _dur_tbl.columns:
+                _fmt["mean_fwd_30d"] = "{:.2%}"
+                _dur_tbl.columns = ["Mean Days", "Episodes", "Mean Fwd 30D", "Reliability"]
+            else:
+                _dur_tbl.columns = ["Mean Days", "Episodes", "Reliability"]
+            st.dataframe(_dur_tbl.style.format(_fmt), use_container_width=True)
+            st.caption("🟢 Stable ≥10d · 🟡 Moderate 3–10d · 🔴 Noisy <3d")
+    else:
+        st.info("Run `python app.py` to generate regime transition data.")
+
+    st.divider()
+
     if wf_windows is None:
         st.warning("No walk-forward results found. Run `python app.py` to generate them.")
     else:
