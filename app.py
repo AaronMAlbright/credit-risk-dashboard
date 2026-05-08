@@ -4,7 +4,15 @@ from config import (
     OUTPUT_CHART_DIR,
 )
 
-from src.fred_loader import get_series
+from src.market_data import load_all_series, get_freshness
+from src.cross_asset_engine import (
+    compute_rates_stress_score,
+    compute_enhanced_funding_stress_score,
+    compute_fx_commodity_score,
+    compute_banking_stress_score,
+    rolling_zscore,
+)
+from src.data_diagnostics import run_diagnostics, print_diagnostics
 
 from src.risk_engine import (
     classify_yield_curve_regime,
@@ -108,68 +116,50 @@ ensure_dirs([
 # =====================
 # 1. Pull Data
 # =====================
-ten_year = get_series("DGS10")
-two_year = get_series("DGS2")
-unrate = get_series("UNRATE")
-nfci = get_series("NFCI")
-hy_spread = get_series("BAA10Y")  # Moody's Baa spread — ICE BofA series unavailable pre-2023
-sp500 = get_series("SP500")
-vix = get_series("VIXCLS")
-breakeven_10y = get_series("T10YIE")
+# load_all_series fetches from FRED + yfinance with local parquet caching
+# (12-hour TTL). SP500 sourced from yfinance (^GSPC) for full 1999+ history.
+# T10YIE (10Y breakeven) pre-2003 is filled with 2.5% proxy.
+_START_DATE = "1999-01-01"
+_raw = load_all_series(start=_START_DATE)
+print(f"[data] Loaded {len(_raw)} rows from {_raw.index[0].date()} to {_raw.index[-1].date()}")
 
 
 # =====================
 # 2. Data Freshness
 # =====================
 freshness = {
-    "DGS10": latest_date(ten_year),
-    "DGS2": latest_date(two_year),
-    "UNRATE": latest_date(unrate),
-    "NFCI": latest_date(nfci),
-    "HY Spread": latest_date(hy_spread),
-    "SP500": latest_date(sp500),
-    "VIX": latest_date(vix),
-    "10Y Breakeven": latest_date(breakeven_10y),
+    "DGS10":        str(_raw["yield_10y"].dropna().index[-1].date()),
+    "DGS2":         str(_raw["yield_2y"].dropna().index[-1].date()),
+    "UNRATE":       str(_raw["unemployment"].dropna().index[-1].date()),
+    "NFCI":         str(_raw["nfci"].dropna().index[-1].date()),
+    "HY Spread":    str(_raw["hy_spread"].dropna().index[-1].date()),
+    "SP500":        str(_raw["sp500"].dropna().index[-1].date()),
+    "VIX":          str(_raw["vix"].dropna().index[-1].date()),
+    "10Y Breakeven":str(_raw["breakeven_10y"].dropna().index[-1].date()),
 }
 
 
 # =====================
 # 3. Build Dataset
 # =====================
-df = ten_year.join(two_year, lsuffix="_10y", rsuffix="_2y")
-df["spread"] = df["value_10y"] - df["value_2y"]
+# Rename to match the column names the scoring engine expects.
+# yield_10y/yield_2y → value_10y/value_2y are internal aliases from the old
+# join-based loader; we adopt cleaner names throughout.
+df = _raw.copy()
+df["spread"] = df["yield_10y"] - df["yield_2y"]
 df["yield_curve_regime"] = df["spread"].apply(classify_yield_curve_regime)
 
-df = df.join(unrate)
-df.rename(columns={"value": "unemployment"}, inplace=True)
-df["unemployment"] = df["unemployment"].ffill()
+# nfci_90d_avg used by scoring engine
+df["nfci_90d_avg"] = df["nfci"].rolling(90, min_periods=20).mean()
 
-df = df.join(nfci)
-df.rename(columns={"value": "nfci"}, inplace=True)
-df["nfci"] = df["nfci"].ffill()
-df["nfci_90d_avg"] = df["nfci"].rolling(90).mean()
-
-df = df.join(hy_spread)
-df.rename(columns={"value": "hy_spread"}, inplace=True)
-df["hy_spread"] = df["hy_spread"].ffill()
-
-df = df.join(sp500)
-df.rename(columns={"value": "sp500"}, inplace=True)
-df["sp500"] = df["sp500"].ffill()
-
-df = df.join(vix)
-df.rename(columns={"value": "vix"}, inplace=True)
-df["vix"] = df["vix"].ffill()
-
-df = df.join(breakeven_10y)
-df.rename(columns={"value": "breakeven_10y"}, inplace=True)
-df["breakeven_10y"] = df["breakeven_10y"].ffill()
-
-df = df.dropna()
+# Drop rows where all required core series are simultaneously missing
+# (e.g. pre-market-open timestamps). Keep partial rows for optional series.
+_core = ["yield_10y", "yield_2y", "vix", "hy_spread", "sp500", "unemployment", "nfci"]
+df = df.dropna(subset=[c for c in _core if c in df.columns])
 
 
 # =====================
-# 4. Derived Features
+# 4. Derived Features — Core (existing, unchanged)
 # =====================
 df["unemployment_change_90d"] = df["unemployment"].diff(90)
 df["spread_change_90d"] = df["spread"].diff(90)
@@ -189,14 +179,70 @@ df["vix_change_5d"] = df["vix"].diff(5)
 df["sp500_return_5d"] = df["sp500"].pct_change(5)
 df["sp500_return_30d"] = df["sp500"].pct_change(30)
 
-df["unemployment_12m_low"] = df["unemployment"].rolling(252).min()
+df["unemployment_12m_low"] = df["unemployment"].rolling(252, min_periods=126).min()
 df["sahm_like"] = df["unemployment"] - df["unemployment_12m_low"]
 
 df["sp500_peak"] = df["sp500"].cummax()
 df["sp500_drawdown"] = df["sp500"] / df["sp500_peak"] - 1
 
 df = compute_treasury_features(df)
-df = df.dropna()
+
+
+# =====================
+# 4b. Derived Features — Cross-Asset (new)
+# =====================
+
+# Rates / Fed policy
+if "fed_funds_rate" in df.columns:
+    df["fed_funds_change_90d"]  = df["fed_funds_rate"].diff(90)
+    df["fed_funds_change_360d"] = df["fed_funds_rate"].diff(360)
+
+# 3M-10Y spread (better recession predictor than 10Y-2Y)
+# Use precomputed FRED series where available; fallback to computed
+if "spread_10y3m" in df.columns:
+    df["spread_10y3m_change_30d"] = df["spread_10y3m"].diff(30)
+elif "yield_3m" in df.columns:
+    df["spread_10y3m"] = df["yield_10y"] - df["yield_3m"]
+    df["spread_10y3m_change_30d"] = df["spread_10y3m"].diff(30)
+
+# FX / commodity signals
+if "eurusd" in df.columns:
+    df["eurusd_change_30d"] = df["eurusd"].pct_change(30)
+if "usdjpy" in df.columns:
+    df["usdjpy_change_30d"] = df["usdjpy"].diff(30)
+if "oil_wti" in df.columns:
+    df["oil_change_30d"] = df["oil_wti"].pct_change(30)
+    df["oil_change_90d"] = df["oil_wti"].pct_change(90)
+
+# Banking / funding channel
+if "bank_deposits" in df.columns:
+    df["deposit_growth_90d"] = df["bank_deposits"].pct_change(90)
+if "total_loans" in df.columns:
+    df["loan_growth_90d"] = df["total_loans"].pct_change(90)
+if "fed_balance_sheet" in df.columns:
+    df["fed_bs_change_90d"] = df["fed_balance_sheet"].pct_change(90)
+
+# Initial claims z-score (rolling 2Y window = 504 business days)
+if "initial_claims" in df.columns:
+    df["initial_claims_zscore"] = rolling_zscore(df["initial_claims"], window=504)
+
+# Enhanced liquidity indices
+if "anfci" in df.columns:
+    df["anfci_change_30d"] = df["anfci"].diff(30)
+if "stlfsi" in df.columns:
+    df["stlfsi_change_30d"] = df["stlfsi"].diff(30)
+
+# Drop rows missing any of the core SCORED columns needed by risk engine
+# (90d diffs require at least 90 rows; 252d rolling requires 126 with min_periods)
+_scored_required = [
+    "spread", "unemployment", "nfci_90d_avg",
+    "unemployment_change_90d", "spread_change_90d", "nfci_change_90d",
+    "sahm_like", "hy_spread", "hy_change_30d", "hy_change_90d",
+    "credit_impulse", "vix", "vix_change_30d",
+    "sp500_return_5d", "sp500_return_30d", "sp500_drawdown",
+    "real_yield_z", "real_yield_change_90d", "curve_steepening_velocity_90d",
+]
+df = df.dropna(subset=[c for c in _scored_required if c in df.columns])
 
 
 # =====================
@@ -337,7 +383,14 @@ df["treasury_stress_score_smooth"] = df["treasury_stress_score"].rolling(21).mea
 df["cross_asset_divergence_score_smooth"] = df["cross_asset_divergence_score"].rolling(10).mean()
 df["market_internals_score_smooth"] = df["market_internals_score"].rolling(10).mean()
 
-df = df.dropna()
+# Only require the core smoothed scores — optional cross-asset columns may be NaN
+_smooth_required = [
+    "macro_risk_score_smooth", "credit_market_risk_score_smooth",
+    "liquidity_score_smooth", "liquidity_regime_score_smooth",
+    "treasury_stress_score_smooth",
+    "cross_asset_divergence_score_smooth", "market_internals_score_smooth",
+]
+df = df.dropna(subset=_smooth_required)
 
 df["macro_risk_momentum_10d"] = df["macro_risk_score_smooth"].diff(10)
 df["credit_risk_momentum_10d"] = df["credit_market_risk_score_smooth"].diff(10)
@@ -384,8 +437,67 @@ df["risk_appetite_score_smooth"] = df["risk_appetite_score"].rolling(10).mean()
 df["complacency_score_smooth"] = df["complacency_score"].rolling(10).mean()
 df["mean_reversion_score_smooth"] = df["mean_reversion_score"].rolling(10).mean()
 
-df = df.dropna()
+_second_order_required = [
+    "risk_appetite_score_smooth", "complacency_score_smooth",
+    "mean_reversion_score_smooth", "macro_risk_momentum_10d", "credit_risk_momentum_10d",
+]
+df = df.dropna(subset=_second_order_required)
 df = build_composite_risk(df)
+
+
+# =====================
+# 7b. Cross-Asset Scores (informational — not wired into composite yet)
+# =====================
+# These are additive context signals. The composite formula is NOT changed here
+# to avoid retrofitting weights to history. Weights will be tuned after OOS testing.
+
+if "spread_10y3m" in df.columns and "fed_funds_rate" in df.columns:
+    df["rates_stress_score"] = df.apply(
+        lambda row: compute_rates_stress_score(
+            row.get("spread_10y3m", float("nan")),
+            row.get("fed_funds_rate", float("nan")),
+            row.get("fed_funds_change_90d", float("nan")),
+            row.get("fed_funds_change_360d", float("nan")),
+        ),
+        axis=1,
+    )
+    df["rates_stress_score_smooth"] = df["rates_stress_score"].rolling(21, min_periods=5).mean()
+
+if "anfci" in df.columns or "stlfsi" in df.columns:
+    df["enhanced_funding_stress_score"] = df.apply(
+        lambda row: compute_enhanced_funding_stress_score(
+            row.get("nfci_90d_avg", float("nan")),
+            row.get("anfci", float("nan")),
+            row.get("stlfsi", float("nan")),
+            row.get("initial_claims_zscore", float("nan")),
+        ),
+        axis=1,
+    )
+    df["enhanced_funding_stress_score_smooth"] = (
+        df["enhanced_funding_stress_score"].rolling(21, min_periods=5).mean()
+    )
+
+if "eurusd_change_30d" in df.columns or "oil_change_30d" in df.columns:
+    df["fx_commodity_score"] = df.apply(
+        lambda row: compute_fx_commodity_score(
+            row.get("eurusd_change_30d", float("nan")),
+            row.get("oil_change_30d", float("nan")),
+            row.get("usdjpy_change_30d", float("nan")),
+        ),
+        axis=1,
+    )
+    df["fx_commodity_score_smooth"] = df["fx_commodity_score"].rolling(10, min_periods=3).mean()
+
+if "deposit_growth_90d" in df.columns or "loan_growth_90d" in df.columns:
+    df["banking_stress_score"] = df.apply(
+        lambda row: compute_banking_stress_score(
+            row.get("deposit_growth_90d", float("nan")),
+            row.get("loan_growth_90d", float("nan")),
+            row.get("fed_bs_change_90d", float("nan")),
+        ),
+        axis=1,
+    )
+    df["banking_stress_score_smooth"] = df["banking_stress_score"].rolling(21, min_periods=5).mean()
 
 
 # =====================
@@ -667,6 +779,26 @@ print("\n=== FINAL DECISION VALIDATION ===")
 print(decision_validation)
 
 print_correlation_block(df)
+
+# Run data quality diagnostics and print summary
+_diag = run_diagnostics(df)
+print_diagnostics(_diag)
+
+print(f"\n[data] Historical coverage: {_diag['date_range']['start']} → {_diag['date_range']['end']} "
+      f"({_diag['n_rows']} rows)")
+
+# Print cross-asset score snapshot if available
+_xasset_cols = [c for c in [
+    "rates_stress_score_smooth",
+    "enhanced_funding_stress_score_smooth",
+    "fx_commodity_score_smooth",
+    "banking_stress_score_smooth",
+] if c in df.columns]
+if _xasset_cols:
+    _lat = df.iloc[-1]
+    print("\n=== CROSS-ASSET SCORES (informational) ===")
+    for col in _xasset_cols:
+        print(f"{col}: {_lat[col]:.1f}")
 
 
 # =====================
