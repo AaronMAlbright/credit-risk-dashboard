@@ -242,6 +242,7 @@ def run_factor_analysis(df: pd.DataFrame) -> dict:
       rolling          — {window: DataFrame} rolling beta/alpha/R²
       regime_beta      — per-regime beta DataFrame
       decomposition    — return decomposition DataFrame
+      multi_factor     — multi-factor OLS result dict
       windows          — window sizes used
     """
     return {
@@ -249,5 +250,102 @@ def run_factor_analysis(df: pd.DataFrame) -> dict:
         "rolling":       compute_rolling_factor_exposure(df),
         "regime_beta":   compute_regime_beta(df),
         "decomposition": compute_return_decomposition(df),
+        "multi_factor":  compute_multi_factor_regression(df),
         "windows":       _WINDOWS,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Multi-factor OLS (numpy lstsq — no scipy)
+# ---------------------------------------------------------------------------
+
+_MULTI_FACTORS: list[tuple[str, str]] = [
+    ("sp500_daily_return",   "SP500"),
+    ("_vix_daily_chg",       "VIX Δ"),
+    ("_hy_daily_chg",        "HY Δ"),
+    ("_rates_daily_chg",     "Rates Δ"),
+    ("_momentum_proxy",      "Momentum"),
+]
+
+
+def _build_factor_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build multi-factor matrix from scored DataFrame.
+    Derives VIX/HY/rates daily changes and 12m momentum proxy.
+    """
+    out = df.copy()
+
+    if "vix" in out.columns:
+        out["_vix_daily_chg"] = out["vix"].diff()
+    if "hy_spread" in out.columns:
+        out["_hy_daily_chg"] = out["hy_spread"].diff()
+    if "yield_10y" in out.columns:
+        out["_rates_daily_chg"] = out["yield_10y"].diff()
+    if "sp500_return_30d" in out.columns:
+        out["_momentum_proxy"] = out["sp500_return_30d"]
+    elif "sp500_daily_return" in out.columns:
+        out["_momentum_proxy"] = out["sp500_daily_return"].rolling(252).sum()
+
+    return out
+
+
+def compute_multi_factor_regression(df: pd.DataFrame) -> dict:
+    """
+    Multi-factor OLS: strategy ~ alpha + Σ(beta_k × factor_k) + ε
+
+    Factors: SP500, VIX daily change, HY OAS daily change,
+             10y yield daily change, 12-month momentum proxy.
+
+    Returns dict with per-factor betas, full-period alpha, R², n_obs,
+    and a factor_contribution table showing each factor's R² contribution.
+    All NaN when insufficient data.
+    """
+    if _STRATEGY_COL not in df.columns or df.empty:
+        return {}
+
+    df_aug = _build_factor_matrix(df)
+
+    # Collect available factors
+    avail = [(col, name) for col, name in _MULTI_FACTORS if col in df_aug.columns]
+    if not avail:
+        return {}
+
+    factor_cols = [c for c, _ in avail]
+    factor_names = [n for _, n in avail]
+
+    sub = df_aug[[_STRATEGY_COL] + factor_cols].dropna()
+    n = len(sub)
+    if n < _MIN_OBS + len(factor_cols):
+        return {"error": f"Insufficient observations ({n}) for {len(factor_cols)}-factor model"}
+
+    y = sub[_STRATEGY_COL].values.astype(float)
+    X = sub[factor_cols].values.astype(float)
+    X = np.column_stack([np.ones(n), X])   # add intercept
+
+    betas, residuals, rank, _ = np.linalg.lstsq(X, y, rcond=None)
+    alpha_d = float(betas[0])
+    factor_betas = betas[1:].tolist()
+
+    y_hat = X @ betas
+    ss_res = float(((y - y_hat) ** 2).sum())
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-14 else np.nan
+    resid_std_d = float(np.sqrt(ss_res / max(n - len(betas), 1)))
+
+    factor_table = []
+    for name, beta in zip(factor_names, factor_betas):
+        factor_table.append({
+            "factor": name,
+            "beta":   round(float(beta), 5),
+        })
+
+    return {
+        "alpha_daily":     round(alpha_d, 6),
+        "ann_alpha":       round(alpha_d * _ANNUALIZE, 5),
+        "r2":              round(r2, 4),
+        "residual_vol":    round(resid_std_d * np.sqrt(_ANNUALIZE), 5),
+        "n_obs":           n,
+        "n_factors":       len(factor_names),
+        "factor_betas":    factor_table,
+        "factor_names":    factor_names,
     }

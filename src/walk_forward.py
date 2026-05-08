@@ -303,6 +303,127 @@ def run_walk_forward(
 
 
 # ---------------------------------------------------------------------------
+# Frozen OOS splits
+# ---------------------------------------------------------------------------
+
+FROZEN_SPLITS: list[dict] = [
+    {
+        "name":         "Pre-2016 train → 2016–2025 test",
+        "train_end":    "2015-12-31",
+        "test_start":   "2016-01-01",
+        "description":  "Post-QE3 normalisation and political risk era",
+    },
+    {
+        "name":         "Pre-2019 train → 2019–2025 test",
+        "train_end":    "2018-12-31",
+        "test_start":   "2019-01-01",
+        "description":  "Includes COVID crash and 2022 rate shock as pure OOS",
+    },
+    {
+        "name":         "Pre-COVID train → Post-COVID test",
+        "train_end":    "2020-02-19",
+        "test_start":   "2020-03-01",
+        "description":  "Zero-rate era, inflation regime, regional bank stress OOS",
+    },
+    {
+        "name":         "Pre-2022 train → 2022–2025 test",
+        "train_end":    "2021-12-31",
+        "test_start":   "2022-01-01",
+        "description":  "Rate shock, SVB, and post-pandemic normalisation OOS",
+    },
+]
+
+_CAVEAT = (
+    "NOTE: These splits evaluate performance on held-out time periods, but the "
+    "scoring rules themselves were designed with awareness of the full dataset. "
+    "Results are pseudo-OOS: they show regime framework robustness across time, "
+    "not true walk-forward with frozen parameters. Treat as directional only."
+)
+
+
+def run_frozen_splits(
+    df: pd.DataFrame,
+    splits: list[dict] | None = None,
+) -> pd.DataFrame:
+    """
+    Evaluate strategy metrics on pre-defined frozen train/test date splits.
+
+    Parameters
+    ----------
+    df     : Scored DataFrame from pipeline.run_analytics(). Must have
+             strategy_daily_return, sp500_daily_return, final_decision.
+    splits : List of split dicts (default: FROZEN_SPLITS).
+
+    Returns
+    -------
+    DataFrame with one row per split showing IS and OOS performance metrics.
+    """
+    if splits is None:
+        splits = FROZEN_SPLITS
+
+    missing = [c for c in ["strategy_daily_return", "sp500_daily_return"] if c not in df.columns]
+    if missing:
+        raise ValueError(f"run_frozen_splits: missing columns {missing}")
+
+    if not isinstance(df.index, pd.DatetimeIndex):
+        if "date" in df.columns:
+            df = df.set_index("date")
+        else:
+            raise ValueError("df must have DatetimeIndex or 'date' column")
+
+    rows = []
+    for sp in splits:
+        train_end   = pd.Timestamp(sp["train_end"])
+        test_start  = pd.Timestamp(sp["test_start"])
+
+        df_train = df[df.index <= train_end]
+        df_test  = df[df.index >= test_start]
+
+        row = {
+            "name":         sp["name"],
+            "description":  sp["description"],
+            "train_end":    str(train_end.date()),
+            "test_start":   str(test_start.date()),
+            "test_end":     str(df_test.index[-1].date()) if not df_test.empty else "—",
+            "n_train_days": len(df_train),
+            "n_test_days":  len(df_test),
+        }
+
+        for label, sub in [("is", df_train), ("oos", df_test)]:
+            if len(sub) < 2:
+                for k in ["strategy_sharpe", "sp500_sharpe", "strategy_maxdd",
+                          "sp500_maxdd", "strategy_total_ret", "sp500_total_ret",
+                          "excess_sharpe"]:
+                    row[f"{label}_{k}"] = np.nan
+                continue
+
+            for prefix, col in [("strategy", "strategy_daily_return"),
+                                 ("sp500",    "sp500_daily_return")]:
+                m = _window_metrics(sub[col], prefix)
+                for k, v in m.items():
+                    row[f"{label}_{k}"] = v
+
+            s_sh = row.get(f"{label}_strategy_sharpe", np.nan)
+            b_sh = row.get(f"{label}_sp500_sharpe", np.nan)
+            row[f"{label}_excess_sharpe"] = (
+                round(float(s_sh - b_sh), 4)
+                if not (np.isnan(s_sh) or np.isnan(b_sh)) else np.nan
+            )
+
+        # IS → OOS Sharpe degradation
+        is_sh  = row.get("is_strategy_sharpe", np.nan)
+        oos_sh = row.get("oos_strategy_sharpe", np.nan)
+        row["sharpe_degradation"] = (
+            round(float(oos_sh - is_sh), 4)
+            if not (np.isnan(is_sh) or np.isnan(oos_sh)) else np.nan
+        )
+
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 def save_results(

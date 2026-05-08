@@ -53,6 +53,13 @@ from src.model_health_check import (
     check_sample_sizes,
     check_score_bounds,
 )
+from src.regime_validity import run_regime_validity
+from src.confirmation_engine import get_current_confirmation, run_confirmation_series, DOMAIN_LABELS
+from src.failure_analysis import run_failure_analysis
+from src.economic_ontology import get_ontology_df
+from src.macro_chronology import get_events_df, get_fed_cycles_df
+from src.walk_forward import run_frozen_splits, FROZEN_SPLITS, _CAVEAT as _OOS_CAVEAT
+from src.regime_transition import compute_current_regime_forecast
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -365,6 +372,36 @@ def load_signal_horizon_grid(_df, _oos_cutoff="2022-01-01"):
 def load_stress_episode_stats(_df):
     """Compute per-signal stats for named stress episodes (cached)."""
     return compute_stress_episode_stats(_df)
+
+
+@st.cache_data
+def load_regime_validity(_df):
+    """Run regime validity tests (cached)."""
+    return run_regime_validity(_df)
+
+
+@st.cache_data
+def load_failure_analysis(_df):
+    """Run failure analysis (cached)."""
+    return run_failure_analysis(_df)
+
+
+@st.cache_data
+def load_confirmation_series(_df):
+    """Run cross-asset confirmation series (cached)."""
+    return run_confirmation_series(_df)
+
+
+@st.cache_data
+def load_frozen_splits(_df):
+    """Run frozen OOS split evaluation (cached)."""
+    return run_frozen_splits(_df)
+
+
+@st.cache_data
+def load_regime_forecast(_df):
+    """Compute current regime transition forecast (cached)."""
+    return compute_current_regime_forecast(_df)
 
 
 @st.cache_data
@@ -1255,19 +1292,20 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 9 sub-tabs
+with tab5:  # Analytics — 11 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
-     _analytics_sub9) = st.tabs([
+     _analytics_sub9, _analytics_sub10, _analytics_sub11) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
-        "Ortho", "Tail Risk", "Stress", "Performance", "Factors"
+        "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
+        "Regime Validity", "Failure Analysis",
     ])
 
-with tab6:  # Models — 7 sub-tabs
+with tab6:  # Models — 8 sub-tabs
     (_models_sub1, _models_sub2, _models_sub3, _models_sub4,
-     _models_sub5, _models_sub6, _models_sub7) = st.tabs([
+     _models_sub5, _models_sub6, _models_sub7, _models_sub8) = st.tabs([
         "Sensitivity", "Transitions", "Regimes", "Monte Carlo",
-        "Sub-period", "Sizing", "Scenarios"
+        "Sub-period", "Sizing", "Scenarios", "OOS Splits",
     ])
 
 with _analytics_sub1:
@@ -2345,6 +2383,69 @@ with _models_sub2:
             .background_gradient(cmap="RdYlGn", subset=[c for c in trans.columns if "Drawdown" not in c])
             .format("{:.2%}")
         )
+
+        # ── Hazard Rate / Regime Aging ────────────────────────────────────────
+        st.subheader("Regime Transition Forecast")
+        st.caption(
+            "Hazard rate h(d) = probability of leaving the regime at day d given it has persisted to day d. "
+            "Used to estimate P(exit within 20 trading days) from the current regime age."
+        )
+        import plotly.graph_objects as _hz_go
+
+        _hz_data = res.get("hazard_by_regime", {})
+        _cur_fc   = res.get("current_forecast", {})
+
+        if _cur_fc:
+            _fc_c1, _fc_c2, _fc_c3 = st.columns(3)
+            _fc_c1.metric("Current Regime",        str(_cur_fc.get("current_regime", "—")))
+            _fc_c2.metric("Current Streak (days)",  str(_cur_fc.get("current_age_days", "—")))
+            _p_exit = _cur_fc.get("prob_exit_20d", float("nan"))
+            _fc_c3.metric(
+                "P(Exit within 20d)",
+                f"{_p_exit:.1%}" if isinstance(_p_exit, float) and not pd.isna(_p_exit) else "—",
+            )
+            _next_p = _cur_fc.get("transition_probs", {})
+            if _next_p:
+                st.caption("Most likely next regimes:")
+                _np_cols = st.columns(min(len(_next_p), 4))
+                for _ci, (_r_name, _r_prob) in enumerate(list(_next_p.items())[:4]):
+                    _np_cols[_ci].metric(_r_name[:25], f"{_r_prob:.0%}")
+
+        if _hz_data:
+            _hz_regime_sel = st.selectbox(
+                "Show hazard rate for regime",
+                list(_hz_data.keys()),
+                key="hz_regime_sel",
+            )
+            _hz_df = _hz_data[_hz_regime_sel]["hazard_df"]
+            _hz_fig = _hz_go.Figure()
+            _hz_fig.add_trace(_hz_go.Bar(
+                x=_hz_df["age_days"],
+                y=_hz_df["hazard_rate"],
+                name="Daily Hazard Rate",
+                marker_color="#e67e22",
+                opacity=0.7,
+            ))
+            _hz_fig.add_trace(_hz_go.Scatter(
+                x=_hz_df["age_days"],
+                y=_hz_df["hazard_rate"].rolling(5, center=True, min_periods=1).mean(),
+                mode="lines", name="5-day smoothed",
+                line=dict(color="#f1c40f", width=2),
+            ))
+            _hz_fig.update_layout(
+                xaxis_title="Days in Regime",
+                yaxis_title="Daily Exit Probability",
+                height=300, template="plotly_dark",
+                margin=dict(l=50, r=20, t=30, b=40),
+            )
+            st.plotly_chart(_hz_fig, use_container_width=True)
+            st.caption(
+                f"Median run length for '{_hz_regime_sel}': "
+                f"{_hz_data[_hz_regime_sel]['median_age']:.0f} days. "
+                "Increasing hazard = regime becomes less stable over time. "
+                "Flat/declining hazard = regime is persistent (low aging effect)."
+            )
+
         st.divider()
         st.subheader("Validation Caveats & Interpretation")
         _n_wf = len(wf_windows) if wf_windows is not None else 0
@@ -2668,6 +2769,91 @@ with _analytics_sub3:
         build_score_history(df, date_start=date_start, date_end=date_end),
         use_container_width=True,
     )
+
+    # ── Macro Chronology Overlays ─────────────────────────────────────────────
+    st.subheader("Macro Chronology: Composite Score with Historical Event Markers")
+    import plotly.graph_objects as _go_chron
+
+    _chron_filter = st.multiselect(
+        "Show Fed cycle types",
+        ["hike", "cut", "qe", "qt", "zirp"],
+        default=["hike", "cut", "qe"],
+        key="chron_cycles",
+    )
+
+    _chron_evts   = get_events_df()
+    _chron_cycles = get_fed_cycles_df()
+
+    _df_chron = df.copy()
+    if "date" in _df_chron.columns:
+        _chron_x = pd.to_datetime(_df_chron["date"])
+    else:
+        _chron_x = _df_chron.index
+
+    # Filter by date range selection
+    if date_start and date_end:
+        _ds = pd.Timestamp(date_start)
+        _de = pd.Timestamp(date_end)
+        _mask_chron = (_chron_x >= _ds) & (_chron_x <= _de)
+        _df_chron = _df_chron[_mask_chron]
+        _chron_x  = _chron_x[_mask_chron]
+        _chron_evts   = _chron_evts[((_chron_evts.index >= _ds) & (_chron_evts.index <= _de))]
+        _chron_cycles = _chron_cycles[(_chron_cycles["end"] >= _ds) & (_chron_cycles["start"] <= _de)]
+
+    _fig_chron = _go_chron.Figure()
+
+    # Fed cycle bands
+    for _, _cyc in _chron_cycles.iterrows():
+        if _cyc["type"] not in _chron_filter:
+            continue
+        _fig_chron.add_vrect(
+            x0=str(_cyc["start"].date()), x1=str(_cyc["end"].date()),
+            fillcolor=_cyc["color"], layer="below", line_width=0,
+            annotation_text=_cyc["label"], annotation_position="top left",
+            annotation_font_size=8, annotation_font_color="#9ca3af",
+        )
+
+    # Composite score
+    if "composite_risk_score_smooth" in _df_chron.columns:
+        _fig_chron.add_trace(_go_chron.Scatter(
+            x=_chron_x, y=_df_chron["composite_risk_score_smooth"],
+            mode="lines", name="Composite Risk Score",
+            line=dict(color="#4f8ef7", width=2),
+        ))
+
+    # Caution / warning lines
+    _fig_chron.add_hline(y=50, line_color="rgba(230,126,34,0.5)", line_dash="dot", line_width=1)
+    _fig_chron.add_hline(y=70, line_color="rgba(231,76,60,0.5)",  line_dash="dot", line_width=1)
+
+    # Stress event markers
+    _cat_colors = {"crisis": "#e74c3c", "episode": "#e67e22", "recovery": "#27ae60"}
+    for _ev_date, _ev_row in _chron_evts.iterrows():
+        _fig_chron.add_vline(
+            x=str(_ev_date.date()),
+            line=dict(color=_cat_colors.get(_ev_row["category"], "#888"), width=1, dash="dash"),
+            annotation_text=_ev_row["label"],
+            annotation_position="top right",
+            annotation_font_size=8,
+            annotation_font_color=_cat_colors.get(_ev_row["category"], "#888"),
+        )
+
+    _fig_chron.update_layout(
+        height=420, template="plotly_dark",
+        xaxis_title="Date", yaxis_title="Composite Risk Score (0–100)",
+        yaxis=dict(range=[0, 100]),
+        margin=dict(l=50, r=20, t=30, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    st.plotly_chart(_fig_chron, use_container_width=True)
+
+    _cycle_legend = {
+        "hike": "Red shading = Fed hiking cycle",
+        "cut":  "Green shading = Fed cutting cycle",
+        "qe":   "Blue shading = Quantitative Easing",
+        "qt":   "Purple shading = Quantitative Tightening",
+        "zirp": "Yellow shading = Zero Interest Rate Policy",
+    }
+    st.caption(" · ".join(_cycle_legend[k] for k in _chron_filter if k in _cycle_legend))
 
 with _analytics_sub4:
     st.header("Signal Decay")
@@ -3635,6 +3821,47 @@ with _analytics_sub9:
         )
         st.plotly_chart(_decomp_fig, use_container_width=True)
 
+    # ── Multi-factor regression ───────────────────────────────────────────────
+    st.subheader("Multi-Factor Regression")
+    st.caption(
+        "5-factor OLS: strategy ~ α + β_SP500×SP500 + β_VIX×ΔVIX + β_HY×ΔHY + "
+        "β_Rates×ΔRates + β_Mom×Momentum. Quantifies whether returns come from "
+        "beta reduction, volatility timing, credit avoidance, or duration positioning."
+    )
+    _mf = _fa.get("multi_factor", {})
+    if _mf and "error" not in _mf and "factor_betas" in _mf:
+        _mf_c1, _mf_c2, _mf_c3 = st.columns(3)
+        _mf_c1.metric("Multi-Factor R²",   f"{_mf.get('r2', float('nan')):.3f}")
+        _mf_c2.metric("Ann. Alpha (MF)",   f"{_mf.get('ann_alpha', float('nan')):.2%}")
+        _mf_c3.metric("Residual Vol",      f"{_mf.get('residual_vol', float('nan')):.2%}")
+
+        _beta_df = pd.DataFrame(_mf["factor_betas"]).set_index("factor")
+        import plotly.graph_objects as _mf_go
+        _mf_fig = _mf_go.Figure(_mf_go.Bar(
+            x=_beta_df.index.tolist(),
+            y=_beta_df["beta"].tolist(),
+            marker_color=["#e74c3c" if v < 0 else "#27ae60" for v in _beta_df["beta"]],
+            text=[f"{v:+.4f}" for v in _beta_df["beta"]],
+            textposition="outside",
+        ))
+        _mf_fig.update_layout(
+            title="Factor Betas (multi-factor OLS)",
+            yaxis_title="Beta coefficient",
+            height=320, template="plotly_dark",
+            margin=dict(l=40, r=20, t=50, b=40),
+        )
+        st.plotly_chart(_mf_fig, use_container_width=True)
+        st.caption(
+            "Beta interpretation: SP500 beta = directional market exposure; "
+            "VIX Δ beta < 0 = strategy profits when VIX rises (volatility timing); "
+            "HY Δ beta < 0 = strategy profits during spread widening (credit avoidance); "
+            "negative Rates Δ beta = profits from rate rises (short duration bias)."
+        )
+    elif _mf and "error" in _mf:
+        st.info(f"Multi-factor: {_mf['error']}")
+    else:
+        st.info("Multi-factor regression not available for this dataset.")
+
 with _models_sub3:
     st.header("Regime Probability Nowcast")
     st.caption(
@@ -4573,3 +4800,361 @@ with _models_sub7:
             "Red bars → shock increases composite risk (bearish). "
             "Green bars → shock reduces composite (e.g., SP500 decline breaks current complacency signal)."
         )
+
+# =============================================================================
+# MODELS sub-tab 8: True OOS Splits
+# =============================================================================
+with _models_sub8:
+    import plotly.graph_objects as _go_oos
+    import numpy as _np_oos
+
+    st.header("Out-of-Sample Period Splits")
+    st.caption(_OOS_CAVEAT)
+    st.warning(
+        "These splits evaluate strategy performance on held-out time windows. "
+        "The scoring rules were designed with awareness of the full dataset, "
+        "so these are pseudo-OOS (framework robustness test, not frozen-parameter test).",
+        icon="⚠️",
+    )
+
+    with st.spinner("Computing OOS splits…"):
+        _oos_df = load_frozen_splits(df)
+
+    if _oos_df.empty:
+        st.info("OOS splits could not be computed — check required columns.")
+    else:
+        for _, _sp_row in _oos_df.iterrows():
+            st.subheader(_sp_row["name"])
+            st.caption(_sp_row["description"])
+            _sc1, _sc2, _sc3, _sc4 = st.columns(4)
+            _sc1.metric("IS Strategy Sharpe",   f"{_sp_row.get('is_strategy_sharpe', float('nan')):.2f}" if _np_oos.isfinite(float(_sp_row.get('is_strategy_sharpe', float('nan')))) else "—")
+            _sc2.metric("OOS Strategy Sharpe",  f"{_sp_row.get('oos_strategy_sharpe', float('nan')):.2f}" if _np_oos.isfinite(float(_sp_row.get('oos_strategy_sharpe', float('nan')))) else "—",
+                        delta=f"{_sp_row.get('sharpe_degradation', float('nan')):+.2f}" if _np_oos.isfinite(float(_sp_row.get('sharpe_degradation', float('nan')))) else None)
+            _sc3.metric("OOS SP500 Sharpe",     f"{_sp_row.get('oos_sp500_sharpe', float('nan')):.2f}" if _np_oos.isfinite(float(_sp_row.get('oos_sp500_sharpe', float('nan')))) else "—")
+            _sc4.metric("OOS Excess Sharpe",    f"{_sp_row.get('oos_excess_sharpe', float('nan')):+.2f}" if _np_oos.isfinite(float(_sp_row.get('oos_excess_sharpe', float('nan')))) else "—")
+            with st.expander("Full metrics"):
+                _sp_display = {
+                    "IS Train Days":          _sp_row.get("n_train_days"),
+                    "OOS Test Days":          _sp_row.get("n_test_days"),
+                    "OOS Test Period":        f"{_sp_row.get('test_start','?')} → {_sp_row.get('test_end','?')}",
+                    "IS Strategy Sharpe":     _sp_row.get("is_strategy_sharpe"),
+                    "OOS Strategy Sharpe":    _sp_row.get("oos_strategy_sharpe"),
+                    "IS Strategy MaxDD":      f"{float(_sp_row.get('is_strategy_max_drawdown', float('nan'))):.1%}" if _np_oos.isfinite(float(_sp_row.get("is_strategy_max_drawdown", float('nan')))) else "—",
+                    "OOS Strategy MaxDD":     f"{float(_sp_row.get('oos_strategy_max_drawdown', float('nan'))):.1%}" if _np_oos.isfinite(float(_sp_row.get("oos_strategy_max_drawdown", float('nan')))) else "—",
+                    "OOS SP500 MaxDD":        f"{float(_sp_row.get('oos_sp500_max_drawdown', float('nan'))):.1%}" if _np_oos.isfinite(float(_sp_row.get("oos_sp500_max_drawdown", float('nan')))) else "—",
+                    "Sharpe Degradation":     f"{float(_sp_row.get('sharpe_degradation', float('nan'))):+.3f}" if _np_oos.isfinite(float(_sp_row.get("sharpe_degradation", float('nan')))) else "—",
+                }
+                st.table(pd.Series(_sp_display).rename("Value").to_frame())
+            st.divider()
+
+# =============================================================================
+# ANALYTICS sub-tab 10: Regime Validity
+# =============================================================================
+with _analytics_sub10:
+    import plotly.graph_objects as _go_rv
+    import numpy as _np_rv
+
+    st.header("Regime Validity Testing")
+    st.caption(
+        "Tests whether the regime framework produces genuinely distinct economic states. "
+        "Uses Kruskal-Wallis (non-parametric), one-way ANOVA, and bootstrap pairwise tests "
+        "on 21-day forward SP500 returns as the primary outcome. "
+        "Separability score (0–100) = eta-squared × 100."
+    )
+
+    with st.spinner("Running regime validity tests…"):
+        _rv = load_regime_validity(df)
+
+    _rv_stats   = _rv.get("regime_stats", pd.DataFrame())
+    _rv_kw      = _rv.get("kw_test", {})
+    _rv_anova   = _rv.get("anova", {})
+    _rv_pw      = _rv.get("pairwise", pd.DataFrame())
+    _rv_sep     = _rv.get("separability", {})
+    _rv_cons    = _rv.get("consolidations", [])
+
+    # ── Headline separability metric ─────────────────────────────────────────
+    _sep_score = _rv_sep.get("score", float("nan"))
+    _sep_color = "#27ae60" if _sep_score >= 15 else "#e67e22" if _sep_score >= 7 else "#e74c3c"
+    _rv_h1, _rv_h2, _rv_h3 = st.columns(3)
+    _rv_h1.metric(
+        "Separability Score",
+        f"{_sep_score:.1f} / 100" if _np_rv.isfinite(_sep_score) else "—",
+        help="eta-squared × 100: fraction of forward return variance explained by regime",
+    )
+    _rv_h2.metric(
+        "KW H-Statistic",
+        f"{_rv_kw.get('H_stat', float('nan')):.2f}" if _rv_kw and "H_stat" in _rv_kw else "—",
+        delta="Significant" if _rv_kw.get("significant_05") else "Not significant",
+    )
+    _rv_h3.metric(
+        "ANOVA F-Statistic",
+        f"{_rv_anova.get('F_stat', float('nan')):.2f}" if _rv_anova and "F_stat" in _rv_anova else "—",
+        delta="Significant" if _rv_anova.get("significant_heuristic") else "Below threshold",
+    )
+
+    st.caption(f"**Interpretation:** {_rv_sep.get('interpretation', '—')}")
+    if _rv_kw:
+        st.caption(f"**KW conclusion:** {_rv_kw.get('conclusion', '—')}")
+    if _rv_anova:
+        st.caption(f"**ANOVA conclusion:** {_rv_anova.get('conclusion', '—')}")
+
+    # ── Per-regime stats table ────────────────────────────────────────────────
+    st.subheader("Per-Regime Economic Summary")
+    st.caption("21-day forward statistics for each regime. † = fewer than 30 observations (unreliable).")
+    if not _rv_stats.empty:
+        _rv_display = _rv_stats.copy()
+        _warn_col = "sample_warning"
+        for _col in ["fwd_ret_1m", "fwd_ret_3m", "fwd_ret_6m"]:
+            if _col in _rv_display.columns:
+                _rv_display[_col] = _rv_display[_col].map(lambda v: f"{v:.2%}" if _np_rv.isfinite(v) else "—")
+        for _col in ["fwd_vol_1m", "fwd_maxdd_1m"]:
+            if _col in _rv_display.columns:
+                _rv_display[_col] = _rv_display[_col].map(lambda v: f"{v:.2%}" if _np_rv.isfinite(v) else "—")
+        for _col in ["fwd_hy_chg", "fwd_vix_chg", "fwd_move_chg", "fwd_rates_chg"]:
+            if _col in _rv_display.columns:
+                _rv_display[_col] = _rv_display[_col].map(lambda v: f"{v:+.3f}" if _np_rv.isfinite(v) else "—")
+        if _warn_col in _rv_display.columns:
+            _rv_display.index = [
+                f"{r} †" if _rv_stats.at[r, _warn_col] else r
+                for r in _rv_stats.index
+            ]
+            _rv_display = _rv_display.drop(columns=[_warn_col], errors="ignore")
+        st.dataframe(_rv_display, use_container_width=True)
+
+    # ── Forward return distribution by regime ────────────────────────────────
+    if not _rv_stats.empty and "fwd_ret_1m" not in _rv_stats.columns:
+        pass  # raw numeric not available after formatting
+    elif not _rv_stats.empty:
+        st.subheader("21-Day Forward Return Distribution by Regime")
+        if "date" in df.columns:
+            _rv_df_aug = df.copy()
+        else:
+            _rv_df_aug = df.copy()
+        from src.regime_validity import _add_forward_cols
+        _rv_df_aug = _add_forward_cols(_rv_df_aug)
+
+        if "_fwd_ret_21d" in _rv_df_aug.columns and "final_decision" in _rv_df_aug.columns:
+            _rv_box = _go_rv.Figure()
+            for _regime in sorted(_rv_df_aug["final_decision"].dropna().unique()):
+                _sub_r = _rv_df_aug[_rv_df_aug["final_decision"] == _regime]["_fwd_ret_21d"].dropna()
+                if len(_sub_r) >= 5:
+                    _rv_box.add_trace(_go_rv.Box(
+                        y=_sub_r.values,
+                        name=str(_regime),
+                        boxpoints="outliers",
+                        marker_size=3,
+                    ))
+            _rv_box.add_hline(y=0, line_color="#999", line_width=1, line_dash="dot")
+            _rv_box.update_layout(
+                yaxis_title="21-Day Forward Return (sum of daily)",
+                height=380, template="plotly_dark",
+                margin=dict(l=50, r=20, t=30, b=80),
+                xaxis_tickangle=-30,
+            )
+            st.plotly_chart(_rv_box, use_container_width=True)
+
+    # ── Bootstrap pairwise table ──────────────────────────────────────────────
+    st.subheader("Bootstrap Pairwise Separability")
+    if not _rv_pw.empty:
+        _pw_display = _rv_pw[["regime_a", "regime_b", "n_a", "n_b",
+                               "mean_a", "mean_b", "observed_diff",
+                               "ci_low_95", "ci_high_95",
+                               "p_value_two_sided", "significant_05"]].copy()
+        for _c in ["mean_a", "mean_b", "observed_diff", "ci_low_95", "ci_high_95"]:
+            if _c in _pw_display.columns:
+                _pw_display[_c] = _pw_display[_c].map(lambda v: f"{v:.3%}" if _np_rv.isfinite(v) else "—")
+
+        def _pw_color(v):
+            if v is True or v == "True":
+                return "background-color:rgba(39,174,96,0.2);color:#27ae60"
+            return "background-color:rgba(231,76,60,0.15);color:#e74c3c"
+
+        st.dataframe(
+            _pw_display.style.map(_pw_color, subset=["significant_05"]),
+            use_container_width=True,
+        )
+        _n_sig = int(_rv_pw["significant_05"].sum()) if "significant_05" in _rv_pw.columns else 0
+        _n_total = len(_rv_pw)
+        st.caption(
+            f"{_n_sig} of {_n_total} regime pairs are statistically distinct "
+            f"(bootstrap p < 0.05 on 21d forward returns). "
+            + ("INCONCLUSIVE — most pairs are not separable." if _n_sig < _n_total // 2 else "")
+        )
+
+    # ── Consolidation recommendations ─────────────────────────────────────────
+    if _rv_cons:
+        st.subheader("Consolidation Recommendations")
+        for _c in _rv_cons:
+            if _c["type"] == "small_sample":
+                st.warning(f"**{_c['regime']}**: {_c['reason']} → {_c['action']}")
+            else:
+                st.info(
+                    f"**{_c['regime']}** ↔ **{_c['partner']}**: {_c['reason']} → {_c['action']}"
+                )
+    else:
+        st.success("No consolidation recommendations — all regimes with sufficient data are statistically distinct.")
+
+    # ── Economic ontology table ───────────────────────────────────────────────
+    st.subheader("Signal Economic Ontology")
+    st.caption("Maps each signal to its economic meaning, transmission mechanism, expected lead time, and known limitations.")
+    _onto_df = get_ontology_df()
+    _onto_display = _onto_df[["display", "in_composite", "weight", "category",
+                               "meaning", "mechanism", "expected_lag",
+                               "asset_impact", "sign_conv", "limitations"]].copy()
+    _onto_display.columns = ["Signal", "In Composite", "Weight", "Category",
+                              "Meaning", "Transmission Mechanism", "Lead Time",
+                              "Asset Impact", "Sign Convention", "Limitations"]
+    st.dataframe(_onto_display, use_container_width=True, height=420)
+
+# =============================================================================
+# ANALYTICS sub-tab 11: Failure Analysis
+# =============================================================================
+with _analytics_sub11:
+    import plotly.graph_objects as _go_fa
+    import numpy as _np_fa
+
+    st.header("Model Failure Analysis")
+    st.caption(
+        "Identifies periods where the regime framework gave wrong signals: "
+        "false positives (defensive while market rallied), false negatives (bullish while market crashed), "
+        "missed named episodes, unstable rolling windows, and regime confusion periods."
+    )
+    st.info(
+        "Failures are diagnostic, not disqualifying. Every macro risk model has failure modes. "
+        "The goal is to understand when and why the model breaks down.",
+        icon="ℹ️",
+    )
+
+    with st.spinner("Running failure analysis…"):
+        _fa_res = load_failure_analysis(df)
+
+    _fa_fp   = _fa_res.get("false_positives",  pd.DataFrame())
+    _fa_fn   = _fa_res.get("false_negatives",  pd.DataFrame())
+    _fa_ep   = _fa_res.get("missed_episodes",  pd.DataFrame())
+    _fa_uw   = _fa_res.get("unstable_windows", pd.DataFrame())
+    _fa_rc   = _fa_res.get("regime_confusion", pd.DataFrame())
+    _fa_sum  = _fa_res.get("summary", {})
+
+    # ── Headline counts ───────────────────────────────────────────────────────
+    _fh1, _fh2, _fh3, _fh4, _fh5 = st.columns(5)
+    _fh1.metric("False Positives",    _fa_sum.get("n_false_positives", "—"),   help="Model defensive during >4% rally")
+    _fh2.metric("False Negatives",    _fa_sum.get("n_false_negatives", "—"),   help="Model bullish during >5% drawdown")
+    _fh3.metric("Missed Episodes",    _fa_sum.get("n_missed_episodes", "—"),   help="Named stress/rally episodes mishandled")
+    _fh4.metric("Unstable Windows",   _fa_sum.get("n_unstable_windows", "—"),  help="63d windows with >8% strategy lag vs SP500")
+    _fh5.metric("Confusion Periods",  _fa_sum.get("n_confusion_periods", "—"), help="Windows with ≥4 regime transitions in 21 days")
+
+    # ── Named episode scorecard ───────────────────────────────────────────────
+    st.subheader("Named Episode Scorecard")
+    if not _fa_ep.empty:
+        def _ep_color(v):
+            if v == "correctly_positioned":
+                return "background-color:rgba(39,174,96,0.2);color:#27ae60"
+            if v == "partial":
+                return "background-color:rgba(230,126,34,0.2);color:#e67e22"
+            if v in ("missed_crash", "missed_rally"):
+                return "background-color:rgba(231,76,60,0.2);color:#e74c3c"
+            return ""
+        _ep_show = _fa_ep[["name", "type", "start", "end", "sp500_actual",
+                            "mean_equity_weight", "dominant_regime",
+                            "composite_mean", "model_assessment"]].copy()
+        _ep_show["sp500_actual"] = _ep_show["sp500_actual"].map(lambda v: f"{v:.0%}")
+        st.dataframe(
+            _ep_show.style.map(_ep_color, subset=["model_assessment"]),
+            use_container_width=True,
+        )
+        _n_correct = (_fa_ep["model_assessment"] == "correctly_positioned").sum()
+        _n_missed = _fa_ep["model_assessment"].isin(["missed_crash", "missed_rally"]).sum()
+        st.caption(
+            f"Correctly positioned: {_n_correct}/{len(_fa_ep)} episodes. "
+            f"Missed: {_n_missed}. "
+            f"Partial: {len(_fa_ep) - _n_correct - _n_missed}."
+        )
+
+    # ── False positives ───────────────────────────────────────────────────────
+    st.subheader("False Positives — Defensive While Market Rallied")
+    st.caption("Model had low equity exposure (≤ 0.45) while SP500 gained > 4% over the next 30 days.")
+    if not _fa_fp.empty:
+        _fp_show = _fa_fp[["date", "equity_weight", "composite_score",
+                            "fwd_return_30d", "regime", "likely_reason"]].head(20)
+        _fp_show["fwd_return_30d"] = _fa_fp["fwd_return_30d"].head(20).map(lambda v: f"{v:.2%}")
+        st.dataframe(_fp_show, use_container_width=True)
+        with st.expander("Common false positive patterns"):
+            st.markdown(
+                "- **VIX spike false alarm**: VIX jumped 30%+ briefly but credit didn't confirm\n"
+                "- **Rate shock overhang**: Treasury score stayed elevated after the shock resolved\n"
+                "- **Late-cycle complacency signal**: Complacency score high but euphoric period extended\n"
+                "- **Post-crash slow re-entry**: Model stayed defensive into early recovery phase"
+            )
+    else:
+        st.success("No false positives found at current thresholds.")
+
+    # ── False negatives ───────────────────────────────────────────────────────
+    st.subheader("False Negatives — Bullish While Market Crashed")
+    st.caption("Model had high equity exposure (≥ 0.65) while SP500 suffered > 5% drawdown over 30 days.")
+    if not _fa_fn.empty:
+        _fn_show = _fa_fn[["date", "equity_weight", "composite_score",
+                            "outcome_30d", "regime", "likely_reason"]].head(20)
+        _fn_show["outcome_30d"] = _fa_fn["outcome_30d"].head(20).map(lambda v: f"{v:.2%}")
+        st.dataframe(_fn_show, use_container_width=True)
+        with st.expander("Common false negative patterns"):
+            st.markdown(
+                "- **Sudden shock**: Regime framework missed fast-onset crashes (COVID, flash crashes)\n"
+                "- **Benign composite, bad outcome**: All signals looked fine until they didn't\n"
+                "- **Signal lag**: Shock resolved faster than smoothing windows could respond\n"
+                "- **Idiosyncratic events**: External political/geopolitical events not captured by any signal"
+            )
+    else:
+        st.success("No false negatives found at current thresholds.")
+
+    # ── Unstable windows ──────────────────────────────────────────────────────
+    st.subheader("Unstable Windows — Strategy Lagging SP500 by > 8% (63-Day Rolling)")
+    if not _fa_uw.empty:
+        _uw_show = _fa_uw[["start", "end", "strategy_cum", "sp500_cum", "lag", "regime"]].head(20).copy()
+        for _c in ["strategy_cum", "sp500_cum", "lag"]:
+            if _c in _uw_show.columns:
+                _uw_show[_c] = _uw_show[_c].map(lambda v: f"{v:.2%}")
+        st.dataframe(_uw_show, use_container_width=True)
+    else:
+        st.success("No persistent underperformance windows found.")
+
+    # ── Regime confusion ──────────────────────────────────────────────────────
+    st.subheader("Regime Confusion Periods — ≥ 4 Transitions in 21 Days")
+    if not _fa_rc.empty:
+        st.dataframe(_fa_rc.head(20), use_container_width=True)
+        st.caption(
+            "High regime switching frequency often coincides with market inflection points "
+            "or model indecision at composite score boundaries. "
+            "Consider smoothing the transition signal further, or widening decision thresholds."
+        )
+    else:
+        st.success("No regime confusion periods found.")
+
+    # ── Cross-asset confirmation ──────────────────────────────────────────────
+    st.subheader("Cross-Asset Confirmation — Current State")
+    _conf = get_current_confirmation(df)
+    if _conf:
+        _conf_status = _conf.get("status", "Unknown")
+        _conf_color  = "#27ae60" if "Confirmed" == _conf_status else "#e67e22" if "Partial" in _conf_status else "#e74c3c"
+        st.markdown(
+            f"<div style='font-size:1.4rem;font-weight:700;color:{_conf_color};margin-bottom:8px'>"
+            f"Current Confirmation: {_conf_status}</div>",
+            unsafe_allow_html=True,
+        )
+        _domain_results = _conf.get("domain_results", {})
+        _dom_cols = st.columns(len(_domain_results))
+        for _dc, (_domain, _dr) in zip(_dom_cols, _domain_results.items()):
+            _dcolor = "#27ae60" if _dr["confirming"] else "#6b7280"
+            _dc.markdown(
+                f"<div style='text-align:center;padding:8px;border-radius:6px;"
+                f"background:rgba(255,255,255,0.05)'>"
+                f"<div style='font-size:0.75rem;color:#9ca3af'>{DOMAIN_LABELS.get(_domain, _domain)}</div>"
+                f"<div style='font-size:1.1rem;font-weight:600;color:{_dcolor}'>"
+                f"{'✓' if _dr['confirming'] else '✗'}</div></div>",
+                unsafe_allow_html=True,
+            )
+        st.caption(
+            f"Confirming domains: {_conf.get('n_confirming', 0)} / {_conf.get('n_domains', 0)}. "
+            "Confirmed = 4–5 domains; Partially Confirmed = 2–3; Unconfirmed = 0–1."
+        )
+    else:
+        st.info("Confirmation engine requires at least credit and rates signals.")

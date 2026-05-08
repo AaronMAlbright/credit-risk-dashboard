@@ -172,6 +172,126 @@ def _save_heatmap(matrix, title, path):
     plt.close(fig)
 
 
+def compute_hazard_rates(series: pd.Series) -> dict:
+    """
+    Discrete hazard rate h(d) = P(leaving regime at day d | survived to day d).
+
+    Also returns:
+      expected_remaining_duration(age)  — given current age, expected days left
+      prob_exit_within_N(age, N=20)     — P(exit within N days given current age)
+
+    Returns dict keyed by regime, each containing:
+      hazard_df     — DataFrame(age_days, hazard_rate, n_at_risk, n_exits)
+      median_age    — median run length
+    """
+    runs = _regime_runs(series.dropna())
+    if runs.empty:
+        return {}
+
+    result = {}
+    for regime, grp in runs.groupby("regime"):
+        lengths = grp["length"].values.astype(int)
+        if len(lengths) < 3:
+            continue
+        max_len = int(lengths.max())
+
+        ages = np.arange(1, max_len + 1)
+        n_at_risk = np.array([(lengths >= d).sum() for d in ages])
+        n_exits   = np.array([(lengths == d).sum() for d in ages])
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            hazard = np.where(n_at_risk > 0, n_exits / n_at_risk, np.nan)
+
+        result[regime] = {
+            "hazard_df": pd.DataFrame({
+                "age_days":   ages,
+                "hazard_rate": hazard,
+                "n_at_risk":  n_at_risk,
+                "n_exits":    n_exits,
+            }),
+            "median_age": float(np.median(lengths)),
+        }
+
+    return result
+
+
+def prob_exit_within(hazard_df: pd.DataFrame, current_age: int, n_days: int = 20) -> float:
+    """
+    Given current regime age (days) and hazard DataFrame,
+    compute P(exit within n_days).
+
+    P(survive n more days) = product(1 - h(current_age + d)) for d in 1..n_days
+    P(exit within n days) = 1 - P(survive)
+    """
+    if hazard_df.empty:
+        return np.nan
+
+    max_age = int(hazard_df["age_days"].max())
+    survival = 1.0
+    for d in range(1, n_days + 1):
+        age_d = current_age + d
+        if age_d > max_age:
+            h = float(hazard_df["hazard_rate"].iloc[-1])
+        else:
+            row = hazard_df[hazard_df["age_days"] == age_d]
+            h = float(row["hazard_rate"].iloc[0]) if not row.empty else 0.0
+        if not np.isnan(h):
+            survival *= (1.0 - h)
+
+    return round(float(1.0 - survival), 4)
+
+
+def compute_current_regime_forecast(
+    df: pd.DataFrame,
+    regime_col: str = "final_decision",
+    n_days: int = 20,
+) -> dict:
+    """
+    Compute transition probability for the current (latest) regime.
+
+    Returns dict with:
+      current_regime    — name of the latest regime
+      current_age_days  — how many days in the current streak
+      prob_exit_20d     — probability of leaving this regime in next 20 days
+      transition_probs  — most likely next regimes (from transition matrix)
+    """
+    if regime_col not in df.columns or df.empty:
+        return {}
+
+    series = df[regime_col].dropna()
+    if series.empty:
+        return {}
+
+    # Current streak
+    current = str(series.iloc[-1])
+    age = 1
+    for v in reversed(series.iloc[:-1].values):
+        if str(v) == current:
+            age += 1
+        else:
+            break
+
+    # Hazard-based exit probability
+    hazard_by_regime = compute_hazard_rates(series)
+    p_exit = np.nan
+    if current in hazard_by_regime:
+        p_exit = prob_exit_within(hazard_by_regime[current]["hazard_df"], age, n_days)
+
+    # Next regime probabilities from transition matrix
+    _, probs = compute_transition_matrix(series)
+    next_probs = {}
+    if current in probs.index:
+        row = probs.loc[current].sort_values(ascending=False)
+        next_probs = {str(k): round(float(v), 3) for k, v in row.items() if v > 0.01}
+
+    return {
+        "current_regime":  current,
+        "current_age_days": age,
+        "prob_exit_20d":   p_exit,
+        "transition_probs": next_probs,
+    }
+
+
 def run_regime_analysis(df):
     """
     Run full regime transition analysis on both final_decision and transition_regime.
@@ -213,12 +333,17 @@ def run_regime_analysis(df):
         trans_returns = compute_transition_forward_returns(clean, regime_col)
         trans_returns.to_csv(os.path.join(OUTPUT_DIR, f"{regime_col}_transition_returns.csv"))
 
+        hazard_by_regime = compute_hazard_rates(series)
+        current_forecast = compute_current_regime_forecast(clean, regime_col)
+
         results[regime_col] = {
             "transition_counts": counts,
-            "transition_probs": probs,
-            "durations": durations,
-            "forward_returns": fwd_returns,
+            "transition_probs":  probs,
+            "durations":         durations,
+            "forward_returns":   fwd_returns,
             "transition_returns": trans_returns,
+            "hazard_by_regime":  hazard_by_regime,
+            "current_forecast":  current_forecast,
         }
 
     return results
