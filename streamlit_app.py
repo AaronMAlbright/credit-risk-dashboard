@@ -42,6 +42,7 @@ from src.scenario_analysis import (
 )
 from src.portfolio_engine import generate_portfolio_weights
 from src.crisis_similarity import CRISIS_ANALOGS, compute_crisis_similarity
+from src.signal_validation import validate_signals_vs_returns, compute_stress_episode_stats
 from src.model_health_check import (
     check_missing_values,
     check_sample_sizes,
@@ -341,6 +342,18 @@ def load_position_sizing(_df):
     rp = run_regime_probability(_df)
     prob_history = rp.get("history")
     return run_position_sizing(_df, prob_history=prob_history)
+
+
+@st.cache_data
+def load_signal_validation(_df, _oos_cutoff="2022-01-01"):
+    """Run IS/OOS signal validation against forward returns (cached)."""
+    return validate_signals_vs_returns(_df, oos_cutoff=_oos_cutoff)
+
+
+@st.cache_data
+def load_stress_episode_stats(_df):
+    """Compute per-signal stats for named stress episodes (cached)."""
+    return compute_stress_episode_stats(_df)
 
 
 @st.cache_data
@@ -798,6 +811,35 @@ with tab1:
             unsafe_allow_html=True,
         )
 
+    # ── Cross-Asset Scores snapshot ───────────────────────────────────────────
+    _ca_score_cols = [
+        ("rates_stress_score_smooth",            "Rates Stress",   None),
+        ("enhanced_funding_stress_score_smooth", "Funding Stress", None),
+        ("fx_commodity_score_smooth",            "FX/Commodity",   None),
+        ("banking_stress_score_smooth",          "Banking Stress", None),
+    ]
+    _ca_available = [(col, label, c) for col, label, c in _ca_score_cols if col in df.columns]
+    if _ca_available:
+        st.subheader("Cross-Asset Signals")
+        _ca_cols_ui = st.columns(len(_ca_available))
+        for _ui_col, (col, label, _) in zip(_ca_cols_ui, _ca_available):
+            _val = latest.get(col, float("nan"))
+            if isinstance(_val, float) and not pd.isna(_val):
+                _color = "#e74c3c" if _val >= 60 else "#e67e22" if _val >= 40 else "#27ae60"
+                _ui_col.markdown(
+                    _kv_card(label, f"{_val:.1f} / 100", _color),
+                    unsafe_allow_html=True,
+                )
+        # MOVE index card
+        if "move_index" in df.columns:
+            _mv_val = latest.get("move_index", float("nan"))
+            if isinstance(_mv_val, float) and not pd.isna(_mv_val):
+                _mv_color = "#e74c3c" if _mv_val >= 150 else "#e67e22" if _mv_val >= 100 else "#27ae60"
+                st.markdown(
+                    _kv_card("MOVE Index (Bond Vol)", f"{_mv_val:.1f}", _mv_color),
+                    unsafe_allow_html=True,
+                )
+
     # ── Report export ─────────────────────────────────────────────────────────
     st.subheader("Export Signal Report")
     with st.spinner("Building report…"):
@@ -1037,7 +1079,59 @@ with tab2:
                    color="#6b7280", title=None)))
     st.plotly_chart(_fig7, use_container_width=True)
 
-    # ── 8. Strategy vs SP500 Equity Curve ────────────────────────────────────
+    # ── 8. Cross-Asset Stress Scores ─────────────────────────────────────────
+    _cross_asset_cols = [
+        ("rates_stress_score_smooth",              "Rates Stress",     "#1abc9c"),
+        ("enhanced_funding_stress_score_smooth",   "Funding Stress",   "#9b59b6"),
+        ("fx_commodity_score_smooth",              "FX / Commodity",   "#e67e22"),
+        ("banking_stress_score_smooth",            "Banking Stress",   "#e74c3c"),
+    ]
+    _ca_present = [t for t in _cross_asset_cols if t[0] in _df2.columns]
+    if _ca_present:
+        st.subheader("Cross-Asset Stress Scores")
+        _fig_ca = _go.Figure()
+        for _col, _name, _color in _ca_present:
+            _fig_ca.add_trace(_go.Scatter(
+                x=_df2["date"], y=_df2[_col],
+                mode="lines", name=_name,
+                line=dict(color=_color, width=2),
+            ))
+        _fig_ca.add_hline(y=50, line_color="rgba(230,126,34,0.4)",
+                          line_dash="dot", line_width=1,
+                          annotation_text="Caution", annotation_position="right",
+                          annotation_font=dict(color="rgba(230,126,34,0.7)", size=9))
+        _fig_ca.update_layout(**_dlayout(height=270,
+            yaxis=dict(range=[0, 100], showgrid=True,
+                       gridcolor="rgba(255,255,255,0.06)",
+                       color="#6b7280", title=None),
+            title=dict(text="Each score 0–100 | Higher = more stress",
+                       font=dict(size=10, color="#4b5563"), x=0)))
+        st.plotly_chart(_fig_ca, use_container_width=True)
+
+    # ── 9. MOVE Index (bond vol) ─────────────────────────────────────────────
+    if "move_index" in _df2.columns:
+        st.subheader("MOVE Index — Bond Market Implied Vol")
+        _fig_mv = _go.Figure()
+        _fig_mv.add_hrect(y0=150, y1=_df2["move_index"].max() + 10,
+                          fillcolor="rgba(231,76,60,0.08)", line_width=0,
+                          annotation_text="Crisis (>150)", annotation_position="top left",
+                          annotation_font=dict(color="rgba(231,76,60,0.6)", size=9))
+        _fig_mv.add_hrect(y0=100, y1=150,
+                          fillcolor="rgba(230,126,34,0.06)", line_width=0,
+                          annotation_text="Elevated (>100)", annotation_position="top left",
+                          annotation_font=dict(color="rgba(230,126,34,0.6)", size=9))
+        _fig_mv.add_trace(_go.Scatter(
+            x=_df2["date"], y=_df2["move_index"],
+            mode="lines", name="MOVE",
+            line=dict(color="#4f8ef7", width=1.8),
+            fill="tozeroy", fillcolor="rgba(79,142,247,0.07)",
+        ))
+        _fig_mv.update_layout(**_dlayout(height=250,
+            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                       color="#6b7280", title=None)))
+        st.plotly_chart(_fig_mv, use_container_width=True)
+
+    # ── 10. Strategy vs SP500 Equity Curve ───────────────────────────────────
     if "strategy_equity_curve" in _df2.columns:
         st.subheader("Strategy vs SP500 — Cumulative Return")
         _fig8 = _go.Figure()
@@ -2253,6 +2347,72 @@ with _models_sub2:
             + "\n**This system is a tactical risk overlay, not a proven alpha model. "
             f"It currently improves risk control more than total return.**"
         )
+
+    # ── Cross-Asset Signal Validation ─────────────────────────────────────────
+    st.divider()
+    st.subheader("Cross-Asset Signal Validation")
+    st.caption(
+        "IS / OOS Spearman correlation and hit rate for each signal vs. "
+        "forward SP500 returns. OOS cutoff: 2022-01-01. "
+        "Hit rate = % of high-score (>50) periods where the subsequent return was negative."
+    )
+
+    try:
+        _sig_val_report = load_signal_validation(df)
+        _val_results = _sig_val_report.get("results", {})
+        if _val_results:
+            _val_rows = []
+            for _sig, _ret_dict in _val_results.items():
+                _short = _sig.replace("_score_smooth", "").replace("_smooth", "")
+                for _ret_col, _splits in _ret_dict.items():
+                    _short_ret = _ret_col.replace("sp500_forward_", "fwd ").replace("_return", "")
+                    _is  = _splits.get("is",  {})
+                    _oos = _splits.get("oos", {})
+                    _val_rows.append({
+                        "Signal":    _short,
+                        "Horizon":   _short_ret,
+                        "IS r":      _is.get("spearman_r"),
+                        "IS hit%":   f"{_is['hit_rate']:.0%}" if _is.get("hit_rate") else "—",
+                        "IS n":      _is.get("n"),
+                        "OOS r":     _oos.get("spearman_r"),
+                        "OOS hit%":  f"{_oos['hit_rate']:.0%}" if _oos.get("hit_rate") else "—",
+                        "OOS n":     _oos.get("n"),
+                    })
+            if _val_rows:
+                _val_df = pd.DataFrame(_val_rows)
+                st.dataframe(
+                    _val_df.style.format({
+                        "IS r":  lambda v: f"{v:+.3f}" if v is not None else "—",
+                        "OOS r": lambda v: f"{v:+.3f}" if v is not None else "—",
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(
+                    "Spearman r: negative = higher score preceded lower returns (correct). "
+                    "Hit rate: > 60% = consistent directional accuracy on high-risk calls."
+                )
+        else:
+            st.info("Run `python app.py` to populate signal columns.")
+    except Exception as _val_err:
+        st.info(f"Signal validation unavailable. ({_val_err})")
+
+    # ── Stress Episode Stats ───────────────────────────────────────────────────
+    st.subheader("Signal Behavior During Named Stress Episodes")
+    st.caption(
+        "Mean and peak level of each score during seven historical stress episodes. "
+        "Scores should be elevated during identified stress periods — low scores during "
+        "GFC or COVID indicate the signal was not useful for that stress type."
+    )
+    try:
+        _ep_stats = load_stress_episode_stats(df)
+        if not _ep_stats.empty:
+            _ep_show = _ep_stats.drop(columns=[("meta", "start"), ("meta", "end")], errors="ignore")
+            st.dataframe(_ep_show, use_container_width=True)
+        else:
+            st.info("Run `python app.py` to generate stress episode data.")
+    except Exception as _ep_err:
+        st.info(f"Stress episode stats not yet available. ({_ep_err})")
 
 with _analytics_sub2:
     st.header("Signal Attribution")

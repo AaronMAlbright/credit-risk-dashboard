@@ -30,16 +30,21 @@ def compute_rates_stress_score(
     fed_funds_rate: float,
     fed_funds_change_90d: float,
     fed_funds_change_360d: float,
+    move_index: float = float("nan"),
+    move_zscore: float = float("nan"),
 ) -> float:
     """
-    Combines yield curve inversion and Fed tightening pace into 0-100.
+    Combines yield curve inversion, Fed tightening pace, and bond vol (MOVE)
+    into 0-100.
 
     Inputs
     ------
-    spread_10y3m         : 10Y minus 3M yield (bps if negative = inversion)
+    spread_10y3m         : 10Y minus 3M yield (negative = inversion)
     fed_funds_rate       : effective fed funds rate level (%)
     fed_funds_change_90d : 90-day change in fed funds rate (percentage points)
     fed_funds_change_360d: 360-day change — captures the full tightening cycle
+    move_index           : ICE BofA MOVE index level (bond implied vol; normal ~70)
+    move_zscore          : 2Y rolling z-score of MOVE (amplifies the signal)
 
     Economic rationale
     ------------------
@@ -47,6 +52,10 @@ def compute_rates_stress_score(
       among yield curve shapes (Estrella & Mishkin 1996; NY Fed model).
     - Rapid Fed tightening compresses corporate margins, increases rollover
       risk, and historically precedes credit stress (2000, 2006-07, 2022).
+    - MOVE spikes signal forced Treasury selling, repo stress, and funding
+      dislocation (GFC peak 264, COVID peak 164, 2022 peak 161). Elevated
+      bond vol directly raises corporate borrowing cost volatility and
+      amplifies credit spread widening.
     """
     score = 0.0
 
@@ -88,6 +97,22 @@ def compute_rates_stress_score(
             score += 10
         elif fed_funds_change_360d >= 2.0:
             score += 5
+
+    # MOVE index level (bond vol = rates stress amplifier)
+    if not pd.isna(move_index):
+        if move_index >= 150:              # GFC / near-crisis
+            score += 20
+        elif move_index >= 100:            # 2022-era elevated
+            score += 12
+        elif move_index >= 80:
+            score += 5
+
+    # MOVE z-score amplifier (prevents double-counting the level signal alone)
+    if not pd.isna(move_zscore):
+        if move_zscore >= 2.0:
+            score += 8
+        elif move_zscore >= 1.5:
+            score += 4
 
     return round(min(max(score, 0.0), 100.0), 1)
 

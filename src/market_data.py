@@ -52,7 +52,7 @@ _FFILL_LIMITS: dict[str, int] = {
     "DGS10": 5, "DGS2": 5, "DGS3MO": 5, "T10Y3M": 5, "T10Y2Y": 5,
     "DFF": 5, "VIXCLS": 5, "BAA10Y": 5, "T10YIE": 10,
     "DCOILWTICO": 5, "DEXUSEU": 5, "DEXJPUS": 5, "TEDRATE": 5,
-    "SP500": 5,
+    "SP500": 5, "BAMLH0A0HYM2": 5, "MOVE": 5,
     # Weekly series — allow up to 7 calendar days
     "NFCI": 7, "ANFCI": 7, "STLFSI4": 7,
     "ICSA": 7, "CCSA": 7,
@@ -63,10 +63,16 @@ _FFILL_LIMITS: dict[str, int] = {
     "USREC": 35,
 }
 
+# Calibration ratio: median(BAMLH0A0HYM2 / BAA10Y) over 748-row overlap (2023-05-08 onward).
+# Pre-ICE period uses BAA10Y * this ratio as a scaled HY proxy.
+_ICE_BAA_RATIO = 1.9513
+
 # Core daily series whose absence disqualifies a row entirely
 _REQUIRED_COLS = ["yield_10y", "yield_2y", "vix", "hy_spread", "sp500"]
 
 # Mapping from FRED series ID → clean column name used in the DataFrame
+# Note: hy_spread is set by fetch_hy_spliced (ICE OAS 2023+ / scaled BAA10Y pre-2023).
+# BAA10Y mapped to hy_spread_baa for diagnostics if splice succeeded.
 _COL_NAMES: dict[str, str] = {
     "DGS10":          "yield_10y",
     "DGS2":           "yield_2y",
@@ -74,7 +80,7 @@ _COL_NAMES: dict[str, str] = {
     "T10Y3M":         "spread_10y3m",     # precomputed 10Y-3M; better recession signal
     "DFF":            "fed_funds_rate",
     "VIXCLS":         "vix",
-    "BAA10Y":         "hy_spread",        # Moody's Baa spread — primary HY proxy
+    "BAA10Y":         "hy_spread",        # fallback if fetch_hy_spliced fails
     "UNRATE":         "unemployment",
     "NFCI":           "nfci",
     "ANFCI":          "anfci",            # adjusted NFCI (removes macro trends)
@@ -187,6 +193,105 @@ def fetch_fred(
     )
 
 
+def fetch_move(
+    start: str = _DEFAULT_START,
+    cache_dir: Path = _CACHE_DIR,
+) -> pd.Series:
+    """
+    Fetch the ICE BofA MOVE index (^MOVE) from yfinance with parquet caching.
+
+    MOVE measures implied volatility on US Treasuries (1-month options across
+    the 2Y/5Y/10Y/30Y curve, weighted by open interest). It is the bond-market
+    analogue of VIX: elevated readings (>100) signal funding stress and forced
+    deleveraging risk. Available from 2002-11-12; pre-2003 rows are NaN.
+
+    Returns a Series with DatetimeIndex (market calendar dates).
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = _cache_path("MOVE_yf", start[:4])
+
+    if _cache_valid(path):
+        cached = pd.read_parquet(path).squeeze()
+        cached.name = "MOVE"
+        return cached
+
+    try:
+        import yfinance as yf
+        raw = yf.download("^MOVE", start=start, auto_adjust=True, progress=False)
+        if isinstance(raw.columns, pd.MultiIndex):
+            s = raw["Close"].iloc[:, 0]
+        else:
+            s = raw["Close"]
+        s.index = pd.DatetimeIndex(s.index).normalize()
+        s = s.dropna()
+        s.name = "MOVE"
+        s.to_frame().to_parquet(path)
+        return s
+    except Exception as exc:
+        raise RuntimeError(f"[market_data] MOVE fetch failed: {exc}") from exc
+
+
+def fetch_hy_spliced(
+    start: str = _DEFAULT_START,
+    cache_dir: Path = _CACHE_DIR,
+) -> tuple[pd.Series, pd.Series]:
+    """
+    Build a spliced HY spread series combining ICE BofA OAS (BAMLH0A0HYM2,
+    2023-05-08+) with a scaled BAA10Y proxy for the pre-2023 period.
+
+    ICE BofA HY OAS is the preferred series: it measures the option-adjusted
+    spread of the full US HY universe and is the industry benchmark. BAA10Y
+    (Moody's Baa minus 10Y Treasury) is investment-grade and structurally
+    lower, so we calibrate it using the median ratio over the overlap period.
+
+    Returns
+    -------
+    hy_spliced  : pd.Series — spliced HY spread (use as primary hy_spread)
+    hy_baa_raw  : pd.Series — raw BAA10Y (kept for diagnostics / signal continuity)
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    splice_path = _cache_path("HY_spliced", start[:4])
+
+    baa = fetch_fred("BAA10Y", start=start, cache_dir=cache_dir)
+
+    # Try ICE HY OAS — available from 2023-05-08
+    try:
+        ice = fetch_fred("BAMLH0A0HYM2", start="2020-01-01", cache_dir=cache_dir)
+    except Exception as exc:
+        print(f"[market_data] WARNING: BAMLH0A0HYM2 unavailable ({exc}); using BAA10Y proxy")
+        return baa.rename("hy_spread"), baa.rename("hy_spread_baa")
+
+    # Compute calibration ratio from overlap (ICE / BAA10Y)
+    baa_idx  = set(baa.index.normalize().date)
+    ice_idx  = set(ice.index.normalize().date)
+    overlap  = sorted(baa_idx & ice_idx)
+    if len(overlap) >= 30:
+        baa_ov = baa[baa.index.normalize().map(lambda d: d.date() in set(overlap))]
+        ice_ov = ice[ice.index.normalize().map(lambda d: d.date() in set(overlap))]
+        baa_ov = baa_ov[~baa_ov.index.duplicated(keep="last")]
+        ice_ov = ice_ov[~ice_ov.index.duplicated(keep="last")]
+        common = baa_ov.index.intersection(ice_ov.index)
+        if len(common) >= 30:
+            ratio = float((ice_ov.reindex(common) / baa_ov.reindex(common)).median())
+        else:
+            ratio = _ICE_BAA_RATIO
+    else:
+        ratio = _ICE_BAA_RATIO
+
+    # Splice: BAA10Y * ratio for pre-ICE period; ICE OAS directly afterward
+    spliced = (baa * ratio).rename("hy_spread")
+    ice_clean = ice.dropna()
+    if len(ice_clean) > 0:
+        splice_start = ice_clean.index.normalize().min()
+        mask = spliced.index.normalize() >= splice_start
+        # Reindex ICE to BAA's index for the post-splice period
+        ice_reindexed = ice_clean.reindex(spliced.index[mask], method="pad", limit=5)
+        spliced[mask] = ice_reindexed.values
+
+    spliced.to_frame().to_parquet(splice_path)
+    return spliced, baa.rename("hy_spread_baa")
+
+
 def fetch_sp500(
     start: str = _DEFAULT_START,
     cache_dir: Path = _CACHE_DIR,
@@ -267,8 +372,26 @@ def load_all_series(
     except Exception as exc:
         print(f"[market_data] ERROR: SP500 load failed — {exc}")
 
-    # FRED series
-    fred_ids_required = ["DGS10", "DGS2", "DGS3MO", "T10Y3M", "DFF", "VIXCLS", "BAA10Y"]
+    # MOVE index via yfinance (bond vol; available 2002-11-12+)
+    try:
+        mv = fetch_move(start=start, cache_dir=cache_dir)
+        frames["move_index"] = _to_daily(mv, ffill_limit=5, bday_index=bdays)
+    except Exception as exc:
+        print(f"[market_data] WARNING: MOVE index load failed — {exc}")
+
+    # Spliced HY spread: ICE BofA OAS (2023+) spliced onto scaled BAA10Y proxy
+    try:
+        hy_spliced, hy_baa = fetch_hy_spliced(start=start, cache_dir=cache_dir)
+        frames["hy_spread"]     = _to_daily(hy_spliced, ffill_limit=5, bday_index=bdays)
+        frames["hy_spread_baa"] = _to_daily(hy_baa,     ffill_limit=5, bday_index=bdays)
+    except Exception as exc:
+        print(f"[market_data] WARNING: HY splice failed ({exc}); falling back to raw BAA10Y")
+
+    # FRED series — BAA10Y still fetched (used by HY splice above); skip if already loaded
+    fred_ids_required = ["DGS10", "DGS2", "DGS3MO", "T10Y3M", "DFF", "VIXCLS"]
+    # BAA10Y loaded via fetch_hy_spliced; add it to required list only if splice failed
+    if "hy_spread" not in frames:
+        fred_ids_required.append("BAA10Y")
     fred_ids_optional = [
         "UNRATE", "NFCI", "ANFCI", "STLFSI4", "T10YIE",
         "DCOILWTICO", "DEXUSEU", "DEXJPUS", "ICSA",

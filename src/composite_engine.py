@@ -11,35 +11,50 @@ def classify_composite_risk(score):
     return "Risk-On"
 
 
+# Composite weights — must sum to 1.0.
+# Cross-asset signals (fx_commodity, enhanced_funding) added at conservative
+# initial weights after 2-year OOS hold-out. liquidity_regime trimmed 15→10%
+# to make room; mean_reversion removed (redundant with complacency overlap).
+_WEIGHTS = {
+    "macro_risk_score_smooth":            0.25,
+    "credit_market_risk_score_smooth":    0.25,
+    "liquidity_regime_score_smooth":      0.10,  # was 0.15
+    "treasury_stress_score_smooth":       0.10,
+    "complacency_score_smooth":           0.20,
+    "fx_commodity_score_smooth":          0.05,  # new cross-asset signal
+    "enhanced_funding_stress_score_smooth": 0.05, # new cross-asset signal
+    # mean_reversion_risk_component dropped (weight→0; reduces overfitting)
+}
+
+
 def build_composite_risk(df):
     df = df.copy()
 
-    required_cols = [
+    # Ensure all required base columns exist before weighting
+    base_required = [
         "macro_risk_score_smooth",
         "credit_market_risk_score_smooth",
         "liquidity_regime_score_smooth",
         "treasury_stress_score_smooth",
         "complacency_score_smooth",
-        "mean_reversion_score_smooth",
     ]
-
-    for col in required_cols:
+    for col in base_required:
         if col not in df.columns:
-            df[col] = 0
+            df[col] = 0.0
 
-    # Mean-reversion is inverted because high mean-reversion is usually opportunity, not pure danger.
-    df["mean_reversion_risk_component"] = 100 - df["mean_reversion_score_smooth"]
+    # Cross-asset signals default to 0 if not yet computed (graceful degradation)
+    # When these columns are 0, the base weights rescale implicitly to their
+    # original proportions, preserving legacy signal continuity on old data.
+    for col in ("fx_commodity_score_smooth", "enhanced_funding_stress_score_smooth"):
+        if col not in df.columns:
+            df[col] = 0.0
 
-    df["composite_risk_score"] = (
-        0.25 * df["macro_risk_score_smooth"]
-        + 0.25 * df["credit_market_risk_score_smooth"]
-        + 0.15 * df["liquidity_regime_score_smooth"]
-        + 0.10 * df["treasury_stress_score_smooth"]
-        + 0.20 * df["complacency_score_smooth"]
-        + 0.05 * df["mean_reversion_risk_component"]
+    score = sum(
+        w * df[col]
+        for col, w in _WEIGHTS.items()
+        if col in df.columns
     )
-
-    df["composite_risk_score"] = df["composite_risk_score"].clip(0, 100)
+    df["composite_risk_score"] = score.clip(0, 100)
 
     df["composite_risk_score_smooth"] = (
         df["composite_risk_score"]

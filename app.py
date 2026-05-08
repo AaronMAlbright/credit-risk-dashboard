@@ -89,6 +89,11 @@ from src.backtester import (
     compute_backtest_summary,
 )
 
+from src.signal_validation import (
+    validate_signals_vs_returns,
+    compute_stress_episode_stats,
+)
+
 from src.utils import (
     ensure_dirs,
     latest_date,
@@ -231,6 +236,10 @@ if "anfci" in df.columns:
     df["anfci_change_30d"] = df["anfci"].diff(30)
 if "stlfsi" in df.columns:
     df["stlfsi_change_30d"] = df["stlfsi"].diff(30)
+
+# MOVE index z-score (2Y rolling window, same as initial_claims_zscore)
+if "move_index" in df.columns:
+    df["move_zscore"] = rolling_zscore(df["move_index"], window=504)
 
 # Drop rows missing any of the core SCORED columns needed by risk engine
 # (90d diffs require at least 90 rows; 252d rolling requires 126 with min_periods)
@@ -442,14 +451,13 @@ _second_order_required = [
     "mean_reversion_score_smooth", "macro_risk_momentum_10d", "credit_risk_momentum_10d",
 ]
 df = df.dropna(subset=_second_order_required)
-df = build_composite_risk(df)
 
 
 # =====================
-# 7b. Cross-Asset Scores (informational — not wired into composite yet)
+# 7b. Cross-Asset Scores
 # =====================
-# These are additive context signals. The composite formula is NOT changed here
-# to avoid retrofitting weights to history. Weights will be tuned after OOS testing.
+# Computed BEFORE build_composite_risk so fx_commodity and enhanced_funding
+# scores are available for inclusion in the composite formula.
 
 if "spread_10y3m" in df.columns and "fed_funds_rate" in df.columns:
     df["rates_stress_score"] = df.apply(
@@ -458,6 +466,8 @@ if "spread_10y3m" in df.columns and "fed_funds_rate" in df.columns:
             row.get("fed_funds_rate", float("nan")),
             row.get("fed_funds_change_90d", float("nan")),
             row.get("fed_funds_change_360d", float("nan")),
+            row.get("move_index", float("nan")),
+            row.get("move_zscore", float("nan")),
         ),
         axis=1,
     )
@@ -498,6 +508,8 @@ if "deposit_growth_90d" in df.columns or "loan_growth_90d" in df.columns:
         axis=1,
     )
     df["banking_stress_score_smooth"] = df["banking_stress_score"].rolling(21, min_periods=5).mean()
+
+df = build_composite_risk(df)
 
 
 # =====================
@@ -609,6 +621,10 @@ df["sp500_future_drawdown_60d"] = df["sp500_future_min_60d"] / df["sp500"] - 1
 df["strategy_forward_30d_return"] = df.apply(assign_strategy_return, axis=1)
 df = build_strategy_backtest(df)
 backtest_summary = compute_backtest_summary(df)
+
+# Signal validation: IS/OOS correlations + stress episode stats
+signal_validation_report = validate_signals_vs_returns(df, oos_cutoff="2022-01-01")
+stress_episode_stats = compute_stress_episode_stats(df)
 
 macro_threshold_75 = df["macro_risk_score_smooth"].quantile(0.75)
 credit_threshold_75 = df["credit_market_risk_score_smooth"].quantile(0.75)
