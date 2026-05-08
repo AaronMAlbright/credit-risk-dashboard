@@ -69,6 +69,26 @@ st.set_page_config(
     layout="wide",
 )
 
+
+def _sample_flag(n: int) -> str:
+    if n < 20:  return "Exploratory"
+    if n < 50:  return "Indicative"
+    return "Reliable"
+
+def _sample_flag_color(n: int) -> str:
+    if n < 20:  return "#e74c3c"
+    if n < 50:  return "#e67e22"
+    return "#27ae60"
+
+def _sample_badge(n: int) -> str:
+    label = _sample_flag(n)
+    color = _sample_flag_color(n)
+    return (
+        f'<span style="font-size:0.68rem;color:{color};border:1px solid {color};'
+        f'border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle">'
+        f'{label} (n={n})</span>'
+    )
+
 st.markdown("""
 <style>
 /* ── Hide Streamlit chrome ───────────────────────────────────────────── */
@@ -469,8 +489,69 @@ if _alert_col2.button("Send Alert", key="sidebar_send_alert",
     else:
         st.sidebar.error("Email send failed.")
 
+st.sidebar.divider()
+
+# ── Sidebar: Model Config ──────────────────────────────────────────────────────
+with st.sidebar.expander("⚙ Model Config"):
+    _cfg_tc_bps = st.slider(
+        "Transaction cost (bps)", 0, 50, 10, step=5,
+        help="Deducted per day of equity weight change. 10 bps ≈ one-way institutional cost.",
+    )
+    _cfg_equity_floor = st.slider(
+        "Min equity weight (%)", 20, 60, 40, step=5,
+        help="Floor below which strategy weight never falls, regardless of signal.",
+    )
+    _cfg_equity_cap = st.slider(
+        "Max equity weight (%)", 80, 100, 100, step=5,
+        help="Ceiling above which strategy weight never rises.",
+    )
+    _cfg_target_vol = st.slider(
+        "Vol target (%)", 5, 20, 10, step=1,
+        help="Annualised realised vol target for the volatility-targeting component.",
+    )
+    _cfg_momentum_lookback = st.slider(
+        "Momentum MA (days)", 50, 252, 200, step=25,
+        help="Lookback for the trend filter (SP500 vs rolling MA). 200 = standard.",
+    )
+    st.caption(
+        "Changes here apply to live computations only and are not persisted. "
+        "Edit `src/backtester.py` constants to change defaults."
+    )
+
 # ── Executive Overview ───────────────────────────────────────────────────────
 st.title("Macro Credit Risk Dashboard")
+
+# ── Research Confidence Banner ────────────────────────────────────────────────
+_regime_counts_ov = df["final_decision"].value_counts() if "final_decision" in df.columns else pd.Series(dtype=int)
+_min_n_ov    = int(_regime_counts_ov.min()) if not _regime_counts_ov.empty else 0
+_oos_rows_ov = int((pd.to_datetime(df["date"]) >= pd.Timestamp("2020-01-01")).sum())
+_n_total_ov  = len(df)
+
+if _min_n_ov >= 50 and _n_total_ov >= 1500 and _oos_rows_ov >= 500:
+    _conf_level = "Indicative"
+    _conf_color = "#e67e22"
+    _conf_desc  = "Signal shows regime information. Interpret results directionally — limited walk-forward history."
+elif _min_n_ov >= 30 and _n_total_ov >= 800:
+    _conf_level = "Indicative"
+    _conf_color = "#e67e22"
+    _conf_desc  = "Developing signal. Some regimes are thinly observed. Treat as directional guidance only."
+else:
+    _conf_level = "Exploratory"
+    _conf_color = "#e74c3c"
+    _conf_desc  = "Insufficient history for robust validation. Results are hypothesis-generating, not confirmatory."
+
+st.markdown(
+    f'<div style="border-left:3px solid {_conf_color};'
+    f'background:rgba(0,0,0,0.25);padding:9px 14px;'
+    f'border-radius:0 6px 6px 0;margin-bottom:14px;display:flex;align-items:center;gap:16px">'
+    f'<span style="color:{_conf_color};font-weight:700;font-size:0.78rem;'
+    f'text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">'
+    f'Research Confidence: {_conf_level}</span>'
+    f'<span style="color:#6b7280;font-size:0.78rem">'
+    f'Tactical risk overlay · {_conf_desc} · Not a proven alpha model.</span>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
 
 decision    = str(latest.get("final_decision",    "N/A"))
 environment = str(latest.get("final_environment", "N/A"))
@@ -1122,6 +1203,7 @@ with _analytics_sub1:
 
         if _regime_stats_audit is not None and not _regime_stats_audit.empty:
             st.markdown("**Per-Regime Observation Counts**")
+            st.caption("Sample reliability: Exploratory = n<20 · Indicative = n<50 · Reliable = n≥50")
             _rs_disp = _regime_stats_audit[["n_obs", "mean_return", "hit_rate", "confidence"]].copy()
             _rs_disp["mean_return"] = _rs_disp["mean_return"].map(
                 lambda x: f"{x:.2%}" if pd.notna(x) else "—"
@@ -1132,7 +1214,8 @@ with _analytics_sub1:
             _rs_disp["confidence"] = _rs_disp["confidence"].map(
                 lambda c: f"{CONFIDENCE_SIGILS[c]} {c}"
             )
-            _rs_disp.columns = ["N Obs", "Mean Return", "Hit Rate", "Confidence"]
+            _rs_disp["Sample Flag"] = _regime_stats_audit["n_obs"].apply(_sample_flag)
+            _rs_disp.columns = ["N Obs", "Mean Return", "Hit Rate", "Confidence", "Sample Flag"]
             st.dataframe(_rs_disp, use_container_width=True)
 
         if _trans_audit is not None and not _trans_audit.empty:
@@ -1352,10 +1435,33 @@ with tab4:
     import plotly.graph_objects as _bt_go
 
     st.header("Backtest")
+
+    # ── Interpretation summary ────────────────────────────────────────────────
+    st.markdown(
+        '<div style="border-left:3px solid #4f8ef7;background:rgba(79,142,247,0.07);'
+        'padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:16px">'
+        '<strong style="color:#c8ccd4">What this backtest shows</strong><br>'
+        '<span style="color:#9aa0aa;font-size:0.85rem">'
+        'The strategy reduces <strong>volatility and max drawdown</strong> vs. buy-and-hold SP500, '
+        'but underperforms on <strong>total return</strong> during strong trending markets. '
+        'This model is best framed as <strong>defensive / tactical beta management</strong> — '
+        'not standalone alpha generation. '
+        'The 2020–2026 out-of-sample period was an unusually strong bull run; '
+        'a strategy that scales back equity exposure in elevated-risk regimes will naturally lag. '
+        'Treat Sharpe and drawdown numbers as the primary signal-quality metrics, not total return.'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    # TC slider — defaults to sidebar config value
+    _bt_tc = st.slider(
+        "Transaction cost (bps)", 0, 50, _cfg_tc_bps, step=5, key="bt_tc_slider",
+        help="Applied per day of equity weight change. Adjust to see impact on net return.",
+    )
+
     st.caption(
-        f"Transaction costs: 10 bps per rebalance. "
-        f"**In-sample** = signal development period (before {OOS_CUTOFF}). "
-        f"**Out-of-sample** = honest forward test (from {OOS_CUTOFF} onward). "
+        f"**In-sample** = signal development period (before {OOS_CUTOFF}).  "
+        f"**Out-of-sample** = honest forward test (from {OOS_CUTOFF} onward).  "
         f"Credit spread proxy: Moody's Baa (BAA10Y) — ICE BofA series unavailable pre-2023."
     )
 
@@ -1367,7 +1473,7 @@ with tab4:
     if missing_cols:
         st.warning(f"Missing backtest columns: {missing_cols}. Run `python app.py` first.")
     else:
-        _split = compute_oos_split(df, cutoff=OOS_CUTOFF)
+        _split = compute_oos_split(df, cutoff=OOS_CUTOFF, tc_bps=_bt_tc)
         _is  = _split["in_sample"]
         _oos = _split["out_of_sample"]
         _fp  = _split["full_period"]
@@ -1503,10 +1609,47 @@ with tab4:
         )
         st.plotly_chart(_fig_bt, use_container_width=True)
 
+        # ── Turnover & transaction cost analysis ─────────────────────────────
+        st.subheader("Turnover & Transaction Cost Analysis")
+        if "strategy_turnover" in df.columns:
+            _to_daily  = df["strategy_turnover"].mean()
+            _to_annual = _to_daily * 252
+            _tc_annual = _to_annual * (_bt_tc / 10_000) * 100
+            _tc_5yr    = _tc_annual * 5
+
+            _tc1, _tc2, _tc3, _tc4 = st.columns(4)
+            _tc1.metric("Avg Daily Turnover",  f"{_to_daily:.3f}",
+                        help="Mean absolute daily change in equity weight")
+            _tc2.metric("Annual Turnover",     f"{_to_annual:.1%}",
+                        help="Daily turnover × 252 trading days")
+            _tc3.metric("Annual TC Drag",      f"{_tc_annual:.2f}%",
+                        help=f"Annual turnover × {_bt_tc} bps cost")
+            _tc4.metric("5-Year TC Drag",      f"{_tc_5yr:.1f}%",
+                        help="Cumulative cost over 5 years at this TC assumption")
+
+            # Regime turnover breakdown
+            if "final_decision" in df.columns:
+                _regime_to = (
+                    df.groupby("final_decision")["strategy_turnover"]
+                    .agg(["mean", "count"])
+                    .rename(columns={"mean": "Avg Daily Turnover", "count": "Days"})
+                    .sort_values("Avg Daily Turnover", ascending=False)
+                )
+                _regime_to["Flag"] = _regime_to["Days"].apply(_sample_flag)
+                with st.expander("Turnover by regime"):
+                    st.dataframe(
+                        _regime_to.style.format({"Avg Daily Turnover": "{:.4f}"}),
+                        use_container_width=True,
+                    )
+                    st.caption(
+                        "Flag = sample reliability of each regime. "
+                        "Exploratory: n<20 · Indicative: n<50 · Reliable: n≥50"
+                    )
+
         st.subheader("Recent Strategy Weights")
         weight_cols = ["date", "final_decision", "composite_risk_label",
                        "strategy_weight", "strategy_weight_lagged",
-                       "strategy_daily_return"]
+                       "strategy_turnover", "strategy_daily_return"]
         existing_weight_cols = [c for c in weight_cols if c in df.columns]
         st.dataframe(df[existing_weight_cols].tail(50), use_container_width=True)
 
@@ -1812,6 +1955,27 @@ with _models_sub2:
             .background_gradient(cmap="RdYlGn", subset=[c for c in trans.columns if "Drawdown" not in c])
             .format("{:.2%}")
         )
+        st.divider()
+        st.subheader("Validation Caveats & Interpretation")
+        _n_wf = len(wf_windows) if wf_windows is not None else 0
+        _is_days = int((pd.to_datetime(df["date"]) < pd.Timestamp("2020-01-01")).sum())
+        _oos_days_val = int((pd.to_datetime(df["date"]) >= pd.Timestamp("2020-01-01")).sum())
+        _thin_regimes = _regime_counts_ov[_regime_counts_ov < 30].index.tolist()
+
+        st.warning(
+            f"**Research confidence: {_conf_level}**\n\n"
+            f"- In-sample period: **{_is_days} trading days** (~{_is_days//252:.1f} years). "
+            f"Signal thresholds were calibrated on this window — IS performance is expected to look good.\n"
+            f"- Out-of-sample period: **{_oos_days_val} trading days**. This is the only honest test.\n"
+            f"- Walk-forward windows available: **{_n_wf}**. "
+            f"Few windows = high Sharpe variability = low statistical confidence.\n"
+            + (f"- Thinly observed regimes (n<30): **{', '.join(_thin_regimes)}**. "
+               f"Stats for these regimes are exploratory only.\n"
+               if _thin_regimes else "")
+            + "\n**This system is a tactical risk overlay, not a proven alpha model. "
+            f"It currently improves risk control more than total return.**"
+        )
+
 with _analytics_sub2:
     st.header("Signal Attribution")
     st.caption(

@@ -75,6 +75,7 @@ def build_strategy_backtest(df):
     df["strategy_weight"] = df["strategy_weight"].clip(lower=_EQUITY_FLOOR, upper=1.0)
 
     df["strategy_weight_lagged"] = df["strategy_weight"].shift(1)
+    df["strategy_turnover"] = df["strategy_weight"].diff().abs().fillna(0)
 
     df["strategy_daily_return"] = (
         df["strategy_weight_lagged"] * df["sp500_daily_return"]
