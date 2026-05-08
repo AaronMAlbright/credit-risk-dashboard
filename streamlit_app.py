@@ -94,6 +94,10 @@ h3 { font-size: 0.95rem !important; font-weight: 600 !important;
     border: 1px solid #232838;
     border-radius: 8px;
     padding: 14px 18px !important;
+    transition: border-color 0.15s;
+}
+[data-testid="stMetric"]:hover {
+    border-color: #2d3550 !important;
 }
 [data-testid="stMetricLabel"] {
     font-size: 0.72rem !important;
@@ -127,6 +131,7 @@ h3 { font-size: 0.95rem !important; font-weight: 600 !important;
     background: #151820 !important;
     border-bottom: 2px solid #4f8ef7 !important;
 }
+[data-baseweb="tab-highlight"] { background-color: #4f8ef7 !important; }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
@@ -664,28 +669,8 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21 = st.tabs([
-    "Current Signal",
-    "Charts",
-    "Portfolio",
-    "Validation",
-    "Backtest",
-    "History",
-    "Sensitivity",
-    "Regime Transitions",
-    "Attribution",
-    "Timeline",
-    "Signal Decay",
-    "Orthogonality",
-    "Tail Risk",
-    "Stress Episodes",
-    "Performance",
-    "Factor Exposure",
-    "Regime Probability",
-    "Monte Carlo",
-    "Sub-period Attribution",
-    "Position Sizing",
-    "Scenario Analysis",
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Signal", "Charts", "Portfolio", "Backtest", "Analytics", "Models", "History"
 ])
 
 with tab1:
@@ -731,12 +716,6 @@ with tab1:
             _kv_card("Composite Regime",  str(latest.get('composite_risk_label', 'N/A'))),
             unsafe_allow_html=True,
         )
-
-    st.subheader("Latest Text Report")
-    if REPORT_PATH.exists():
-        st.text(REPORT_PATH.read_text())
-    else:
-        st.warning("No signal report found. Run `python app.py` first.")
 
     # ── Report export ─────────────────────────────────────────────────────────
     st.subheader("Export Signal Report")
@@ -1087,7 +1066,22 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab4:
+with tab5:  # Analytics — 9 sub-tabs
+    (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
+     _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
+     _analytics_sub9) = st.tabs([
+        "Validation", "Attribution", "Timeline", "Sig Decay",
+        "Ortho", "Tail Risk", "Stress", "Performance", "Factors"
+    ])
+
+with tab6:  # Models — 7 sub-tabs
+    (_models_sub1, _models_sub2, _models_sub3, _models_sub4,
+     _models_sub5, _models_sub6, _models_sub7) = st.tabs([
+        "Sensitivity", "Transitions", "Regimes", "Monte Carlo",
+        "Sub-period", "Sizing", "Scenarios"
+    ])
+
+with _analytics_sub1:
     st.header("Walk-Forward Validation")
 
     wf_windows, wf_regimes = load_walk_forward()
@@ -1353,7 +1347,7 @@ with tab4:
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-with tab5:
+with tab4:
     from src.backtester import OOS_CUTOFF, compute_oos_split
     import plotly.graph_objects as _bt_go
 
@@ -1516,7 +1510,7 @@ with tab5:
         existing_weight_cols = [c for c in weight_cols if c in df.columns]
         st.dataframe(df[existing_weight_cols].tail(50), use_container_width=True)
 
-with tab6:
+with tab7:
     st.header("Model Run History")
 
     if not history.empty:
@@ -1537,7 +1531,7 @@ with tab6:
     else:
         st.warning("No run history found yet.")
 
-with tab7:
+with _models_sub1:
     st.header("Parameter Sensitivity")
 
     # ── Live weight optimisation ──────────────────────────────────────────────
@@ -1746,7 +1740,7 @@ with tab7:
                         shown = True
                     st.image(str(img_path), use_container_width=True)
 
-with tab8:
+with _models_sub2:
     st.header("Regime Transition Analysis")
 
     regime_results = load_regime_transition(df)
@@ -1818,7 +1812,7 @@ with tab8:
             .background_gradient(cmap="RdYlGn", subset=[c for c in trans.columns if "Drawdown" not in c])
             .format("{:.2%}")
         )
-with tab9:
+with _analytics_sub2:
     st.header("Signal Attribution")
     st.caption(
         "Explains which sub-scores drive composite risk levels, what triggered each "
@@ -1933,7 +1927,7 @@ with tab9:
         )
         st.dataframe(styled, use_container_width=True)
 
-with tab10:
+with _analytics_sub3:
     st.header("Regime Timeline")
     st.caption(
         "Interactive charts with persistent regime color mapping. "
@@ -1993,7 +1987,7 @@ with tab10:
         use_container_width=True,
     )
 
-with tab11:
+with _analytics_sub4:
     st.header("Signal Decay")
     st.caption(
         "How long does each regime's forward-return edge persist? "
@@ -2133,7 +2127,7 @@ with tab11:
         )
         st.dataframe(styled_corr, use_container_width=True)
 
-with tab12:
+with _analytics_sub5:
     st.header("Score Orthogonality")
     st.caption(
         "Measures how independent the six composite sub-scores are from each other. "
@@ -2288,7 +2282,7 @@ with tab12:
     else:
         st.info("Insufficient data for rolling correlations (need > 60 rows).")
 
-with tab13:
+with _analytics_sub6:
     st.header("Tail Risk")
     st.caption(
         "95% CVaR (Conditional Value at Risk / Expected Shortfall) by regime. "
@@ -2428,7 +2422,7 @@ with tab13:
     else:
         st.info("No future drawdown data available.")
 
-with tab14:
+with _analytics_sub7:
     st.header("Stress Episode Analysis")
     st.caption(
         "How did the composite risk signal behave during known market stress periods? "
@@ -2556,7 +2550,7 @@ with tab14:
     else:
         st.info("No covered episodes in the current dataset range.")
 
-with tab15:
+with _analytics_sub8:
     import plotly.graph_objects as _go
 
     st.header("Performance Scorecard")
@@ -2776,7 +2770,7 @@ with tab15:
                 use_container_width=True,
             )
 
-with tab16:
+with _analytics_sub9:
     import plotly.graph_objects as _go16
 
     st.header("Factor Exposure & Beta Decomposition")
@@ -2959,7 +2953,7 @@ with tab16:
         )
         st.plotly_chart(_decomp_fig, use_container_width=True)
 
-with tab17:
+with _models_sub3:
     st.header("Regime Probability Nowcast")
     st.caption(
         "Gaussian Naive Bayes posterior over regime labels, fitted in-sample "
@@ -3117,7 +3111,7 @@ with tab17:
             st.dataframe(pd.DataFrame(_rows17).set_index("Regime"),
                          use_container_width=True)
 
-with tab18:
+with _models_sub4:
     st.header("Monte Carlo Forward Simulation")
     st.caption(
         "1 000 Markov-chain paths seeded from current regime probabilities. "
@@ -3300,7 +3294,7 @@ with tab18:
                 use_container_width=True,
             )
 
-with tab19:
+with _models_sub5:
     st.header("Sub-period Attribution")
     st.caption(
         "Performance, factor, and regime statistics broken down by calendar year. "
@@ -3490,7 +3484,7 @@ with tab19:
                 "Shift in regime frequency across periods indicates changing market conditions."
             )
 
-with tab20:
+with _models_sub6:
     st.header("Position Sizing")
     st.caption(
         "Four complementary position sizing methods applied to the composite risk signal. "
@@ -3651,7 +3645,7 @@ with tab20:
                 "Vol-target uses 21-day rolling window"
             )
 
-with tab21:
+with _models_sub7:
     st.header("Scenario Analysis")
     st.caption(
         "Apply market shocks to the current observation and trace their effect through the full "
