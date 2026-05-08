@@ -60,6 +60,15 @@ from src.economic_ontology import get_ontology_df
 from src.macro_chronology import get_events_df, get_fed_cycles_df
 from src.walk_forward import run_frozen_splits, FROZEN_SPLITS, _CAVEAT as _OOS_CAVEAT
 from src.regime_transition import compute_current_regime_forecast
+from src.blended_allocation import (
+    PER_REGIME_EQUITY, SMOOTH_HALFLIFE, TARGET_VOL, ONE_WAY_COST,
+    run_blended_allocation,
+)
+from src.threshold_robustness import (
+    DEFAULT_THRESHOLDS, SHIFT_GRID,
+    run_threshold_robustness,
+)
+from src.factor_exposure import compute_performance_attribution
 from src.validation_guard import (
     CONFIDENCE_EXPLORATORY,
     CONFIDENCE_INDICATIVE,
@@ -375,6 +384,29 @@ def load_stress_episode_stats(_df):
 
 
 @st.cache_data
+def load_blended_allocation(_df):
+    """Run probability-blended allocation (cached)."""
+    from src.regime_probability import compute_prob_history
+    try:
+        prob_history = compute_prob_history(_df)
+    except Exception:
+        prob_history = None
+    return run_blended_allocation(_df, prob_history=prob_history)
+
+
+@st.cache_data
+def load_threshold_robustness(_df):
+    """Run threshold robustness stress-test (cached)."""
+    return run_threshold_robustness(_df)
+
+
+@st.cache_data
+def load_performance_attribution(_df):
+    """Run performance attribution decomposition (cached)."""
+    return compute_performance_attribution(_df)
+
+
+@st.cache_data
 def load_regime_validity(_df):
     """Run regime validity tests (cached)."""
     return run_regime_validity(_df)
@@ -604,13 +636,29 @@ else:
 st.markdown(
     f'<div style="border-left:3px solid {_conf_color};'
     f'background:rgba(0,0,0,0.25);padding:9px 14px;'
-    f'border-radius:0 6px 6px 0;margin-bottom:14px;display:flex;align-items:center;gap:16px">'
+    f'border-radius:0 6px 6px 0;margin-bottom:8px;display:flex;align-items:center;gap:16px">'
     f'<span style="color:{_conf_color};font-weight:700;font-size:0.78rem;'
     f'text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">'
     f'Research Confidence: {_conf_level}</span>'
     f'<span style="color:#6b7280;font-size:0.78rem">'
     f'Tactical risk overlay · {_conf_desc} · Not a proven alpha model.</span>'
     f'</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div style="background:#0e1420;border:1px solid #2d3550;border-radius:7px;'
+    'padding:10px 16px;margin-bottom:14px;font-size:0.78rem;color:#6b7280;line-height:1.6">'
+    '<span style="color:#9ca3af;font-weight:600">Framework Context</span> · '
+    'This is a <strong style="color:#c8ccd4">tactical risk-overlay</strong> framework. '
+    'Primary value: <strong style="color:#c8ccd4">risk control and drawdown management</strong>, '
+    'not alpha generation. '
+    'Factor analysis shows R²≈0.94 vs SP500 — most performance is beta-reduction timing, '
+    'not independent alpha. '
+    'OOS splits are structurally stable but were designed with awareness of the full dataset '
+    '(pseudo-OOS, not truly frozen-parameter). '
+    'Regime separability is low (η²≈0.9%) — the 4-regime consolidation reflects this. '
+    'All findings, including weaknesses, are displayed without filtering.'
+    '</div>',
     unsafe_allow_html=True,
 )
 
@@ -804,8 +852,8 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "Signal", "Charts", "Portfolio", "Backtest", "Analytics", "Models", "History"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    "Signal", "Charts", "Portfolio", "Backtest", "Analytics", "Models", "History", "Allocation"
 ])
 
 with tab1:
@@ -1292,11 +1340,12 @@ with tab5:  # Analytics — 11 sub-tabs
         "Regime Validity", "Failure Analysis",
     ])
 
-with tab6:  # Models — 8 sub-tabs
+with tab6:  # Models — 9 sub-tabs
     (_models_sub1, _models_sub2, _models_sub3, _models_sub4,
-     _models_sub5, _models_sub6, _models_sub7, _models_sub8) = st.tabs([
+     _models_sub5, _models_sub6, _models_sub7, _models_sub8,
+     _models_sub9) = st.tabs([
         "Sensitivity", "Transitions", "Regimes", "Monte Carlo",
-        "Sub-period", "Sizing", "Scenarios", "OOS Splits",
+        "Sub-period", "Sizing", "Scenarios", "OOS Splits", "Thresholds",
     ])
 
 with _analytics_sub1:
@@ -3851,6 +3900,64 @@ with _analytics_sub9:
         st.info(f"Multi-factor: {_mf['error']}")
     else:
         st.info("Multi-factor regression not available for this dataset.")
+
+    # ── Performance Attribution Decomposition ────────────────────────────────
+    st.subheader("Performance Attribution Decomposition")
+    st.caption(
+        "Breaks total strategy return into distinct economic contributions: "
+        "beta reduction (defensive positioning), volatility/regime timing, "
+        "crash avoidance, regime transition P&L, and residual alpha. "
+        "Honest accounting — cost of being wrong is reflected in the residuals."
+    )
+    with st.spinner("Computing attribution…"):
+        _attr_decomp = load_performance_attribution(df)
+
+    if _attr_decomp and "summary" in _attr_decomp:
+        _attr_s = _attr_decomp["summary"]
+        _attr_sc1, _attr_sc2, _attr_sc3 = st.columns(3)
+        _attr_sc1.metric(
+            "Total Strategy (Ann.)",
+            f"{_attr_decomp.get('ann_strategy', 0):.2%}" if _attr_decomp.get('ann_strategy') else "—",
+        )
+        _attr_sc2.metric(
+            "Beta Reduction Share",
+            f"{_attr_decomp.get('beta_share_pct', 0):.0f}%" if _attr_decomp.get('beta_share_pct') else "—",
+            help="Fraction of total strategy return attributable to holding less-than-market beta",
+        )
+        _attr_sc3.metric(
+            "Timing Share",
+            f"{_attr_decomp.get('timing_share_pct', 0):.0f}%" if _attr_decomp.get('timing_share_pct') else "—",
+            help="Fraction attributable to varying beta over time vs constant-beta reference",
+        )
+
+        import plotly.graph_objects as _go_attr
+        _attr_fig = _go_attr.Figure(_go_attr.Bar(
+            y=_attr_s["component"].tolist(),
+            x=[v * 100 if v is not None and not pd.isna(v) else 0
+               for v in _attr_s["ann_return"].tolist()],
+            orientation="h",
+            marker_color=["#27ae60" if (v or 0) >= 0 else "#e74c3c"
+                          for v in _attr_s["ann_return"].tolist()],
+            text=[f"{(v or 0):.2%}" for v in _attr_s["ann_return"].tolist()],
+            textposition="outside",
+        ))
+        _attr_fig.add_vline(x=0, line_color="#555", line_width=1)
+        _attr_fig.update_layout(
+            xaxis_title="Annualised Contribution (%)",
+            height=300, template="plotly_dark",
+            margin=dict(l=200, r=80, t=30, b=40),
+            xaxis_ticksuffix="%",
+        )
+        st.plotly_chart(_attr_fig, use_container_width=True)
+
+        with st.expander("Attribution details"):
+            _attr_display = _attr_s.copy()
+            _attr_display["ann_return"] = _attr_display["ann_return"].apply(
+                lambda v: f"{v:.2%}" if v is not None and not pd.isna(v) else "—"
+            )
+            st.dataframe(_attr_display.set_index("component"), use_container_width=True)
+    else:
+        st.info("Attribution decomposition not available — check strategy return columns.")
 
 with _models_sub3:
     st.header("Regime Probability Nowcast")

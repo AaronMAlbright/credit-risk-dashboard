@@ -233,6 +233,142 @@ def compute_return_decomposition(df: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def compute_performance_attribution(df: pd.DataFrame) -> dict:
+    """
+    Decompose total strategy performance into distinct economic contributions.
+
+    Components (all annualised):
+      beta_reduction   — return from having lower-than-1 market beta
+                         (constant_beta_port − full_beta_port)
+      vol_timing       — improvement from time-varying beta vs constant beta
+      crash_avoidance  — P&L attribution during SP500 drawdowns > 10%
+      regime_timing    — P&L from regime transitions (entry/exit returns)
+      residual_alpha   — total − explained
+
+    Uses the full-period OLS beta as the constant-beta reference.
+
+    Returns dict with per-component annualised return, cumulative series,
+    and a summary table.  All NaN when data is insufficient.
+    """
+    if (_STRATEGY_COL not in df.columns or _SP500_COL not in df.columns
+            or df.empty):
+        return {}
+
+    n   = len(df)
+    s   = df[_STRATEGY_COL].values.astype(float)
+    b   = df[_SP500_COL].values.astype(float)
+    mask = ~(np.isnan(s) | np.isnan(b))
+
+    reg  = compute_factor_regression(df)
+    beta = reg.get("beta", np.nan)
+    if np.isnan(beta):
+        return {}
+
+    # --- 1. Beta reduction: how much "being at beta<1" helped vs full SP500 ---
+    # Full-beta port: r_b = b (buy-and-hold SP500)
+    # Constant-beta port: r_c = beta * b
+    # Beta reduction = r_c - r_b  (negative beta means you owned less than market)
+    beta_reduction_daily = (beta - 1.0) * b   # = r_c - r_b per day
+
+    # --- 2. Vol timing: actual strategy vs constant-beta reference ---
+    # vol_timing = strategy - constant_beta_port
+    # This captures whether varying beta (timing) added value over constant beta
+    vol_timing_daily = s - beta * b            # = alpha residual at full-period beta
+
+    # --- 3. Crash avoidance: SP500 drawdowns > 10% ---
+    cum_sp500   = (1 + pd.Series(b).fillna(0)).cumprod().values
+    peak_sp500  = np.maximum.accumulate(cum_sp500)
+    dd_sp500    = cum_sp500 / peak_sp500 - 1
+    crash_mask  = dd_sp500 < -0.10
+
+    crash_strat = np.where(crash_mask, s, 0.0)
+    crash_sp500 = np.where(crash_mask, b, 0.0)
+    crash_avoid_daily = crash_strat - beta * crash_sp500   # outperformance in crashes
+
+    # --- 4. Regime timing: P&L around regime transitions (± 5 days) ---
+    regime_timing_daily = np.zeros(n)
+    if _DECISION_COL in df.columns:
+        labels  = df[_DECISION_COL].values
+        changes = np.where(np.array(labels[1:]) != np.array(labels[:-1]))[0] + 1
+        window  = 5
+        for ch in changes:
+            start = max(0, ch - window)
+            end   = min(n, ch + window + 1)
+            # Contribution vs constant-beta reference around transition
+            regime_timing_daily[start:end] += (
+                s[start:end] - beta * b[start:end]
+            ) / max(1, len(changes))  # normalise to avoid double-counting
+
+    # --- 5. Residual alpha (anything not explained above) ---
+    # Total strategy excess = s - b
+    # = beta_reduction + vol_timing
+    # But we want pure alpha not explained by any timing
+    _, _, _, _ = _ols(s, b)
+    alpha_d = reg.get("alpha_daily", 0.0)
+    residual_daily = np.full(n, float(alpha_d) if not np.isnan(alpha_d) else 0.0)
+
+    # --- Annualised summaries ---
+    def _ann(arr):
+        v = arr[mask]
+        return float(v.mean() * _ANNUALIZE) if len(v) > _MIN_OBS else np.nan
+
+    def _cumulative(arr):
+        return (1 + pd.Series(arr).fillna(0)).cumprod().values
+
+    summary = [
+        {"component": "Beta Reduction",
+         "description": "Lower-than-market beta (defensive positioning)",
+         "ann_return":  _ann(beta_reduction_daily)},
+        {"component": "Volatility / Regime Timing",
+         "description": "Time-varying beta vs constant beta (when defensive paid off)",
+         "ann_return":  _ann(vol_timing_daily)},
+        {"component": "Crash Avoidance",
+         "description": "Outperformance during SP500 drawdowns >10%",
+         "ann_return":  _ann(crash_avoid_daily)},
+        {"component": "Regime Transition P&L",
+         "description": "Returns ±5 days around regime changes",
+         "ann_return":  _ann(regime_timing_daily)},
+        {"component": "Residual Alpha",
+         "description": "Unexplained excess return (OLS intercept)",
+         "ann_return":  _ann(residual_daily)},
+    ]
+
+    out_series = pd.DataFrame()
+    if _DATE_COL in df.columns:
+        out_series["date"] = df[_DATE_COL].values
+    out_series["beta_reduction_daily"]   = beta_reduction_daily
+    out_series["vol_timing_daily"]       = vol_timing_daily
+    out_series["crash_avoidance_daily"]  = crash_avoid_daily
+    out_series["regime_timing_daily"]    = regime_timing_daily
+    out_series["residual_alpha_daily"]   = residual_daily
+    out_series["strategy_daily"]         = s
+    out_series["sp500_daily"]            = b
+    for col in [c for c in out_series.columns if c.endswith("_daily")]:
+        cum_col = "cum_" + col.replace("_daily", "")
+        out_series[cum_col] = _cumulative(out_series[col].values)
+
+    # Key headline: what fraction of total strategy return is "just beta timing"?
+    strat_ann  = _ann(s)
+    sp500_ann  = _ann(b)
+    beta_ann   = _ann(beta_reduction_daily)
+    timing_ann = _ann(vol_timing_daily)
+    if not np.isnan(strat_ann) and abs(strat_ann) > 1e-6:
+        beta_pct   = (beta_ann   / strat_ann) * 100 if not np.isnan(beta_ann)   else np.nan
+        timing_pct = (timing_ann / strat_ann) * 100 if not np.isnan(timing_ann) else np.nan
+    else:
+        beta_pct = timing_pct = np.nan
+
+    return {
+        "summary":           pd.DataFrame(summary),
+        "series":            out_series,
+        "ann_strategy":      round(strat_ann,  4) if not np.isnan(strat_ann)  else None,
+        "ann_sp500":         round(sp500_ann,  4) if not np.isnan(sp500_ann)  else None,
+        "full_period_beta":  round(beta,       4),
+        "beta_share_pct":    round(beta_pct,   1) if not np.isnan(beta_pct)   else None,
+        "timing_share_pct":  round(timing_pct, 1) if not np.isnan(timing_pct) else None,
+    }
+
+
 def run_factor_analysis(df: pd.DataFrame) -> dict:
     """
     Full factor exposure analysis.
@@ -242,6 +378,7 @@ def run_factor_analysis(df: pd.DataFrame) -> dict:
       rolling          — {window: DataFrame} rolling beta/alpha/R²
       regime_beta      — per-regime beta DataFrame
       decomposition    — return decomposition DataFrame
+      attribution      — performance attribution breakdown
       multi_factor     — multi-factor OLS result dict
       windows          — window sizes used
     """
@@ -250,6 +387,7 @@ def run_factor_analysis(df: pd.DataFrame) -> dict:
         "rolling":       compute_rolling_factor_exposure(df),
         "regime_beta":   compute_regime_beta(df),
         "decomposition": compute_return_decomposition(df),
+        "attribution":   compute_performance_attribution(df),
         "multi_factor":  compute_multi_factor_regression(df),
         "windows":       _WINDOWS,
     }
