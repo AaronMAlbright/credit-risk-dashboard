@@ -1513,6 +1513,150 @@ with tab4:
         def _f2(v, fallback="—"):
             return f"{v:.2f}" if isinstance(v, float) and not pd.isna(v) else fallback
 
+        # ════════════════════════════════════════════════════════════════════════
+        # 1. SIGNAL QUALITY — does the composite score predict future returns?
+        # ════════════════════════════════════════════════════════════════════════
+        st.subheader("1. Signal Quality")
+        st.caption(
+            "Measures whether the composite risk score and regime labels contain "
+            "predictive information about future SP500 returns — independent of "
+            "any position sizing or allocation decisions."
+        )
+
+        _sq_df = df.dropna(subset=["composite_risk_score_smooth", "sp500_forward_30d_return"]).copy()
+
+        # ── Correlation snapshot ─────────────────────────────────────────────
+        _corr_score = _sq_df["composite_risk_score_smooth"].corr(_sq_df["sp500_forward_30d_return"])
+        _corr_hy    = _sq_df["composite_risk_score_smooth"].corr(_sq_df.get("hy_forward_30d_change", pd.Series(dtype=float))) if "hy_forward_30d_change" in _sq_df.columns else float("nan")
+        _hit_all    = (_sq_df["sp500_forward_30d_return"] > 0).mean()
+
+        _sq_c1, _sq_c2, _sq_c3 = st.columns(3)
+        _sq_c1.metric(
+            "Score↔SP500 30D Corr",
+            f"{_corr_score:.2f}",
+            help="Pearson correlation between composite_risk_score_smooth and SP500 30-day forward return. "
+                 "Negative means higher risk score → lower future return (expected).",
+        )
+        _sq_c2.metric(
+            "Unconditional Hit Rate",
+            f"{_hit_all:.1%}",
+            help="% of all days where SP500 30-day forward return was positive.",
+        )
+        _sq_c3.metric(
+            "Total Signal Observations",
+            f"{len(_sq_df):,}",
+            help="Trading days with valid score and forward return data.",
+        )
+
+        # ── Grouped regime forward returns bar chart ─────────────────────────
+        if "grouped_regime" in _sq_df.columns:
+            _grp_order = ["Recovery / Buy Stress", "Risk-On", "Neutral", "Caution", "Stress"]
+            _grp_stats = (
+                _sq_df.groupby("grouped_regime")["sp500_forward_30d_return"]
+                .agg(mean="mean", count="count", std="std")
+                .reindex([r for r in _grp_order if r in _sq_df["grouped_regime"].unique()])
+            )
+            _grp_stats["hit_rate"] = (
+                _sq_df.groupby("grouped_regime")["sp500_forward_30d_return"]
+                .apply(lambda x: (x > 0).mean())
+            )
+            _grp_stats["se"] = _grp_stats["std"] / _grp_stats["count"].pow(0.5)
+            _grp_stats["flag"] = _grp_stats["count"].apply(_sample_flag)
+
+            _sq_col1, _sq_col2 = st.columns(2)
+
+            with _sq_col1:
+                st.caption("Mean SP500 30D forward return by grouped regime")
+                _bar_colors = [
+                    "#27ae60" if v >= 0 else "#e74c3c"
+                    for v in _grp_stats["mean"]
+                ]
+                _fig_sq = _bt_go.Figure(_bt_go.Bar(
+                    x=_grp_stats.index.tolist(),
+                    y=(_grp_stats["mean"] * 100).round(2).tolist(),
+                    marker_color=_bar_colors,
+                    error_y=dict(
+                        type="data",
+                        array=(_grp_stats["se"] * 100).round(2).tolist(),
+                        visible=True,
+                        color="rgba(200,200,200,0.4)",
+                    ),
+                    hovertemplate="%{x}<br>Mean: %{y:.2f}%<extra></extra>",
+                ))
+                _fig_sq.add_hline(
+                    y=_hit_all * 100 - _hit_all * 100,  # zero line
+                    line_color="rgba(255,255,255,0.15)", line_width=1,
+                )
+                _fig_sq.update_layout(
+                    height=260,
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    margin=dict(l=8, r=8, t=8, b=60),
+                    xaxis=dict(showgrid=False, color="#6b7280", tickangle=-20),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Mean Fwd Return %"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                                    font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig_sq, use_container_width=True)
+
+            with _sq_col2:
+                st.caption("Hit rate (% days with positive 30D return) by grouped regime")
+                _fig_hit = _bt_go.Figure(_bt_go.Bar(
+                    x=_grp_stats.index.tolist(),
+                    y=(_grp_stats["hit_rate"] * 100).round(1).tolist(),
+                    marker_color=[
+                        "#27ae60" if v >= _hit_all else "#e74c3c"
+                        for v in _grp_stats["hit_rate"]
+                    ],
+                    hovertemplate="%{x}<br>Hit Rate: %{y:.1f}%<extra></extra>",
+                ))
+                _fig_hit.add_hline(
+                    y=_hit_all * 100,
+                    line_color="rgba(255,255,255,0.3)", line_width=1.5,
+                    line_dash="dash",
+                    annotation_text=f"Unconditional {_hit_all:.0%}",
+                    annotation_font=dict(color="#9aa0aa", size=10),
+                    annotation_position="bottom right",
+                )
+                _fig_hit.update_layout(
+                    height=260,
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    margin=dict(l=8, r=8, t=8, b=60),
+                    xaxis=dict(showgrid=False, color="#6b7280", tickangle=-20),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Hit Rate %"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                                    font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig_hit, use_container_width=True)
+
+            # Regime stats table
+            _grp_display = _grp_stats.copy()
+            _grp_display["mean"] = (_grp_display["mean"] * 100).round(2)
+            _grp_display["hit_rate"] = (_grp_display["hit_rate"] * 100).round(1)
+            _grp_display["std"] = (_grp_display["std"] * 100).round(2)
+            _grp_display.columns = ["Mean Fwd Ret %", "Days", "Std %", "Hit Rate %", "Std Err %", "Flag"]
+            with st.expander("Regime signal stats table"):
+                st.dataframe(_grp_display, use_container_width=True)
+                st.caption(
+                    "Error bars = ±1 standard error (std / √n). "
+                    "Flag = sample reliability: Exploratory (<20) · Indicative (<50) · Reliable (≥50)."
+                )
+
+        st.divider()
+
+        # ════════════════════════════════════════════════════════════════════════
+        # 2. STRATEGY PERFORMANCE — does position sizing monetize the signal?
+        # ════════════════════════════════════════════════════════════════════════
+        st.subheader("2. Strategy Performance")
+        st.caption(
+            "Measures whether the 4-method sizing blend (score, regime, vol-target, momentum) "
+            "translates signal quality into risk-adjusted returns. "
+            "Compare IS vs OOS carefully — OOS is the only honest test."
+        )
+
         # ── IS vs OOS summary table ───────────────────────────────────────────
         _bt_metrics = {
             "Period":          [f"In-Sample ({_split['is_start']} → {_split['is_end']})",
@@ -1907,20 +2051,6 @@ with _models_sub1:
                 st.caption(f"{primary_metric} vs perturbation value")
                 st.line_chart(chart_data, use_container_width=True)
 
-            # ── Heatmap images ───────────────────────────────────────────────
-            heatmap_metrics = {
-                "score_scale":        ["sharpe", "total_return"],
-                "composite_weights":  ["fwd_mean_return", "fwd_hit_rate"],
-                "backtester_weights": ["sharpe", "total_return"],
-            }
-            shown = False
-            for metric in heatmap_metrics.get(group_key, []):
-                img_path = SENS_HEATMAP_DIR / f"{group_key}_{metric}.png"
-                if img_path.exists():
-                    if not shown:
-                        st.caption("Heatmaps (rows = perturbation value, columns = parameter)")
-                        shown = True
-                    st.image(str(img_path), use_container_width=True)
 
 with _models_sub2:
     st.header("Regime Transition Analysis")
@@ -1939,15 +2069,42 @@ with _models_sub2:
     else:
         res = regime_results[view_col]
 
-        # ── Transition probability heatmap ───────────────────────────────────
+        # ── Transition probability heatmap (live Plotly — dark-theme safe) ──
         st.subheader("Transition Probability Heatmap")
-        heatmap_path = REGIME_TRANS_DIR / f"{view_col}_heatmap.png"
-        if heatmap_path.exists():
-            st.image(str(heatmap_path), use_container_width=True)
-        else:
-            st.caption("Heatmap not yet saved to disk — showing table instead.")
-            probs = res["transition_probs"]
-            st.dataframe(probs.style.background_gradient(cmap="YlOrRd", axis=1).format("{:.1%}"))
+        import plotly.graph_objects as _trans_go
+        probs = res["transition_probs"]
+        _probs_pct = probs * 100
+        _fig_trans = _trans_go.Figure(_trans_go.Heatmap(
+            z=_probs_pct.values.tolist(),
+            x=_probs_pct.columns.tolist(),
+            y=_probs_pct.index.tolist(),
+            colorscale="YlOrRd",
+            text=[[f"{v:.1f}%" for v in row] for row in _probs_pct.values],
+            texttemplate="%{text}",
+            textfont=dict(size=10, color="white"),
+            hovertemplate="From: %{y}<br>To: %{x}<br>Prob: %{z:.1f}%<extra></extra>",
+            showscale=True,
+            colorbar=dict(
+                title="%",
+                tickfont=dict(color="#9aa0aa"),
+                titlefont=dict(color="#9aa0aa"),
+            ),
+        ))
+        _fig_trans.update_layout(
+            height=max(320, len(probs) * 36 + 80),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            margin=dict(l=8, r=8, t=16, b=80),
+            xaxis=dict(
+                title="To →", color="#6b7280", showgrid=False, tickangle=-30,
+            ),
+            yaxis=dict(
+                title="From →", color="#6b7280", showgrid=False, autorange="reversed",
+            ),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                            font=dict(color="#e2e8f0")),
+        )
+        st.plotly_chart(_fig_trans, use_container_width=True)
 
         # ── Transition counts ─────────────────────────────────────────────────
         with st.expander("Raw transition counts"):
