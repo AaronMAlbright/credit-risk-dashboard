@@ -16,18 +16,21 @@ from src.backtester import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_df(n=300, start="2018-01-01", decisions=None):
+def _make_df(n=300, start="2018-01-01", decisions=None, scores=None):
     np.random.seed(42)
     dates = pd.bdate_range(start=start, periods=n)
     sp500 = 4000 * (1 + np.random.normal(0.0003, 0.01, n)).cumprod()
     decision = decisions or ["Hold / Do Not Chase"] * n
     fwd = np.random.normal(0.01, 0.05, n)
+    # composite scores in realistic range (21-43); lower = less risk = more equity
+    score_vals = scores if scores is not None else np.full(n, 30.0)
     df = pd.DataFrame({
         "date": dates,
         "sp500": sp500,
         "final_decision": decision[:n],
+        "composite_risk_score_smooth": score_vals[:n],
         "sp500_forward_30d_return":    fwd,
-        "strategy_forward_30d_return": fwd * 0.60,  # strategy captures ~60% of sp500 move
+        "strategy_forward_30d_return": fwd * 0.60,
         "sp500_forward_60d_return":    np.random.normal(0.02, 0.07, n),
         "equity_weight": [0.40] * n,
         "cash_weight":   [0.35] * n,
@@ -62,10 +65,35 @@ class TestBuildStrategyBacktest:
         df = _make_df()
         assert pd.isna(df["strategy_weight_lagged"].iloc[0])
 
-    def test_buy_stress_weight_is_one(self):
+    def test_equity_floor_respected(self):
+        # Very high composite score should still yield >= 40% weight
         n = 50
-        df = _make_df(n=n, decisions=["Buy Stress"] * n)
-        assert (df["strategy_weight"].iloc[:n] == 1.0).all()
+        high_scores = np.full(n, 99.0)  # extreme risk → score-based weight near 0.05
+        df = _make_df(n=n, scores=high_scores)
+        assert (df["strategy_weight"] >= 0.40).all()
+
+    def test_low_score_gives_high_weight(self):
+        # Score of 28 is at the p20 breakpoint → full allocation (1.0)
+        n = 50
+        df = _make_df(n=n, scores=np.full(n, 28.0))
+        assert (df["strategy_weight"] >= 0.99).all()
+
+    def test_fallback_without_score_column(self):
+        # When composite_risk_score_smooth is absent, decision-bucket fallback runs
+        np.random.seed(42)
+        n = 50
+        dates = pd.bdate_range(start="2018-01-01", periods=n)
+        sp500 = 4000 * (1 + np.random.normal(0.0003, 0.01, n)).cumprod()
+        fwd = np.random.normal(0.01, 0.05, n)
+        df_no_score = pd.DataFrame({
+            "date": dates,
+            "sp500": sp500,
+            "final_decision": ["Neutral"] * n,
+            "sp500_forward_30d_return": fwd,
+            "strategy_forward_30d_return": fwd * 0.60,
+        })
+        result = build_strategy_backtest(df_no_score)
+        assert (result["strategy_weight"] >= 0.40).all()
 
 
 # ---------------------------------------------------------------------------

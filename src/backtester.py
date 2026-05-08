@@ -5,6 +5,23 @@ import pandas as pd
 # before this date. Everything from here onward is a genuine out-of-sample test.
 OOS_CUTOFF = "2020-01-01"
 
+# Minimum equity allocation regardless of how bearish the signal is.
+# Prevents going to near-zero exposure and missing sharp V-shaped recoveries.
+_EQUITY_FLOOR = 0.40
+
+_DECISION_WEIGHTS = {
+    "Buy Stress":         1.00,
+    "Watch Entry":        0.85,
+    "Risk On":            0.85,
+    "Neutral":            0.70,
+    "Hold / Do Not Chase": 0.55,
+    "Avoid Chasing Risk": 0.55,
+    "Credit Warning":     0.45,
+    "Reduce Risk":        0.45,
+    "Active Stress":      0.40,
+    "Wait":               0.40,
+}
+
 
 def assign_strategy_return(row):
     if row["sp500_forward_30d_return"] != row["sp500_forward_30d_return"]:
@@ -21,25 +38,18 @@ def build_strategy_backtest(df):
 
     df["sp500_daily_return"] = df["sp500"].pct_change()
 
-    def assign_strategy_weight(row):
-        decision = row.get("final_decision", "Neutral")
+    # Use piecewise score-based sizing when the composite score is available.
+    # Falls back to decision-bucket lookup for data that lacks the score column.
+    if "composite_risk_score_smooth" in df.columns and df["composite_risk_score_smooth"].notna().any():
+        from src.position_sizing import compute_score_sizing, SCORE_BREAKPOINTS
+        score_weights = compute_score_sizing(df, SCORE_BREAKPOINTS)
+        df["strategy_weight"] = score_weights.values
+    else:
+        df["strategy_weight"] = df["final_decision"].map(_DECISION_WEIGHTS).fillna(0.60)
 
-        if decision in ["Buy Stress", "Watch Entry"]:
-            return 1.00
-        if decision == "Risk On":
-            return 0.90
-        if decision == "Neutral":
-            return 0.70
-        if decision in ["Hold / Do Not Chase", "Avoid Chasing Risk"]:
-            return 0.45
-        if decision in ["Credit Warning", "Reduce Risk"]:
-            return 0.25
-        if decision in ["Active Stress", "Wait"]:
-            return 0.15
+    # Apply minimum equity floor — never go below 40% regardless of signal
+    df["strategy_weight"] = df["strategy_weight"].clip(lower=_EQUITY_FLOOR)
 
-        return row.get("equity_weight", 0.50)
-
-    df["strategy_weight"] = df.apply(assign_strategy_weight, axis=1)
     df["strategy_weight_lagged"] = df["strategy_weight"].shift(1)
 
     df["strategy_daily_return"] = (
