@@ -6,6 +6,9 @@ import pytest
 
 from src.backtester import (
     OOS_CUTOFF,
+    _TREND_BOOST,
+    _TREND_DAMP,
+    _trend_scalar,
     build_strategy_backtest,
     compute_backtest_summary,
     compute_oos_split,
@@ -94,6 +97,94 @@ class TestBuildStrategyBacktest:
         })
         result = build_strategy_backtest(df_no_score)
         assert (result["strategy_weight"] >= 0.40).all()
+
+
+# ---------------------------------------------------------------------------
+# _trend_scalar
+# ---------------------------------------------------------------------------
+
+class TestTrendScalar:
+    def _sp500(self, n, trend="up"):
+        """Monotonically rising or falling price series."""
+        if trend == "up":
+            return pd.Series(1000 * (1.001 ** np.arange(n)))
+        return pd.Series(1000 * (0.999 ** np.arange(n)))
+
+    def test_returns_boost_when_above_ma(self):
+        # A long enough upward series: after warmup, price is above its rolling MA
+        sp = self._sp500(400, trend="up")
+        s = _trend_scalar(sp, window=200)
+        assert (s.iloc[200:] == _TREND_BOOST).all()
+
+    def test_returns_damp_when_below_ma(self):
+        # A long enough downward series: after warmup, price is below its rolling MA
+        sp = self._sp500(400, trend="down")
+        s = _trend_scalar(sp, window=200)
+        assert (s.iloc[200:] == _TREND_DAMP).all()
+
+    def test_neutral_during_warmup(self):
+        # Before the MA window fills, scalar should be 1.0
+        sp = self._sp500(400, trend="up")
+        s = _trend_scalar(sp, window=200)
+        assert (s.iloc[:199] == 1.0).all()
+
+    def test_weight_higher_in_uptrend_than_downtrend(self):
+        # Same score, but uptrend → higher weight than downtrend after 200 days
+        n = 400
+        scores = np.full(n, 33.0)  # mid-range score → ~0.75 base weight
+
+        sp_up   = 4000 * (1.001 ** np.arange(n))
+        sp_down = 4000 * (0.999 ** np.arange(n))
+        fwd = np.random.normal(0.01, 0.05, n)
+        dates = pd.bdate_range(start="2018-01-01", periods=n)
+
+        def _make_with_sp(sp):
+            df = pd.DataFrame({
+                "date": dates, "sp500": sp,
+                "final_decision": ["Neutral"] * n,
+                "composite_risk_score_smooth": scores,
+                "sp500_forward_30d_return": fwd,
+                "strategy_forward_30d_return": fwd * 0.60,
+            })
+            return build_strategy_backtest(df)
+
+        up_df   = _make_with_sp(sp_up)
+        down_df = _make_with_sp(sp_down)
+        # After warmup, uptrend weights should be strictly higher
+        assert (up_df["strategy_weight"].iloc[200:] > down_df["strategy_weight"].iloc[200:]).all()
+
+    def test_floor_holds_even_with_trend_damp(self):
+        # Downtrend + high risk score: damp * low_weight might go below floor;
+        # floor must still hold at 0.40
+        n = 400
+        sp = self._sp500(n, trend="down")
+        fwd = np.random.normal(0.01, 0.05, n)
+        dates = pd.bdate_range(start="2018-01-01", periods=n)
+        df = pd.DataFrame({
+            "date": dates, "sp500": sp,
+            "final_decision": ["Neutral"] * n,
+            "composite_risk_score_smooth": np.full(n, 99.0),  # max risk
+            "sp500_forward_30d_return": fwd,
+            "strategy_forward_30d_return": fwd * 0.60,
+        })
+        result = build_strategy_backtest(df)
+        assert (result["strategy_weight"] >= 0.40).all()
+
+    def test_weight_capped_at_one(self):
+        # Uptrend boost on a near-max weight shouldn't exceed 1.0
+        n = 400
+        sp = self._sp500(n, trend="up")
+        fwd = np.random.normal(0.01, 0.05, n)
+        dates = pd.bdate_range(start="2018-01-01", periods=n)
+        df = pd.DataFrame({
+            "date": dates, "sp500": sp,
+            "final_decision": ["Buy Stress"] * n,
+            "composite_risk_score_smooth": np.full(n, 10.0),  # very low risk → 1.0
+            "sp500_forward_30d_return": fwd,
+            "strategy_forward_30d_return": fwd * 0.60,
+        })
+        result = build_strategy_backtest(df)
+        assert (result["strategy_weight"] <= 1.0).all()
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,12 @@ OOS_CUTOFF = "2020-01-01"
 # Prevents going to near-zero exposure and missing sharp V-shaped recoveries.
 _EQUITY_FLOOR = 0.40
 
+# Trend filter: SP500 vs its 200-day MA scales position up/down.
+# Boosts allocation during confirmed uptrends, dampens during downtrends.
+_TREND_MA_WINDOW = 200
+_TREND_BOOST     = 1.15   # multiplier when price > 200-day MA
+_TREND_DAMP      = 0.85   # multiplier when price < 200-day MA
+
 _DECISION_WEIGHTS = {
     "Buy Stress":         1.00,
     "Watch Entry":        0.85,
@@ -21,6 +27,18 @@ _DECISION_WEIGHTS = {
     "Active Stress":      0.40,
     "Wait":               0.40,
 }
+
+
+def _trend_scalar(sp500: pd.Series, window: int = _TREND_MA_WINDOW) -> pd.Series:
+    """
+    Per-row multiplier based on whether SP500 is above or below its rolling MA.
+    Returns 1.0 for rows where the MA hasn't warmed up yet (no look-ahead).
+    """
+    ma = sp500.rolling(window, min_periods=window).mean()
+    scalar = np.where(sp500 > ma, _TREND_BOOST, _TREND_DAMP)
+    scalar = pd.Series(scalar, index=sp500.index, dtype=float)
+    scalar[ma.isna()] = 1.0
+    return scalar
 
 
 def assign_strategy_return(row):
@@ -47,8 +65,14 @@ def build_strategy_backtest(df):
     else:
         df["strategy_weight"] = df["final_decision"].map(_DECISION_WEIGHTS).fillna(0.60)
 
+    # Momentum overlay: scale weight up/down based on SP500 vs 200-day MA.
+    # Boosts exposure during confirmed uptrends; reduces it during downtrends.
+    # Applied before the floor so the floor still acts as a hard lower bound.
+    df["trend_scalar"] = _trend_scalar(df["sp500"]).values
+    df["strategy_weight"] = df["strategy_weight"] * df["trend_scalar"]
+
     # Apply minimum equity floor — never go below 40% regardless of signal
-    df["strategy_weight"] = df["strategy_weight"].clip(lower=_EQUITY_FLOOR)
+    df["strategy_weight"] = df["strategy_weight"].clip(lower=_EQUITY_FLOOR, upper=1.0)
 
     df["strategy_weight_lagged"] = df["strategy_weight"].shift(1)
 
