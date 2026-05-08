@@ -10,39 +10,46 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 
-# Matches composite_engine.py exactly
+# Matches _WEIGHTS in composite_engine.py exactly.
+# mean_reversion removed from composite (weight → 0; redundant with complacency).
 COMPOSITE_WEIGHTS = OrderedDict([
-    ("macro_risk",     0.25),
-    ("credit_risk",    0.25),
-    ("complacency",    0.20),
-    ("liquidity",      0.15),
-    ("treasury",       0.10),
-    ("mean_reversion", 0.05),   # contribution = weight × (100 − score)
+    ("macro_risk",       0.25),
+    ("credit_risk",      0.25),
+    ("complacency",      0.20),
+    ("liquidity",        0.10),   # was 0.15
+    ("treasury",         0.10),
+    ("fx_commodity",     0.05),   # new
+    ("enhanced_funding", 0.05),   # new
 ])
 
-# Additional tracked score (not in composite, but informative for attribution)
+# Additional tracked scores — informative for attribution but not in composite.
 SUPPLEMENTAL_SCORES = OrderedDict([
-    ("cross_asset", "cross_asset_divergence_score_smooth"),
+    ("cross_asset",    "cross_asset_divergence_score_smooth"),
+    ("mean_reversion", "mean_reversion_score_smooth"),   # tracked but not in composite
 ])
 
 SCORE_COLS = OrderedDict([
-    ("macro_risk",     "macro_risk_score_smooth"),
-    ("credit_risk",    "credit_market_risk_score_smooth"),
-    ("complacency",    "complacency_score_smooth"),
-    ("liquidity",      "liquidity_regime_score_smooth"),
-    ("treasury",       "treasury_stress_score_smooth"),
-    ("mean_reversion", "mean_reversion_score_smooth"),
-    ("cross_asset",    "cross_asset_divergence_score_smooth"),
+    ("macro_risk",       "macro_risk_score_smooth"),
+    ("credit_risk",      "credit_market_risk_score_smooth"),
+    ("complacency",      "complacency_score_smooth"),
+    ("liquidity",        "liquidity_regime_score_smooth"),
+    ("treasury",         "treasury_stress_score_smooth"),
+    ("fx_commodity",     "fx_commodity_score_smooth"),
+    ("enhanced_funding", "enhanced_funding_stress_score_smooth"),
+    ("cross_asset",      "cross_asset_divergence_score_smooth"),
+    ("mean_reversion",   "mean_reversion_score_smooth"),
 ])
 
 DISPLAY_NAMES = {
-    "macro_risk":     "Macro Risk",
-    "credit_risk":    "Credit Risk",
-    "complacency":    "Complacency",
-    "liquidity":      "Liquidity",
-    "treasury":       "Treasury Stress",
-    "mean_reversion": "Mean Reversion",
-    "cross_asset":    "Cross-Asset Divergence",
+    "macro_risk":       "Macro Risk",
+    "credit_risk":      "Credit Risk",
+    "complacency":      "Complacency",
+    "liquidity":        "Liquidity",
+    "treasury":         "Treasury Stress",
+    "fx_commodity":     "FX / Commodity",
+    "enhanced_funding": "Funding Stress",
+    "cross_asset":      "Cross-Asset Divergence",
+    "mean_reversion":   "Mean Reversion",
 }
 
 DELTA_LOOKBACK = 21      # trading days ≈ 1 month
@@ -61,8 +68,8 @@ def compute_rolling_contributions(df):
 
     contribution_k = weight_k × score_k  (or weight_k × (100 − score_k) for mean_reversion)
 
-    The six composite scores sum to approximately composite_risk_score (unsmoothed).
-    cross_asset is tracked but excluded from the weighted stack.
+    The composite scores sum to approximately composite_risk_score (unsmoothed).
+    cross_asset and mean_reversion are tracked but excluded from the weighted stack.
 
     Returns DataFrame with same index as df and columns:
       {key}_contribution  for each score in COMPOSITE_WEIGHTS
@@ -73,10 +80,7 @@ def compute_rolling_contributions(df):
         if key not in COMPOSITE_WEIGHTS:
             continue
         w = COMPOSITE_WEIGHTS[key]
-        if key == "mean_reversion":
-            out[f"{key}_contribution"] = (w * (100 - df[col])).clip(lower=0)
-        else:
-            out[f"{key}_contribution"] = (w * df[col]).clip(lower=0)
+        out[f"{key}_contribution"] = (w * df[col]).clip(lower=0)
     return pd.DataFrame(out, index=df.index)
 
 
@@ -85,9 +89,7 @@ def compute_shift_attribution(df, regime_col="final_decision", lookback=DELTA_LO
     For each regime transition, identify which scores moved most over the
     preceding `lookback` trading days and classify them as the trigger.
 
-    Score deltas are signed so that positive = more risk added:
-      - all scores except mean_reversion: delta = current − prior
-      - mean_reversion: delta = prior − current (higher MR score = lower risk)
+    Score deltas are signed so that positive = more risk added (current − prior).
 
     Returns DataFrame with columns:
       date, from_regime, to_regime,
@@ -120,10 +122,7 @@ def compute_shift_attribution(df, regime_col="final_decision", lookback=DELTA_LO
         for key, col in available.items():
             current_val = df.at[idx, col]
             prior_val = df.at[prior_idx, col]
-            if key == "mean_reversion":
-                delta = prior_val - current_val
-            else:
-                delta = current_val - prior_val
+            delta = current_val - prior_val   # positive = more risk
             row[f"{key}_delta"] = round(delta, 2)
             deltas[key] = delta
 

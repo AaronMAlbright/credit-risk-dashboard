@@ -33,14 +33,16 @@ def simple_df():
     n = N
     # Scores range 0-100
     df = pd.DataFrame({
-        "macro_risk_score_smooth":             rng.uniform(10, 80, n),
-        "credit_market_risk_score_smooth":     rng.uniform(10, 70, n),
-        "complacency_score_smooth":            rng.uniform(20, 90, n),
-        "liquidity_regime_score_smooth":       rng.uniform(5, 60, n),
-        "treasury_stress_score_smooth":        rng.uniform(5, 50, n),
-        "mean_reversion_score_smooth":         rng.uniform(10, 80, n),
-        "cross_asset_divergence_score_smooth": rng.uniform(20, 90, n),
-        "composite_risk_score_smooth":         rng.uniform(20, 70, n),
+        "macro_risk_score_smooth":               rng.uniform(10, 80, n),
+        "credit_market_risk_score_smooth":       rng.uniform(10, 70, n),
+        "complacency_score_smooth":              rng.uniform(20, 90, n),
+        "liquidity_regime_score_smooth":         rng.uniform(5, 60, n),
+        "treasury_stress_score_smooth":          rng.uniform(5, 50, n),
+        "fx_commodity_score_smooth":             rng.uniform(0, 40, n),
+        "enhanced_funding_stress_score_smooth":  rng.uniform(0, 30, n),
+        "mean_reversion_score_smooth":           rng.uniform(10, 80, n),
+        "cross_asset_divergence_score_smooth":   rng.uniform(20, 90, n),
+        "composite_risk_score_smooth":           rng.uniform(20, 70, n),
     })
     # Alternating decisions every 10 rows to generate transitions
     decisions = (["Neutral"] * 10 + ["Buy Stress"] * 10 + ["Avoid Chasing Risk"] * 10) * 4
@@ -79,21 +81,24 @@ class TestComputeRollingContributions:
         assert len(result) == len(simple_df)
 
     def test_expected_columns(self, simple_df):
+        # Only columns present in both COMPOSITE_WEIGHTS and simple_df are expected
         result = compute_rolling_contributions(simple_df)
         for key in COMPOSITE_WEIGHTS:
-            assert f"{key}_contribution" in result.columns
+            col = SCORE_COLS.get(key)
+            if col and col in simple_df.columns:
+                assert f"{key}_contribution" in result.columns
 
     def test_all_contributions_non_negative(self, simple_df):
         result = compute_rolling_contributions(simple_df)
         assert (result >= 0).all().all()
 
-    def test_mean_reversion_inverted(self):
-        """Higher mean_reversion score → lower contribution."""
-        df_low  = pd.DataFrame({"mean_reversion_score_smooth": [20.0]})
-        df_high = pd.DataFrame({"mean_reversion_score_smooth": [80.0]})
-        lo = compute_rolling_contributions(df_low)["mean_reversion_contribution"].iloc[0]
-        hi = compute_rolling_contributions(df_high)["mean_reversion_contribution"].iloc[0]
-        assert lo > hi
+    def test_higher_score_higher_contribution(self):
+        """Higher score → higher contribution (all signals are now additive)."""
+        df_low  = pd.DataFrame({"complacency_score_smooth": [20.0]})
+        df_high = pd.DataFrame({"complacency_score_smooth": [80.0]})
+        lo = compute_rolling_contributions(df_low)["complacency_contribution"].iloc[0]
+        hi = compute_rolling_contributions(df_high)["complacency_contribution"].iloc[0]
+        assert hi > lo
 
     def test_contributions_bounded_by_weight_times_100(self, simple_df):
         result = compute_rolling_contributions(simple_df)

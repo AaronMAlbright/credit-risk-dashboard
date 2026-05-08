@@ -28,28 +28,38 @@ import pandas as pd
 # Constants
 # ---------------------------------------------------------------------------
 
-# Keys must match composite_engine.py column usage
+# Keys must match composite_engine.py column usage.
+# Kept in sync with _WEIGHTS in composite_engine.py.
 SCORE_COL_MAP: dict[str, str] = {
-    "macro_risk":     "macro_risk_score_smooth",
-    "credit_risk":    "credit_market_risk_score_smooth",
-    "complacency":    "complacency_score_smooth",
-    "liquidity":      "liquidity_regime_score_smooth",
-    "treasury":       "treasury_stress_score_smooth",
-    "mean_reversion": "mean_reversion_score_smooth",
+    "macro_risk":       "macro_risk_score_smooth",
+    "credit_risk":      "credit_market_risk_score_smooth",
+    "complacency":      "complacency_score_smooth",
+    "liquidity":        "liquidity_regime_score_smooth",
+    "treasury":         "treasury_stress_score_smooth",
+    "fx_commodity":     "fx_commodity_score_smooth",
+    "enhanced_funding": "enhanced_funding_stress_score_smooth",
 }
 
-# mean_reversion is inverted in the composite engine (100 - score)
-INVERTED: set[str] = {"mean_reversion"}
+# No signals currently inverted in the composite engine.
+INVERTED: set[str] = set()
 
-# Current production weights (must sum to 1.0)
+# Current production weights — must sum to 1.0.
+# Matches _WEIGHTS dict in composite_engine.py.
 CURRENT_WEIGHTS: dict[str, float] = {
-    "macro_risk":     0.25,
-    "credit_risk":    0.25,
-    "complacency":    0.20,
-    "liquidity":      0.15,
-    "treasury":       0.10,
-    "mean_reversion": 0.05,
+    "macro_risk":       0.25,
+    "credit_risk":      0.25,
+    "complacency":      0.20,
+    "liquidity":        0.10,
+    "treasury":         0.10,
+    "fx_commodity":     0.05,
+    "enhanced_funding": 0.05,
 }
+
+# Optimisation objective blending factor.
+# combined = SHARPE_WEIGHT × sharpe_rank + (1 − SHARPE_WEIGHT) × neg_corr_rank
+# Rank-based combination is scale-independent.
+# Using 0.55/0.45 to slightly prefer Sharpe over predictive direction.
+_SHARPE_OBJ_WEIGHT = 0.55
 
 DEFAULT_N_SAMPLES = 2000
 DEFAULT_TORNADO_DELTA = 0.05
@@ -218,7 +228,17 @@ def run_weight_grid_search(
         records.append(row)
 
     result = pd.DataFrame(records)
-    return result.sort_values("sharpe", ascending=False).reset_index(drop=True)
+
+    # Dual-objective rank: Sharpe (higher = better) + negative corr (more negative = better).
+    # Rank-based combination is scale-independent.
+    sharpe_rank  = result["sharpe"].rank(pct=True, na_option="bottom")
+    neg_corr_rank = (-result["corr_30d"]).rank(pct=True, na_option="bottom")
+    result["combined_objective"] = (
+        _SHARPE_OBJ_WEIGHT * sharpe_rank
+        + (1.0 - _SHARPE_OBJ_WEIGHT) * neg_corr_rank
+    ).round(4)
+
+    return result.sort_values("combined_objective", ascending=False).reset_index(drop=True)
 
 
 def compute_tornado(
@@ -286,10 +306,11 @@ def compute_tornado(
 
 
 def find_optimal_weights(results_df: pd.DataFrame) -> dict[str, float]:
-    """Return the weight dict from the top-Sharpe row of a grid-search result."""
+    """Return the weight dict from the top combined_objective row."""
     if results_df.empty:
         return {}
     score_keys = [k for k in SCORE_COL_MAP if k in results_df.columns]
+    # results_df is already sorted by combined_objective (desc)
     best = results_df.iloc[0]
     return {k: float(best[k]) for k in score_keys}
 
@@ -314,10 +335,15 @@ def run_weight_optimization(
     optimal_w = find_optimal_weights(grid)
     optimal_sharpe = compute_strategy_sharpe(df, optimal_w) if optimal_w else np.nan
 
+    current_corr = float(
+        grid.loc[grid.index[0], "corr_30d"]
+    ) if not grid.empty and "corr_30d" in grid.columns else np.nan
+
     return {
         "grid_results":    grid,
         "tornado":         tornado,
         "current_sharpe":  round(current_sharpe, 4) if not np.isnan(current_sharpe) else np.nan,
         "optimal_weights": optimal_w,
         "optimal_sharpe":  round(optimal_sharpe, 4) if not np.isnan(optimal_sharpe) else np.nan,
+        "optimal_corr_30d": round(current_corr, 4) if not np.isnan(current_corr) else np.nan,
     }

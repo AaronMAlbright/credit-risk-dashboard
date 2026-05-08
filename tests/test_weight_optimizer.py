@@ -39,16 +39,18 @@ def base_df():
     )
     daily_ret[0] = 0.0
     return pd.DataFrame({
-        "date":                            dates,
-        "sp500":                           price,
-        "sp500_daily_return":              daily_ret,
-        "sp500_forward_30d_return":        rng.normal(0.015, 0.04, n),
-        "macro_risk_score_smooth":         rng.uniform(10, 75, n),
-        "credit_market_risk_score_smooth": rng.uniform(10, 70, n),
-        "complacency_score_smooth":        rng.uniform(15, 65, n),
-        "liquidity_regime_score_smooth":   rng.uniform(10, 60, n),
-        "treasury_stress_score_smooth":    rng.uniform(10, 55, n),
-        "mean_reversion_score_smooth":     rng.uniform(20, 80, n),
+        "date":                                   dates,
+        "sp500":                                  price,
+        "sp500_daily_return":                     daily_ret,
+        "sp500_forward_30d_return":               rng.normal(0.015, 0.04, n),
+        "macro_risk_score_smooth":                rng.uniform(10, 75, n),
+        "credit_market_risk_score_smooth":        rng.uniform(10, 70, n),
+        "complacency_score_smooth":               rng.uniform(15, 65, n),
+        "liquidity_regime_score_smooth":          rng.uniform(10, 60, n),
+        "treasury_stress_score_smooth":           rng.uniform(10, 55, n),
+        "fx_commodity_score_smooth":              rng.uniform(0, 40, n),
+        "enhanced_funding_stress_score_smooth":   rng.uniform(0, 30, n),
+        "mean_reversion_score_smooth":            rng.uniform(20, 80, n),
     })
 
 
@@ -85,15 +87,15 @@ class TestComputeComposite:
         assert result.min() >= 0.0
         assert result.max() <= 100.0
 
-    def test_mean_reversion_inverted(self, base_df):
-        # High MR score → low risk contribution → lower composite
-        df_high_mr = base_df.copy()
-        df_high_mr["mean_reversion_score_smooth"] = 90.0
-        df_low_mr = base_df.copy()
-        df_low_mr["mean_reversion_score_smooth"] = 10.0
-        high = compute_composite(df_high_mr, CURRENT_WEIGHTS).mean()
-        low = compute_composite(df_low_mr, CURRENT_WEIGHTS).mean()
-        assert high < low
+    def test_higher_complacency_higher_composite(self, base_df):
+        # All signals are additive now; higher score → higher composite
+        df_high = base_df.copy()
+        df_high["complacency_score_smooth"] = 90.0
+        df_low = base_df.copy()
+        df_low["complacency_score_smooth"] = 10.0
+        high = compute_composite(df_high, CURRENT_WEIGHTS).mean()
+        low = compute_composite(df_low, CURRENT_WEIGHTS).mean()
+        assert high > low
 
     def test_zero_weight_excludes_score(self, base_df):
         w_no_mr = dict(CURRENT_WEIGHTS)
@@ -115,8 +117,8 @@ class TestComputeComposite:
         expected = base_df["macro_risk_score_smooth"].clip(0, 100)
         pd.testing.assert_series_equal(result, expected, check_names=False, rtol=1e-5)
 
-    def test_inverted_set_contains_mean_reversion(self):
-        assert "mean_reversion" in INVERTED
+    def test_inverted_set_is_empty(self):
+        assert len(INVERTED) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -141,13 +143,14 @@ class TestComputeStrategySharpe:
         scores = np.full(n, 20.0)  # composite ≈ 20 → equity_weight ≈ 0.8
         daily_ret = rng.normal(0.0004, 0.008, n)  # positive drift
         df = pd.DataFrame({
-            "macro_risk_score_smooth":         scores,
-            "credit_market_risk_score_smooth": scores,
-            "complacency_score_smooth":        scores,
-            "liquidity_regime_score_smooth":   scores,
-            "treasury_stress_score_smooth":    scores,
-            "mean_reversion_score_smooth":     np.full(n, 80.0),
-            "sp500_daily_return":              daily_ret,
+            "macro_risk_score_smooth":               scores,
+            "credit_market_risk_score_smooth":       scores,
+            "complacency_score_smooth":              scores,
+            "liquidity_regime_score_smooth":         scores,
+            "treasury_stress_score_smooth":          scores,
+            "fx_commodity_score_smooth":             scores,
+            "enhanced_funding_stress_score_smooth":  scores,
+            "sp500_daily_return":                    daily_ret,
         })
         sharpe = compute_strategy_sharpe(df, CURRENT_WEIGHTS)
         assert not np.isnan(sharpe)
@@ -194,10 +197,11 @@ class TestRunWeightGridSearch:
         for k in SCORE_COL_MAP:
             assert (result[k] >= 0).all()
 
-    def test_sorted_by_sharpe_descending(self, base_df):
+    def test_sorted_by_combined_objective_descending(self, base_df):
         result = run_weight_grid_search(base_df, n_samples=100)
-        sharpes = result["sharpe"].dropna().tolist()
-        assert sharpes == sorted(sharpes, reverse=True)
+        assert "combined_objective" in result.columns
+        objs = result["combined_objective"].dropna().tolist()
+        assert objs == sorted(objs, reverse=True)
 
     def test_deterministic_with_seed(self, base_df):
         r1 = run_weight_grid_search(base_df, n_samples=50, seed=42)
