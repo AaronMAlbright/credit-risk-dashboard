@@ -2,7 +2,7 @@ import pandas as pd
 
 
 def compute_treasury_features(df):
-    _y10 = df["yield_10y"] if "yield_10y" in df.columns else df["value_10y"]
+    _y10 = df["yield_10y"]
     df["real_yield_proxy"] = _y10 - df["breakeven_10y"]
     df["real_yield_change_90d"] = df["real_yield_proxy"].diff(90)
     df["curve_steepening_velocity_90d"] = df["spread"].diff(90)

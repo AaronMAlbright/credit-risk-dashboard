@@ -32,7 +32,8 @@ def build_raw_dataset(series_dict: dict) -> pd.DataFrame:
     breakeven_10y = series_dict["T10YIE"]
 
     df = ten_year.join(two_year, lsuffix="_10y", rsuffix="_2y")
-    df["spread"] = df["value_10y"] - df["value_2y"]
+    df.rename(columns={"value_10y": "yield_10y", "value_2y": "yield_2y"}, inplace=True)
+    df["spread"] = df["yield_10y"] - df["yield_2y"]
     df["yield_curve_regime"] = df["spread"].apply(classify_yield_curve_regime)
 
     df = df.join(unrate)

@@ -7,7 +7,7 @@ DATA_PATH = Path("data/scored_macro_credit_data.csv")
 # Columns produced by feature_engine.build_features() — everything before scoring.
 # These are the exact columns run_scoring_pipeline() expects as input.
 _FEATURE_COLS = [
-    "value_10y", "value_2y", "spread", "yield_curve_regime",
+    "yield_10y", "yield_2y", "spread", "yield_curve_regime",
     "unemployment", "nfci", "nfci_90d_avg", "hy_spread", "sp500", "vix", "breakeven_10y",
     "unemployment_change_90d", "spread_change_90d", "spread_change_5d",
     "hy_change_30d", "hy_change_90d", "hy_change_5d", "hy_change_30d_prior", "credit_impulse",
