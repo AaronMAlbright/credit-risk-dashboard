@@ -24,76 +24,36 @@ def normalize_weights(weights):
 def generate_portfolio_weights(row):
     decision = row["final_decision"]
 
-    if decision == "Buy Stress":
+    if decision == "Risk-On":
         weights = {
-            "equity_weight": 0.55,
-            "credit_weight": 0.30,
-            "cash_weight": 0.15,
-            "duration_bias": "Long Duration",
-        }
-
-    elif decision == "Watch Entry":
-        weights = {
-            "equity_weight": 0.35,
+            "equity_weight": 0.65,
             "credit_weight": 0.25,
-            "cash_weight": 0.40,
-            "duration_bias": "Neutral / Slight Long",
-        }
-
-    elif decision == "Stress / Stabilization Watch":
-        weights = {
-            "equity_weight": 0.25,
-            "credit_weight": 0.15,
-            "cash_weight": 0.60,
-            "duration_bias": "Long Duration",
-        }
-
-    elif decision == "Credit Warning":
-        weights = {
-            "equity_weight": 0.35,
-            "credit_weight": 0.15,
-            "cash_weight": 0.50,
-            "duration_bias": "Neutral",
-        }
-
-    elif decision == "Divergence Warning":
-        weights = {
-            "equity_weight": 0.35,
-            "credit_weight": 0.20,
-            "cash_weight": 0.45,
-            "duration_bias": "Neutral",
-        }
-
-    elif decision == "Avoid Chasing Risk":
-        weights = {
-            "equity_weight": 0.30,
-            "credit_weight": 0.20,
-            "cash_weight": 0.50,
-            "duration_bias": "Neutral / Defensive",
-        }
-
-    elif decision == "Hold / Do Not Chase":
-        weights = {
-            "equity_weight": 0.40,
-            "credit_weight": 0.25,
-            "cash_weight": 0.35,
-            "duration_bias": "Neutral",
-        }
-
-    elif decision == "Wait":
-        weights = {
-            "equity_weight": 0.30,
-            "credit_weight": 0.20,
-            "cash_weight": 0.50,
+            "cash_weight": 0.10,
             "duration_bias": "Neutral",
         }
 
     elif decision == "Neutral":
         weights = {
-            "equity_weight": 0.45,
+            "equity_weight": 0.50,
             "credit_weight": 0.25,
-            "cash_weight": 0.30,
+            "cash_weight": 0.25,
             "duration_bias": "Neutral",
+        }
+
+    elif decision == "Caution":
+        weights = {
+            "equity_weight": 0.30,
+            "credit_weight": 0.20,
+            "cash_weight": 0.50,
+            "duration_bias": "Neutral / Slight Long",
+        }
+
+    elif decision == "Risk-Off":
+        weights = {
+            "equity_weight": 0.15,
+            "credit_weight": 0.10,
+            "cash_weight": 0.75,
+            "duration_bias": "Long Duration",
         }
 
     else:

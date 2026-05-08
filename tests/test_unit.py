@@ -280,15 +280,10 @@ class TestScoreMonotonicity:
 # Portfolio weights
 # ---------------------------------------------------------------------------
 _ALL_DECISIONS = [
-    "Buy Stress",
-    "Watch Entry",
-    "Stress / Stabilization Watch",
-    "Credit Warning",
-    "Divergence Warning",
-    "Avoid Chasing Risk",
-    "Hold / Do Not Chase",
-    "Wait",
+    "Risk-On",
     "Neutral",
+    "Caution",
+    "Risk-Off",
 ]
 
 
@@ -320,19 +315,15 @@ class TestPortfolioWeights:
         w = generate_portfolio_weights(row)
         assert "duration_bias" in w
 
-    def test_buy_stress_higher_equity_than_defensive(self):
-        buy = generate_portfolio_weights(pd.Series({"final_decision": "Buy Stress"}))
-        defensive = generate_portfolio_weights(
-            pd.Series({"final_decision": "Stress / Stabilization Watch"})
-        )
-        assert buy["equity_weight"] > defensive["equity_weight"]
+    def test_risk_on_higher_equity_than_risk_off(self):
+        risk_on = generate_portfolio_weights(pd.Series({"final_decision": "Risk-On"}))
+        risk_off = generate_portfolio_weights(pd.Series({"final_decision": "Risk-Off"}))
+        assert risk_on["equity_weight"] > risk_off["equity_weight"]
 
-    def test_defensive_higher_cash_than_buy_stress(self):
-        buy = generate_portfolio_weights(pd.Series({"final_decision": "Buy Stress"}))
-        defensive = generate_portfolio_weights(
-            pd.Series({"final_decision": "Stress / Stabilization Watch"})
-        )
-        assert defensive["cash_weight"] > buy["cash_weight"]
+    def test_risk_off_higher_cash_than_risk_on(self):
+        risk_on = generate_portfolio_weights(pd.Series({"final_decision": "Risk-On"}))
+        risk_off = generate_portfolio_weights(pd.Series({"final_decision": "Risk-Off"}))
+        assert risk_off["cash_weight"] > risk_on["cash_weight"]
 
 
 # ---------------------------------------------------------------------------

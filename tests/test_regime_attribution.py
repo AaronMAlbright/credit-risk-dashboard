@@ -45,7 +45,7 @@ def simple_df():
         "composite_risk_score_smooth":           rng.uniform(20, 70, n),
     })
     # Alternating decisions every 10 rows to generate transitions
-    decisions = (["Neutral"] * 10 + ["Buy Stress"] * 10 + ["Avoid Chasing Risk"] * 10) * 4
+    decisions = (["Neutral"] * 10 + ["Risk-On"] * 10 + ["Caution"] * 10) * 4
     df["final_decision"] = decisions[:n]
     return df
 

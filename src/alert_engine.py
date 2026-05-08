@@ -52,24 +52,13 @@ import pandas as pd
 
 ALERT_LEVELS: dict[str, int] = {"INFO": 0, "WARNING": 1, "ALERT": 2}
 
-_STRESS_DECISIONS = {
-    "Stress / Stabilization Watch",
-    "Buy Stress",
-    "Credit Warning",
-    "Avoid Chasing Risk",
-    "Divergence Warning",
-}
+_STRESS_DECISIONS = {"Risk-Off", "Caution"}
 
 _DECISION_COLORS: dict[str, str] = {
-    "Buy Stress":                   "#27ae60",
-    "Watch Entry":                  "#2ecc71",
-    "Hold / Do Not Chase":          "#f1c40f",
-    "Neutral":                      "#95a5a6",
-    "Wait":                         "#e67e22",
-    "Avoid Chasing Risk":           "#e74c3c",
-    "Divergence Warning":           "#9b59b6",
-    "Credit Warning":               "#c0392b",
-    "Stress / Stabilization Watch": "#8e44ad",
+    "Risk-On":  "#27ae60",
+    "Neutral":  "#95a5a6",
+    "Caution":  "#e67e22",
+    "Risk-Off": "#e74c3c",
 }
 
 _LEVEL_COLORS = {"INFO": "#3498db", "WARNING": "#e67e22", "ALERT": "#e74c3c"}

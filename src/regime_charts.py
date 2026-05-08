@@ -14,12 +14,16 @@ import plotly.graph_objects as go
 # ---------------------------------------------------------------------------
 
 DECISION_COLORS: dict[str, str] = {
+    "Risk-On":  "#27ae60",
+    "Neutral":  "#95a5a6",
+    "Caution":  "#e67e22",
+    "Risk-Off": "#e74c3c",
+    # Legacy detail labels (kept for final_decision_detail overlays)
     "Buy Stress":                   "#27ae60",
     "Watch Entry":                  "#2ecc71",
     "Hold / Do Not Chase":          "#f1c40f",
-    "Neutral":                      "#95a5a6",
     "Wait":                         "#e67e22",
-    "Avoid Chasing Risk":           "#e74c3c",
+    "Avoid Chasing Risk":           "#c0392b",
     "Divergence Warning":           "#9b59b6",
     "Credit Warning":               "#c0392b",
     "Stress / Stabilization Watch": "#8e44ad",

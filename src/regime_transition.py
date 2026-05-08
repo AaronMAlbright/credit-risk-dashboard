@@ -11,15 +11,10 @@ matplotlib.use("Agg")
 OUTPUT_DIR = os.path.join("outputs", "regime_transition")
 
 DECISION_ORDER = [
-    "Buy Stress",
-    "Watch Entry",
-    "Hold / Do Not Chase",
+    "Risk-On",
     "Neutral",
-    "Wait",
-    "Avoid Chasing Risk",
-    "Divergence Warning",
-    "Credit Warning",
-    "Stress / Stabilization Watch",
+    "Caution",
+    "Risk-Off",
 ]
 
 TRANSITION_ORDER = [

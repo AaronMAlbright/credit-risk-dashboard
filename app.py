@@ -36,6 +36,7 @@ from src.risk_engine import (
     classify_transition_regime,
     generate_transition_signal,
     generate_final_decision,
+    classify_regime_band,
     calculate_trigger_distances,
     get_signal_drivers,
     compute_model_confidence,
@@ -566,26 +567,24 @@ df["final_decision_obj"] = df.apply(
     axis=1,
 )
 
-df["final_decision"] = df["final_decision_obj"].apply(lambda x: x["final_decision"])
+df["final_decision_detail"] = df["final_decision_obj"].apply(lambda x: x["final_decision"])
 df["final_environment"] = df["final_decision_obj"].apply(lambda x: x["environment"])
 df["final_action"] = df["final_decision_obj"].apply(lambda x: x["action"])
 
-# Simplified 5-bucket grouped regime for validation (more observations per bucket)
-_GROUPED_REGIMES = {
-    "Buy Stress":                   "Recovery / Buy Stress",
-    "Watch Entry":                  "Risk-On",
-    "Risk On":                      "Risk-On",
-    "Neutral":                      "Neutral",
-    "Stress / Stabilization Watch": "Caution",
-    "Hold / Do Not Chase":          "Neutral",
-    "Divergence Warning":           "Caution",
-    "Wait":                         "Caution",
-    "Credit Warning":               "Stress",
-    "Avoid Chasing Risk":           "Stress",
-    "Active Stress":                "Stress",
-    "Reduce Risk":                  "Stress",
-}
-df["grouped_regime"] = df["final_decision"].map(_GROUPED_REGIMES).fillna("Neutral")
+# 4-regime consolidation: composite score bands with shock override
+df["final_decision"] = df.apply(
+    lambda row: classify_regime_band(
+        row["composite_risk_score_smooth"],
+        row["shock_flag"],
+        max(
+            row["macro_risk_score_smooth"],
+            row["credit_market_risk_score_smooth"],
+            row["liquidity_regime_score_smooth"],
+        ),
+    ),
+    axis=1,
+)
+df["grouped_regime"] = df["final_decision"]
 
 
 # =====================

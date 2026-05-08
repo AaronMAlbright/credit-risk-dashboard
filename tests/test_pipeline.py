@@ -192,11 +192,7 @@ class TestFinalDecision:
         assert pd.api.types.is_string_dtype(pipeline_df["final_decision"])
 
     def test_final_decision_values_are_known(self, pipeline_df):
-        known = {
-            "Buy Stress", "Watch Entry", "Stress / Stabilization Watch",
-            "Credit Warning", "Divergence Warning", "Avoid Chasing Risk",
-            "Hold / Do Not Chase", "Wait", "Neutral",
-        }
+        known = {"Risk-On", "Neutral", "Caution", "Risk-Off"}
         actual = set(pipeline_df["final_decision"].unique())
         unknown = actual - known
         assert not unknown, f"Unexpected final_decision values: {unknown}"

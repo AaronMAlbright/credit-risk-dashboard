@@ -25,6 +25,7 @@ from src.risk_engine import (
     generate_mean_reversion_signal,
     classify_transition_regime,
     generate_transition_signal,
+    classify_regime_band,
     generate_final_decision,
     calculate_trigger_distances,
     get_signal_drivers,
@@ -315,9 +316,22 @@ def run_scoring_pipeline(df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
 
-    df["final_decision"]   = df["final_decision_obj"].apply(lambda x: x["final_decision"])
-    df["final_environment"]= df["final_decision_obj"].apply(lambda x: x["environment"])
-    df["final_action"]     = df["final_decision_obj"].apply(lambda x: x["action"])
+    # Preserve granular 9-label signal as diagnostic detail
+    df["final_decision_detail"] = df["final_decision_obj"].apply(lambda x: x["final_decision"])
+    df["final_environment"]     = df["final_decision_obj"].apply(lambda x: x["environment"])
+    df["final_action"]          = df["final_decision_obj"].apply(lambda x: x["action"])
+
+    # Primary 4-regime output: composite-score bands (statistically grounded)
+    df["final_decision"] = df.apply(
+        lambda row: classify_regime_band(
+            row["composite_risk_score_smooth"],
+            row["shock_flag"],
+            max(row["macro_risk_score_smooth"],
+                row["credit_market_risk_score_smooth"],
+                row["liquidity_regime_score_smooth"]),
+        ),
+        axis=1,
+    )
 
     return df
 

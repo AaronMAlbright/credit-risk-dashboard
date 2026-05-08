@@ -42,7 +42,7 @@ def _make_df(**overrides) -> pd.DataFrame:
     """Minimal scored DataFrame row."""
     base = {
         "date":                        "2026-05-07",
-        "final_decision":              "Hold / Do Not Chase",
+        "final_decision":              "Neutral",
         "composite_risk_score_smooth": 42.0,
         "shock_flag":                  "No Shock",
         "final_environment":           "Late Cycle",
@@ -94,10 +94,10 @@ class TestLoadSaveState:
 
     def test_round_trip(self, tmp_path):
         p = tmp_path / "state.json"
-        original = {**DEFAULT_STATE, "decision": "Buy Stress", "composite": 61.0}
+        original = {**DEFAULT_STATE, "decision": "Risk-On", "composite": 61.0}
         save_alert_state(original, p)
         loaded = load_alert_state(p)
-        assert loaded["decision"] == "Buy Stress"
+        assert loaded["decision"] == "Risk-On"
         assert loaded["composite"] == 61.0
 
     def test_load_merges_with_defaults(self, tmp_path):
@@ -129,7 +129,7 @@ class TestExtractCurrentState:
     def test_basic_fields(self):
         df = _make_df()
         state = extract_current_state(df)
-        assert state["decision"] == "Hold / Do Not Chase"
+        assert state["decision"] == "Neutral"
         assert abs(state["composite"] - 42.0) < 0.01
         assert state["shock_flag"] == "No Shock"
         assert state["last_date"] == "2026-05-07"
@@ -169,18 +169,18 @@ class TestExtractCurrentState:
 # ---------------------------------------------------------------------------
 
 class TestCheckAlertsRegimeChange:
-    def _curr(self, decision="Buy Stress") -> dict:
+    def _curr(self, decision="Risk-On") -> dict:
         return {**DEFAULT_STATE, "decision": decision, "composite": 55.0,
                 "blend": 0.60, "shock_flag": "No Shock"}
 
-    def _prev(self, decision="Hold / Do Not Chase") -> dict:
+    def _prev(self, decision="Neutral") -> dict:
         return {**DEFAULT_STATE, "decision": decision, "composite": 50.0,
                 "blend": 0.65, "shock_flag": "No Shock"}
 
     def test_stress_decision_fires_alert(self):
         cfg = _cfg(check_blend_below=False, check_composite_spike=False,
                    check_shock_flag=False, check_composite_cross=False)
-        alerts = check_alerts(self._curr("Buy Stress"), self._prev(), cfg)
+        alerts = check_alerts(self._curr("Risk-Off"), self._prev(), cfg)
         assert any(a["trigger"] == "regime_change" for a in alerts)
         match = next(a for a in alerts if a["trigger"] == "regime_change")
         assert match["level"] == "ALERT"
@@ -188,29 +188,29 @@ class TestCheckAlertsRegimeChange:
     def test_non_stress_decision_fires_info(self):
         cfg = _cfg(check_blend_below=False, check_composite_spike=False,
                    check_shock_flag=False, check_composite_cross=False)
-        alerts = check_alerts(self._curr("Neutral"), self._prev(), cfg)
+        alerts = check_alerts(self._curr("Neutral"), self._prev("Caution"), cfg)
         match = next(a for a in alerts if a["trigger"] == "regime_change")
         assert match["level"] == "INFO"
 
     def test_no_change_no_fire(self):
         cfg = _cfg(check_blend_below=False, check_composite_spike=False,
                    check_shock_flag=False, check_composite_cross=False)
-        alerts = check_alerts(self._curr("Hold / Do Not Chase"),
-                               self._prev("Hold / Do Not Chase"), cfg)
+        alerts = check_alerts(self._curr("Neutral"),
+                               self._prev("Neutral"), cfg)
         assert not any(a["trigger"] == "regime_change" for a in alerts)
 
     def test_disabled_does_not_fire(self):
         cfg = _cfg(check_regime_change=False, check_blend_below=False,
                    check_composite_spike=False, check_shock_flag=False,
                    check_composite_cross=False)
-        alerts = check_alerts(self._curr("Buy Stress"), self._prev(), cfg)
+        alerts = check_alerts(self._curr("Risk-On"), self._prev(), cfg)
         assert alerts == []
 
     def test_empty_previous_decision_no_fire(self):
         cfg = _cfg(check_blend_below=False, check_composite_spike=False,
                    check_shock_flag=False, check_composite_cross=False)
         prev = {**DEFAULT_STATE, "decision": ""}
-        alerts = check_alerts(self._curr("Buy Stress"), prev, cfg)
+        alerts = check_alerts(self._curr("Risk-On"), prev, cfg)
         assert not any(a["trigger"] == "regime_change" for a in alerts)
 
 
@@ -219,7 +219,7 @@ class TestCheckAlertsRegimeChange:
 # ---------------------------------------------------------------------------
 
 class TestCheckAlertsBlendBelow:
-    def _state(self, blend, decision="Hold / Do Not Chase", composite=42.0,
+    def _state(self, blend, decision="Neutral", composite=42.0,
                shock="No Shock") -> dict:
         return {**DEFAULT_STATE, "decision": decision, "composite": composite,
                 "blend": blend, "shock_flag": shock}
@@ -278,7 +278,7 @@ class TestCheckAlertsBlendBelow:
 class TestCheckAlertsCompositeSpike:
     def _state(self, composite, blend=0.60) -> dict:
         return {**DEFAULT_STATE, "composite": composite, "blend": blend,
-                "decision": "Hold / Do Not Chase", "shock_flag": "No Shock"}
+                "decision": "Neutral", "shock_flag": "No Shock"}
 
     def test_upward_spike_fires_alert(self):
         cfg = _cfg(check_regime_change=False, check_blend_below=False,
@@ -325,7 +325,7 @@ class TestCheckAlertsCompositeSpike:
 class TestCheckAlertsShockFlag:
     def _state(self, shock) -> dict:
         return {**DEFAULT_STATE, "shock_flag": shock, "composite": 45.0,
-                "decision": "Hold / Do Not Chase"}
+                "decision": "Neutral"}
 
     def test_no_shock_to_shock_fires_alert(self):
         cfg = _cfg(check_regime_change=False, check_blend_below=False,
@@ -362,7 +362,7 @@ class TestCheckAlertsShockFlag:
 class TestCheckAlertsCompositeCross:
     def _state(self, composite) -> dict:
         return {**DEFAULT_STATE, "composite": composite,
-                "decision": "Hold / Do Not Chase", "shock_flag": "No Shock"}
+                "decision": "Neutral", "shock_flag": "No Shock"}
 
     def test_upward_cross_fires_alert(self):
         cfg = _cfg(check_regime_change=False, check_blend_below=False,
@@ -402,7 +402,7 @@ class TestCheckAlertsSorting:
     def test_alert_before_warning_before_info(self):
         """Multiple triggers firing — ALERT sorted to front."""
         curr = {
-            "decision":   "Buy Stress",
+            "decision":   "Risk-On",
             "composite":  62.0,
             "blend":      0.20,
             "shock_flag": "VIX Spike",
@@ -410,7 +410,7 @@ class TestCheckAlertsSorting:
             "last_run":   "2026-05-07 09:00",
         }
         prev = {
-            "decision":   "Hold / Do Not Chase",
+            "decision":   "Neutral",
             "composite":  50.0,
             "blend":      0.55,
             "shock_flag": "No Shock",
@@ -427,7 +427,7 @@ class TestCheckAlertsSorting:
             assert max(alert_idx) < min(info_idx)
 
     def test_no_alerts_returns_empty(self):
-        same = {**DEFAULT_STATE, "decision": "Hold / Do Not Chase",
+        same = {**DEFAULT_STATE, "decision": "Neutral",
                 "composite": 45.0, "blend": 0.65, "shock_flag": "No Shock"}
         alerts = check_alerts(same, same, _cfg())
         assert alerts == []
@@ -440,8 +440,8 @@ class TestCheckAlertsSorting:
 class TestFormatAlertEmail:
     def _alerts(self) -> list[dict]:
         return [{"trigger": "regime_change", "level": "ALERT",
-                 "message": "Regime changed: Hold → Buy Stress",
-                 "details": {"prev": "Hold", "curr": "Buy Stress"}}]
+                 "message": "Regime changed: Neutral → Risk-On",
+                 "details": {"prev": "Neutral", "curr": "Risk-On"}}]
 
     def test_returns_html_string(self):
         html = format_alert_email(self._alerts(), extract_current_state(_make_df()))
@@ -468,10 +468,10 @@ class TestFormatAlertEmail:
 
     def test_previous_decision_shown_when_provided(self):
         curr = extract_current_state(_make_df())
-        prev = {**DEFAULT_STATE, "decision": "Credit Warning",
+        prev = {**DEFAULT_STATE, "decision": "Risk-Off",
                 "composite": 58.0, "blend": 0.40, "last_date": "2026-05-06"}
         html = format_alert_email(self._alerts(), curr, previous=prev)
-        assert "Credit Warning" in html
+        assert "Risk-Off" in html
 
     def test_trigger_count_in_banner(self):
         alerts = self._alerts() + [{"trigger": "shock_flag", "level": "ALERT",
@@ -579,7 +579,7 @@ class TestRunAlerts:
     def test_dry_run_does_not_send_email(self, tmp_path):
         sp = tmp_path / "state.json"
         # Seed previous with a different decision so regime_change fires
-        save_alert_state({**DEFAULT_STATE, "decision": "Buy Stress",
+        save_alert_state({**DEFAULT_STATE, "decision": "Risk-On",
                           "composite": 50.0}, sp)
 
         cfg = _cfg(dry_run=True)
@@ -592,10 +592,10 @@ class TestRunAlerts:
 
     def test_alerts_fired_on_regime_change(self, tmp_path):
         sp = tmp_path / "state.json"
-        save_alert_state({**DEFAULT_STATE, "decision": "Hold / Do Not Chase",
+        save_alert_state({**DEFAULT_STATE, "decision": "Neutral",
                           "composite": 42.0}, sp)
 
-        df = _make_df(final_decision="Buy Stress",
+        df = _make_df(final_decision="Risk-On",
                       composite_risk_score_smooth=62.0)
         cfg = _cfg(dry_run=True)
         result = run_alerts(df, config=cfg, state_path=sp)
@@ -603,7 +603,7 @@ class TestRunAlerts:
 
     def test_min_level_filters_info(self, tmp_path):
         sp = tmp_path / "state.json"
-        save_alert_state({**DEFAULT_STATE, "decision": "Hold / Do Not Chase",
+        save_alert_state({**DEFAULT_STATE, "decision": "Caution",
                           "composite": 42.0}, sp)
 
         df = _make_df(final_decision="Neutral",
@@ -626,9 +626,9 @@ class TestRunAlerts:
 
     def test_current_state_in_result(self, tmp_path):
         cfg = _cfg(dry_run=True)
-        df = _make_df(final_decision="Credit Warning")
+        df = _make_df(final_decision="Risk-Off")
         result = run_alerts(df, config=cfg, state_path=tmp_path / "state.json")
-        assert result["current"]["decision"] == "Credit Warning"
+        assert result["current"]["decision"] == "Risk-Off"
 
     def test_sizing_blend_passed_through(self, tmp_path):
         cfg = _cfg(dry_run=True)

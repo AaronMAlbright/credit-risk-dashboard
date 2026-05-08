@@ -621,13 +621,10 @@ composite   = float(latest.get("composite_risk_score_smooth", 0))
 comp_label  = str(latest.get("composite_risk_label", "N/A"))
 
 _DECISION_COLORS = {
-    "Avoid Chasing Risk":   "#d62728",
-    "Buy Stress":           "#2ca02c",
-    "Watch Entry":          "#ff7f0e",
-    "Wait":                 "#1f77b4",
-    "Neutral":              "#7f7f7f",
-    "Hold / Do Not Chase":  "#9467bd",
-    "Hold":                 "#9467bd",
+    "Risk-On":  "#27ae60",
+    "Neutral":  "#95a5a6",
+    "Caution":  "#e67e22",
+    "Risk-Off": "#e74c3c",
 }
 _badge_bg = _DECISION_COLORS.get(decision, "#555555")
 
@@ -675,16 +672,10 @@ _cur_ov = _rp_ov.get("current", {})
 if _cur_ov:
     _top3 = sorted(_cur_ov["probs"].items(), key=lambda kv: kv[1], reverse=True)[:3]
     _BADGE_COLORS = {
-        "Avoid Chasing Risk":          "#d62728",
-        "Buy Stress":                  "#2ca02c",
-        "Watch Entry":                 "#ff7f0e",
-        "Wait":                        "#1f77b4",
-        "Neutral":                     "#7f7f7f",
-        "Hold / Do Not Chase":         "#9467bd",
-        "Hold":                        "#9467bd",
-        "Divergence Warning":          "#e377c2",
-        "Credit Warning":              "#8c564b",
-        "Stress / Stabilization Watch":"#bcbd22",
+        "Risk-On":  "#27ae60",
+        "Neutral":  "#95a5a6",
+        "Caution":  "#e67e22",
+        "Risk-Off": "#e74c3c",
     }
     _ent = _cur_ov.get("entropy", 0.0)
     _max_ent = max(1.0, _ent)
@@ -1356,11 +1347,10 @@ with _analytics_sub1:
                 .rename(columns={"n": "N Obs", "mean_fwd": "Mean Fwd 30d", "hit_rate": "Hit Rate"})
             )
             _grp["Sample Flag"] = _grp["N Obs"].apply(_sample_flag)
-            _ORDER = ["Recovery / Buy Stress", "Risk-On", "Neutral", "Caution", "Stress"]
+            _ORDER = ["Risk-On", "Neutral", "Caution", "Risk-Off"]
             _grp = _grp.reindex([r for r in _ORDER if r in _grp.index])
-            st.markdown("**Grouped Regime Forward Returns (5 buckets)**")
+            st.markdown("**Regime Forward Returns (4 regimes)**")
             st.caption(
-                "Simplified regimes improve observation counts vs 9-label detail view. "
                 "Sample reliability: Exploratory=n<20 · Indicative=n<50 · Reliable=n≥50"
             )
             st.dataframe(
@@ -1368,7 +1358,7 @@ with _analytics_sub1:
                 use_container_width=True,
             )
         if _regime_stats_audit is not None and not _regime_stats_audit.empty:
-            with st.expander("Detailed regime stats (9 labels)"):
+            with st.expander("Detailed regime stats"):
                 st.caption("Sample reliability: Exploratory = n<20 · Indicative = n<50 · Reliable = n≥50")
                 _rs_disp = _regime_stats_audit[["n_obs", "mean_return", "hit_rate", "confidence"]].copy()
                 _rs_disp["mean_return"] = _rs_disp["mean_return"].map(
@@ -1778,7 +1768,7 @@ with tab4:
 
         # ── Grouped regime forward returns bar chart ─────────────────────────
         if "grouped_regime" in _sq_df.columns:
-            _grp_order = ["Recovery / Buy Stress", "Risk-On", "Neutral", "Caution", "Stress"]
+            _grp_order = ["Risk-On", "Neutral", "Caution", "Risk-Off"]
             _grp_stats = (
                 _sq_df.groupby("grouped_regime")["sp500_forward_30d_return"]
                 .agg(mean="mean", count="count", std="std")
@@ -3883,16 +3873,10 @@ with _models_sub3:
         st.subheader("Current Regime Probabilities")
         _probs_sorted = sorted(_cur17["probs"].items(), key=lambda kv: kv[1], reverse=True)
         _COLORS17 = {
-            "Avoid Chasing Risk":           "#d62728",
-            "Buy Stress":                   "#2ca02c",
-            "Watch Entry":                  "#ff7f0e",
-            "Wait":                         "#1f77b4",
-            "Neutral":                      "#7f7f7f",
-            "Hold / Do Not Chase":          "#9467bd",
-            "Hold":                         "#9467bd",
-            "Divergence Warning":           "#e377c2",
-            "Credit Warning":               "#8c564b",
-            "Stress / Stabilization Watch": "#bcbd22",
+            "Risk-On":  "#27ae60",
+            "Neutral":  "#95a5a6",
+            "Caution":  "#e67e22",
+            "Risk-Off": "#e74c3c",
         }
         _bar_labels = [r for r, _ in _probs_sorted]
         _bar_vals   = [p for _, p in _probs_sorted]
@@ -4149,16 +4133,10 @@ with _models_sub4:
         _rpa_sorted = sorted(_rpa18.items(), key=lambda kv: kv[1], reverse=True)
 
         _COLORS18 = {
-            "Avoid Chasing Risk":           "#d62728",
-            "Buy Stress":                   "#2ca02c",
-            "Watch Entry":                  "#ff7f0e",
-            "Wait":                         "#1f77b4",
-            "Neutral":                      "#7f7f7f",
-            "Hold / Do Not Chase":          "#9467bd",
-            "Hold":                         "#9467bd",
-            "Divergence Warning":           "#e377c2",
-            "Credit Warning":               "#8c564b",
-            "Stress / Stabilization Watch": "#bcbd22",
+            "Risk-On":  "#27ae60",
+            "Neutral":  "#95a5a6",
+            "Caution":  "#e67e22",
+            "Risk-Off": "#e74c3c",
         }
         _rpa_labs   = [r for r, _ in _rpa_sorted]
         _rpa_vals   = [p for _, p in _rpa_sorted]
@@ -4620,15 +4598,10 @@ with _models_sub7:
 
     def _decision_badge_sc(decision: str, env: str = "") -> str:
         _DC = {
-            "Buy Stress":                   "#2ca02c",
-            "Watch Entry":                  "#1f77b4",
-            "Neutral":                      "#7f7f7f",
-            "Stress / Stabilization Watch": "#e74c3c",
-            "Hold / Do Not Chase":          "#9467bd",
-            "Divergence Warning":           "#ff7f0e",
-            "Wait":                         "#ff7f0e",
-            "Credit Warning":               "#e74c3c",
-            "Avoid Chasing Risk":           "#d62728",
+            "Risk-On":  "#27ae60",
+            "Neutral":  "#95a5a6",
+            "Caution":  "#e67e22",
+            "Risk-Off": "#e74c3c",
         }
         clr = _DC.get(decision, "#aaa")
         return (

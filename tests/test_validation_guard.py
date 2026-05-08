@@ -39,7 +39,7 @@ def robust_df():
     n = 200
     rng = np.random.default_rng(1)
     dates = pd.date_range("2020-01-01", periods=n, freq="B")
-    decisions = ["Neutral"] * 100 + ["Buy Stress"] * 100
+    decisions = ["Neutral"] * 100 + ["Risk-On"] * 100
     returns = np.concatenate([
         rng.normal(0.02, 0.05, 100),
         rng.normal(0.05, 0.04, 100),
@@ -62,7 +62,7 @@ def sparse_df():
     dates = pd.date_range("2020-01-01", periods=n, freq="B")
     return pd.DataFrame({
         "date": dates,
-        "final_decision": ["Stress / Stabilization Watch"] * n,
+        "final_decision": ["Risk-Off"] * n,
         "sp500_forward_30d_return": rng.normal(0.01, 0.05, n),
         "macro_risk_score_smooth": rng.uniform(30, 70, n),
         "composite_risk_score_smooth": rng.uniform(30, 70, n),
@@ -94,11 +94,11 @@ def windows_sparse():
 @pytest.fixture(scope="module")
 def counts_df_robust():
     """Transition count matrix with robust counts (> 20 outgoing per row)."""
-    regimes = ["Neutral", "Buy Stress", "Avoid Chasing Risk"]
+    regimes = ["Neutral", "Risk-On", "Caution"]
     data = {
-        "Neutral":            [10, 15, 5],
-        "Buy Stress":         [12,  8, 8],
-        "Avoid Chasing Risk": [5,   3, 20],
+        "Neutral": [10, 15, 5],
+        "Risk-On": [12,  8, 8],
+        "Caution": [5,   3, 20],
     }
     return pd.DataFrame(data, index=regimes)
 
@@ -106,10 +106,10 @@ def counts_df_robust():
 @pytest.fixture(scope="module")
 def counts_df_sparse():
     """Transition count matrix where one row has < 5 outgoing transitions."""
-    regimes = ["Neutral", "Stress / Stabilization Watch"]
+    regimes = ["Neutral", "Risk-Off"]
     data = {
-        "Neutral":                    [20, 2],
-        "Stress / Stabilization Watch": [1, 1],
+        "Neutral":  [20, 2],
+        "Risk-Off": [1, 1],
     }
     return pd.DataFrame(data, index=regimes)
 
@@ -180,12 +180,12 @@ class TestAuditRegimeStats:
     def test_both_regimes_present(self, robust_df):
         result = audit_regime_stats(robust_df)
         assert "Neutral" in result.index
-        assert "Buy Stress" in result.index
+        assert "Risk-On" in result.index
 
     def test_robust_regimes_not_suppressed(self, robust_df):
         result = audit_regime_stats(robust_df)
         assert not result.loc["Neutral", "suppressed"]
-        assert not result.loc["Buy Stress", "suppressed"]
+        assert not result.loc["Risk-On", "suppressed"]
 
     def test_sparse_regime_exploratory(self, sparse_df):
         result = audit_regime_stats(sparse_df)
@@ -198,7 +198,7 @@ class TestAuditRegimeStats:
     def test_n_obs_matches_data(self, robust_df):
         result = audit_regime_stats(robust_df)
         assert result.loc["Neutral", "n_obs"] == 100
-        assert result.loc["Buy Stress", "n_obs"] == 100
+        assert result.loc["Risk-On", "n_obs"] == 100
 
     def test_mean_return_is_float(self, robust_df):
         result = audit_regime_stats(robust_df)
@@ -222,7 +222,7 @@ class TestAuditRegimeStats:
     def test_worst_5pct_nan_when_few_obs(self):
         df = pd.DataFrame({
             "date": pd.date_range("2020-01-01", periods=3, freq="B"),
-            "final_decision": ["Stress / Stabilization Watch"] * 3,
+            "final_decision": ["Risk-Off"] * 3,
             "sp500_forward_30d_return": [0.01, 0.02, -0.01],
         })
         result = audit_regime_stats(df)
@@ -257,9 +257,9 @@ class TestAuditTransitionMatrix:
 
     def test_sparse_row_suppressed(self, counts_df_sparse):
         result = audit_transition_matrix(counts_df_sparse)
-        n_out_stress = int(counts_df_sparse.loc["Stress / Stabilization Watch"].sum())
+        n_out_stress = int(counts_df_sparse.loc["Risk-Off"].sum())
         if n_out_stress < MIN_TRANSITIONS["indicative"]:
-            assert result.loc["Stress / Stabilization Watch", "suppressed"]
+            assert result.loc["Risk-Off", "suppressed"]
 
     def test_none_returns_empty(self):
         result = audit_transition_matrix(None)
@@ -418,7 +418,7 @@ class TestGenerateWarnings:
             "n_obs": [5],
             "confidence": [CONFIDENCE_EXPLORATORY],
             "suppressed": [True],
-        }, index=["Stress / Stabilization Watch"])
+        }, index=["Risk-Off"])
         audit = {
             "walk_forward": {"warnings": []},
             "regime_stats": regime_stats,
@@ -431,7 +431,7 @@ class TestGenerateWarnings:
             "n_obs": [30],
             "confidence": [CONFIDENCE_INDICATIVE],
             "suppressed": [False],
-        }, index=["Watch Entry"])
+        }, index=["Risk-On"])
         audit = {
             "walk_forward": {"warnings": []},
             "regime_stats": regime_stats,
@@ -444,7 +444,7 @@ class TestGenerateWarnings:
             "n_outgoing": [2],
             "confidence": [CONFIDENCE_EXPLORATORY],
             "suppressed": [True],
-        }, index=["Divergence Warning"])
+        }, index=["Caution"])
         audit = {
             "walk_forward": {"warnings": []},
             "transition_matrix": trans_df,

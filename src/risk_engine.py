@@ -463,6 +463,37 @@ def generate_transition_signal(transition_regime):
 # =====================
 # Decision / Drivers
 # =====================
+
+# Composite-score thresholds for 4-regime framework.
+# Calibrated to empirical percentiles of composite_risk_score_smooth:
+#   < 20  ≈ bottom 23%  (below 25th pct)   → Risk-On
+#   20–32 ≈ 25th–75th                       → Neutral
+#   32–45 ≈ 75th–95th                       → Caution
+#   >= 45 ≈ top 5%                          → Risk-Off
+REGIME_THRESHOLDS = {"risk_on": 20.0, "neutral": 32.0, "caution": 45.0}
+
+# All valid final_decision labels (4-regime framework).
+VALID_DECISIONS = ["Risk-On", "Neutral", "Caution", "Risk-Off"]
+
+
+def classify_regime_band(composite_smooth: float, shock_flag: str = "No Shock", max_stress: float = 0.0) -> str:
+    """
+    4-regime classification directly from composite score.
+
+    Thresholds: Risk-On < 20, Neutral 20-32, Caution 32-45, Risk-Off >= 45.
+    Shock override: if active shock + max_stress >= 40 → immediately Risk-Off.
+    """
+    if shock_flag != "No Shock" and max_stress >= 40:
+        return "Risk-Off"
+    if composite_smooth >= REGIME_THRESHOLDS["caution"]:
+        return "Risk-Off"
+    if composite_smooth >= REGIME_THRESHOLDS["neutral"]:
+        return "Caution"
+    if composite_smooth >= REGIME_THRESHOLDS["risk_on"]:
+        return "Neutral"
+    return "Risk-On"
+
+
 def generate_final_decision(
     macro_score,
     credit_score,

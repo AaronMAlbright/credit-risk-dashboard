@@ -48,11 +48,10 @@ COMPOSITE_WEIGHTS_DEFAULT = {
 }
 
 BACKTESTER_WEIGHTS_DEFAULT = {
-    "buy_entry": 1.00,   # Buy Stress, Watch Entry
-    "neutral":   0.70,   # Neutral
-    "hold":      0.45,   # Hold / Do Not Chase, Avoid Chasing Risk
-    "warning":   0.25,   # Credit Warning, Divergence Warning
-    "stress":    0.15,   # Wait, Stress / Stabilization Watch
+    "risk_on":  1.00,   # Risk-On
+    "neutral":  0.70,   # Neutral
+    "caution":  0.40,   # Caution
+    "risk_off": 0.15,   # Risk-Off
 }
 
 SCORE_SCALE_COLS = [
@@ -246,16 +245,14 @@ def _apply_backtester_weights(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
 
     def _w(row):
         d = row.get("final_decision", "Neutral")
-        if d in ("Buy Stress", "Watch Entry"):
-            return weights["buy_entry"]
+        if d == "Risk-On":
+            return weights["risk_on"]
         if d == "Neutral":
             return weights["neutral"]
-        if d in ("Hold / Do Not Chase", "Avoid Chasing Risk"):
-            return weights["hold"]
-        if d in ("Credit Warning", "Divergence Warning"):
-            return weights["warning"]
-        if d in ("Wait", "Stress / Stabilization Watch"):
-            return weights["stress"]
+        if d == "Caution":
+            return weights["caution"]
+        if d == "Risk-Off":
+            return weights["risk_off"]
         return weights["neutral"]
 
     df["strategy_weight"] = df.apply(_w, axis=1)

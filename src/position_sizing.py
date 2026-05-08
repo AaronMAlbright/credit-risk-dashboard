@@ -74,20 +74,14 @@ SCORE_BREAKPOINTS: list[tuple[float, float]] = [
     (100.0, 0.05),   # theoretical ceiling
 ]
 
-# Default per-regime target weights.
-# "Buy Stress" = fully invested (regime is designed to catch stress rallies).
-# "Avoid Chasing Risk" = near zero (risk elevated, don't add exposure).
+# Default per-regime target equity weights (4-regime framework).
+# Risk-On = fully deploy; Risk-Off = maximum defensive.
 # Override to reflect your own risk preferences.
 REGIME_WEIGHTS: dict[str, float] = {
-    "Buy Stress":                   1.00,
-    "Watch Entry":                  0.80,
-    "Neutral":                      0.65,
-    "Stress / Stabilization Watch": 0.65,
-    "Hold / Do Not Chase":          0.40,
-    "Divergence Warning":           0.35,
-    "Wait":                         0.35,
-    "Credit Warning":               0.20,
-    "Avoid Chasing Risk":           0.05,
+    "Risk-On":  1.00,
+    "Neutral":  0.75,
+    "Caution":  0.40,
+    "Risk-Off": 0.10,
 }
 
 

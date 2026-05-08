@@ -23,7 +23,7 @@ def _make_df(n=300, start="2018-01-01", decisions=None, scores=None):
     np.random.seed(42)
     dates = pd.bdate_range(start=start, periods=n)
     sp500 = 4000 * (1 + np.random.normal(0.0003, 0.01, n)).cumprod()
-    decision = decisions or ["Hold / Do Not Chase"] * n
+    decision = decisions or ["Neutral"] * n
     fwd = np.random.normal(0.01, 0.05, n)
     # composite scores in realistic range (21-43); lower = less risk = more equity
     score_vals = scores if scores is not None else np.full(n, 30.0)
@@ -185,7 +185,7 @@ class TestTrendScalar:
         dates = pd.bdate_range(start="2018-01-01", periods=n)
         df = pd.DataFrame({
             "date": dates, "sp500": sp,
-            "final_decision": ["Buy Stress"] * n,
+            "final_decision": ["Risk-On"] * n,
             "composite_risk_score_smooth": np.full(n, 10.0),  # very low risk → 1.0
             "sp500_forward_30d_return": fwd,
             "strategy_forward_30d_return": fwd * 0.60,

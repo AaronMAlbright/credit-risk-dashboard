@@ -42,23 +42,19 @@ class TestGeneratePortfolioWeights:
         assert set(w) == {"equity_weight", "credit_weight", "cash_weight", "duration_bias"}
 
     def test_weights_always_sum_to_one(self):
-        decisions = [
-            "Buy Stress", "Watch Entry", "Stress / Stabilization Watch",
-            "Credit Warning", "Divergence Warning", "Avoid Chasing Risk",
-            "Hold / Do Not Chase", "Wait", "Neutral", "Unknown Decision",
-        ]
+        decisions = ["Risk-On", "Neutral", "Caution", "Risk-Off", "Unknown Decision"]
         for d in decisions:
             w = generate_portfolio_weights(self._row(d))
             total = w["equity_weight"] + w["credit_weight"] + w["cash_weight"]
             assert abs(total - 1.0) < 1e-6, f"Failed for decision: {d}"
 
-    def test_buy_stress_high_equity(self):
-        w = generate_portfolio_weights(self._row("Buy Stress"))
+    def test_risk_on_high_equity(self):
+        w = generate_portfolio_weights(self._row("Risk-On"))
         assert w["equity_weight"] > w["cash_weight"]
-        assert w["duration_bias"] == "Long Duration"
+        assert w["duration_bias"] == "Neutral"
 
-    def test_stress_watch_high_cash(self):
-        w = generate_portfolio_weights(self._row("Stress / Stabilization Watch"))
+    def test_risk_off_high_cash(self):
+        w = generate_portfolio_weights(self._row("Risk-Off"))
         assert w["cash_weight"] > w["equity_weight"]
 
     def test_unknown_decision_returns_safe_default(self):
@@ -67,7 +63,7 @@ class TestGeneratePortfolioWeights:
         assert abs(total - 1.0) < 1e-6
 
     def test_all_weights_non_negative(self):
-        for d in ["Buy Stress", "Neutral", "Credit Warning", "Wait"]:
+        for d in ["Risk-On", "Neutral", "Caution", "Risk-Off"]:
             w = generate_portfolio_weights(self._row(d))
             assert w["equity_weight"] >= 0
             assert w["credit_weight"] >= 0

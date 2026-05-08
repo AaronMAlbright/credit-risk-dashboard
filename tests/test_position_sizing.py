@@ -169,42 +169,42 @@ class TestComputeRegimeProbSizing:
         return pd.DataFrame(data, index=idx)
 
     def test_returns_series(self, base_df):
-        ph = self._prob_history(["Neutral", "Buy Stress"], [0.6, 0.4], n=len(base_df))
+        ph = self._prob_history(["Neutral", "Risk-On"], [0.6, 0.4], n=len(base_df))
         result = compute_regime_prob_sizing(base_df, prob_history=ph)
         assert isinstance(result, pd.Series)
 
     def test_length_matches_prob_history(self, base_df):
-        ph = self._prob_history(["Neutral", "Buy Stress"], [0.6, 0.4], n=len(base_df))
+        ph = self._prob_history(["Neutral", "Risk-On"], [0.6, 0.4], n=len(base_df))
         result = compute_regime_prob_sizing(base_df, prob_history=ph)
         assert len(result) == len(ph)
 
     def test_values_in_valid_range(self, base_df):
-        ph = self._prob_history(["Neutral", "Buy Stress"], [0.6, 0.4], n=len(base_df))
+        ph = self._prob_history(["Neutral", "Risk-On"], [0.6, 0.4], n=len(base_df))
         result = compute_regime_prob_sizing(base_df, prob_history=ph)
         assert (result >= _MIN_WEIGHT).all()
         assert (result <= _MAX_WEIGHT).all()
 
-    def test_avoid_regime_gives_low_weight(self, base_df):
-        ph = self._prob_history(["Avoid Chasing Risk"], [1.0], n=len(base_df))
+    def test_risk_off_gives_low_weight(self, base_df):
+        ph = self._prob_history(["Risk-Off"], [1.0], n=len(base_df))
         result = compute_regime_prob_sizing(
             base_df, regime_weights=REGIME_WEIGHTS, prob_history=ph,
         )
         assert result.mean() < 0.15
 
-    def test_buy_stress_gives_high_weight(self, base_df):
-        ph = self._prob_history(["Buy Stress"], [1.0], n=len(base_df))
+    def test_risk_on_gives_high_weight(self, base_df):
+        ph = self._prob_history(["Risk-On"], [1.0], n=len(base_df))
         result = compute_regime_prob_sizing(
             base_df, regime_weights=REGIME_WEIGHTS, prob_history=ph,
         )
         assert result.mean() > 0.9
 
     def test_weighted_average_correct(self, base_df):
-        # 50% Neutral (0.65) + 50% Buy Stress (1.00) → 0.825
-        ph = self._prob_history(["Neutral", "Buy Stress"], [0.5, 0.5], n=len(base_df))
+        # 50% Neutral (0.75) + 50% Risk-On (1.00) → 0.875
+        ph = self._prob_history(["Neutral", "Risk-On"], [0.5, 0.5], n=len(base_df))
         result = compute_regime_prob_sizing(
             base_df, regime_weights=REGIME_WEIGHTS, prob_history=ph,
         )
-        expected = 0.5 * 0.65 + 0.5 * 1.00
+        expected = 0.5 * REGIME_WEIGHTS["Neutral"] + 0.5 * REGIME_WEIGHTS["Risk-On"]
         assert abs(result.mean() - expected) < 1e-6
 
     def test_empty_prob_history_returns_empty(self, base_df):

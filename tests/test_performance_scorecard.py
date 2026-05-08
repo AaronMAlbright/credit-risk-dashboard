@@ -29,8 +29,8 @@ def _make_df(n=300, seed=11):
     dates = pd.date_range("2024-01-02", periods=n, freq="B")
     sp500 = rng.normal(0.0004, 0.010, n)
     strat = rng.normal(0.0005, 0.007, n)   # slightly better Sharpe
-    regimes = (["Neutral"] * 100 + ["Avoid Chasing Risk"] * 100
-               + ["Buy Stress"] * 50 + ["Hold / Do Not Chase"] * 50)
+    regimes = (["Neutral"] * 100 + ["Caution"] * 100
+               + ["Risk-On"] * 50 + ["Risk-Off"] * 50)
     return pd.DataFrame({
         "date":                   dates,
         "sp500_daily_return":     sp500,
@@ -77,7 +77,7 @@ def declining_df():
         "date":                   dates,
         "sp500_daily_return":     np.full(100, -0.005),
         "strategy_daily_return":  np.full(100, -0.003),
-        "final_decision":         ["Avoid Chasing Risk"] * 100,
+        "final_decision":         ["Caution"] * 100,
     })
 
 

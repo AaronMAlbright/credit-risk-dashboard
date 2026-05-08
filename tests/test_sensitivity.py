@@ -219,10 +219,10 @@ class TestSweepBacktesterWeights:
         result = sweep_backtester_weights(sens_df, n_steps=3)
         assert np.isfinite(result["sharpe"].dropna()).all()
 
-    def test_higher_buy_entry_weight_spans_wider_return_range(self, sens_df):
+    def test_higher_risk_on_weight_spans_wider_return_range(self, sens_df):
         result = sweep_backtester_weights(sens_df, n_steps=7)
-        buy_returns = result[result["param"] == "buy_entry"]["total_return"]
-        assert buy_returns.max() > buy_returns.min()
+        risk_on_returns = result[result["param"] == "risk_on"]["total_return"]
+        assert risk_on_returns.max() > risk_on_returns.min()
 
 
 # ---------------------------------------------------------------------------

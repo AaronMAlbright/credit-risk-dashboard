@@ -22,7 +22,7 @@ def _make_df(n=50, **overrides):
         "complacency_score_smooth":          [20.0] * n,
         "mean_reversion_score_smooth":       [15.0] * n,
         "treasury_stress_score_smooth":      [10.0] * n,
-        "final_decision":                    ["Hold / Do Not Chase"] * n,
+        "final_decision":                    ["Neutral"] * n,
         "equity_weight":                     [0.40] * n,
         "credit_weight":                     [0.25] * n,
         "cash_weight":                       [0.35] * n,
