@@ -89,6 +89,7 @@ from src.backtester import (
     build_strategy_backtest,
     compute_backtest_summary,
 )
+from src.credit_backtest import run_credit_backtest
 
 from src.signal_validation import (
     validate_signals_vs_returns,
@@ -242,6 +243,51 @@ if "stlfsi" in df.columns:
 if "move_index" in df.columns:
     df["move_zscore"] = rolling_zscore(df["move_index"], window=504)
 
+# =====================
+# 4c. Derived Features — Credit Spread Complex (new)
+# =====================
+
+# IG OAS momentum
+if "ig_spread" in df.columns:
+    df["ig_change_30d"] = df["ig_spread"].diff(30)
+    df["ig_change_90d"] = df["ig_spread"].diff(90)
+    df["ig_change_5d"]  = df["ig_spread"].diff(5)
+
+# BBB OAS momentum (cliff risk: BBB is the IG/HY boundary)
+if "bbb_spread" in df.columns:
+    df["bbb_change_30d"] = df["bbb_spread"].diff(30)
+
+# BBB excess spread over overall IG (measures tiering / stress concentration at the lower IG boundary)
+if "bbb_spread" in df.columns and "ig_spread" in df.columns:
+    df["bbb_ig_spread"] = df["bbb_spread"] - df["ig_spread"]
+
+# HY / IG ratio — stress amplification signal.
+# Ratio > 3.5x = HY stressed relative to IG (idiosyncratic); rising ratio = spread of credit quality concerns
+if "ig_spread" in df.columns:
+    df["hy_ig_ratio"] = df["hy_spread"] / df["ig_spread"].replace(0, float("nan"))
+    df["hy_ig_ratio_change_30d"] = df["hy_ig_ratio"].diff(30)
+
+# SLOOS (Senior Loan Officer Survey) — bank credit supply tightening.
+# Positive = net % of banks tightening standards; leads default rates by 2-4 quarters.
+if "sloos_ci" in df.columns:
+    df["sloos_change_90d"] = df["sloos_ci"].diff(90)
+
+# Daily total return approximation for HY and IG.
+# Formula: (all-in yield / 252) - modified_duration × d(OAS) / 100
+# HY modified duration ≈ 4.0 yrs; IG modified duration ≈ 7.0 yrs
+_HY_DUR = 4.0
+_IG_DUR = 7.0
+if "hy_yield" in df.columns:
+    df["hy_total_return_daily"] = (
+        df["hy_yield"].shift(1) / 100 / 252
+        - _HY_DUR * df["hy_spread"].diff(1) / 100
+    )
+if "ig_yield" in df.columns and "ig_spread" in df.columns:
+    df["ig_total_return_daily"] = (
+        df["ig_yield"].shift(1) / 100 / 252
+        - _IG_DUR * df["ig_spread"].diff(1) / 100
+    )
+
 # Drop rows missing any of the core SCORED columns needed by risk engine
 # (90d diffs require at least 90 rows; 252d rolling requires 126 with min_periods)
 _scored_required = [
@@ -347,6 +393,9 @@ df["credit_market_risk_score"] = df.apply(
         row["vix_change_30d"],
         row["credit_equity_divergence"],
         row["vol_credit_mismatch"],
+        ig_change_30d=row.get("ig_change_30d"),
+        bbb_change_30d=row.get("bbb_change_30d"),
+        sloos_ci=row.get("sloos_ci"),
     ),
     axis=1,
 )
@@ -591,10 +640,13 @@ df["grouped_regime"] = df["final_decision"]
 # 10. Portfolio / Attribution / Analogs
 # =====================
 portfolio_weights = df.apply(generate_portfolio_weights, axis=1)
-df["equity_weight"] = portfolio_weights.apply(lambda x: x["equity_weight"])
-df["credit_weight"] = portfolio_weights.apply(lambda x: x["credit_weight"])
-df["cash_weight"] = portfolio_weights.apply(lambda x: x["cash_weight"])
-df["duration_bias"] = portfolio_weights.apply(lambda x: x["duration_bias"])
+df["equity_weight"]    = portfolio_weights.apply(lambda x: x["equity_weight"])
+df["credit_weight"]    = portfolio_weights.apply(lambda x: x["credit_weight"])
+df["cash_weight"]      = portfolio_weights.apply(lambda x: x["cash_weight"])
+df["duration_bias"]    = portfolio_weights.apply(lambda x: x["duration_bias"])
+df["hy_weight"]        = portfolio_weights.apply(lambda x: x.get("hy_weight", 0.0))
+df["ig_weight"]        = portfolio_weights.apply(lambda x: x.get("ig_weight", 0.0))
+df["duration_target"]  = portfolio_weights.apply(lambda x: x.get("duration_target", 6.0))
 
 health_check = run_model_health_check(df)
 
@@ -620,6 +672,8 @@ df["sp500_future_drawdown_60d"] = df["sp500_future_min_60d"] / df["sp500"] - 1
 df["strategy_forward_30d_return"] = df.apply(assign_strategy_return, axis=1)
 df = build_strategy_backtest(df)
 backtest_summary = compute_backtest_summary(df)
+
+credit_backtest_results = run_credit_backtest(df)
 
 # Signal validation: IS/OOS correlations + stress episode stats
 signal_validation_report = validate_signals_vs_returns(df, oos_cutoff="2022-01-01")

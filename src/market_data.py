@@ -61,6 +61,13 @@ _FFILL_LIMITS: dict[str, int] = {
     # Monthly series — allow up to 35 calendar days (~1 month + buffer)
     "UNRATE": 35, "CPIAUCSL": 35, "CPILFESL": 35, "PCEPILFE": 35,
     "USREC": 35,
+    # Credit spread complex — daily ICE BofA series
+    "BAMLC0A0CM":      5,   # IG OAS
+    "BAMLC0A4CBBB":    5,   # BBB OAS
+    "BAMLH0A0HYM2EY": 5,  # HY effective yield (all-in carry)
+    "BAMLC0A0CMEY":    5,   # IG effective yield
+    # Quarterly SLOOS survey — ffill up to one quarter + buffer
+    "DRTSCILM": 95,
 }
 
 # Calibration ratio: median(BAMLH0A0HYM2 / BAA10Y) over 748-row overlap (2023-05-08 onward).
@@ -95,6 +102,12 @@ _COL_NAMES: dict[str, str] = {
     "WALCL":          "fed_balance_sheet",# weekly, millions
     "CPIAUCSL":       "cpi",              # monthly
     "USREC":          "nber_recession",   # monthly, 0/1
+    # Credit spread complex
+    "BAMLC0A0CM":      "ig_spread",        # ICE BofA IG OAS (daily)
+    "BAMLC0A4CBBB":    "bbb_spread",       # ICE BofA BBB OAS (daily)
+    "BAMLH0A0HYM2EY": "hy_yield",        # HY all-in effective yield
+    "BAMLC0A0CMEY":    "ig_yield",         # IG all-in effective yield
+    "DRTSCILM":        "sloos_ci",         # SLOOS — % banks tightening C&I standards
 }
 
 
@@ -396,6 +409,9 @@ def load_all_series(
         "UNRATE", "NFCI", "ANFCI", "STLFSI4", "T10YIE",
         "DCOILWTICO", "DEXUSEU", "DEXJPUS", "ICSA",
         "DPSACBW027SBOG", "TOTLL", "WALCL", "CPIAUCSL", "USREC",
+        # Credit spread complex + SLOOS
+        "BAMLC0A0CM", "BAMLC0A4CBBB", "BAMLH0A0HYM2EY", "BAMLC0A0CMEY",
+        "DRTSCILM",
     ]
 
     for sid in fred_ids_required + fred_ids_optional:

@@ -1221,7 +1221,93 @@ with tab2:
                        color="#6b7280", title=None)))
         st.plotly_chart(_fig_mv, use_container_width=True)
 
-    # ── 10. Strategy vs SP500 Equity Curve ───────────────────────────────────
+    # ── 10. Credit Spread Complex (IG / BBB / HY) ────────────────────────────
+    _has_ig  = "ig_spread"  in _df2.columns and _df2["ig_spread"].notna().sum() > 50
+    _has_bbb = "bbb_spread" in _df2.columns and _df2["bbb_spread"].notna().sum() > 50
+    if _has_ig or _has_bbb:
+        st.subheader("Credit Spread Complex — IG / BBB / HY")
+        st.caption(
+            "IG OAS = investment-grade universe; BBB OAS = bottom rung of IG (cliff risk); "
+            "HY OAS = high-yield. BBB diverging from IG signals fallen-angel pressure."
+        )
+        _ca, _cb = st.columns(2)
+
+        with _ca:
+            _fig_cs = _go.Figure()
+            _fig_cs.add_trace(_go.Scatter(
+                x=_df2["date"], y=_df2["hy_spread"],
+                name="HY OAS", line=dict(color="#e74c3c", width=2),
+            ))
+            if _has_bbb:
+                _fig_cs.add_trace(_go.Scatter(
+                    x=_df2["date"], y=_df2["bbb_spread"],
+                    name="BBB OAS", line=dict(color="#e67e22", width=1.8, dash="dash"),
+                ))
+            if _has_ig:
+                _fig_cs.add_trace(_go.Scatter(
+                    x=_df2["date"], y=_df2["ig_spread"],
+                    name="IG OAS", line=dict(color="#27ae60", width=1.8, dash="dot"),
+                ))
+            _fig_cs.update_layout(**_dlayout(height=280,
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="OAS %")))
+            st.plotly_chart(_fig_cs, use_container_width=True)
+
+        with _cb:
+            if _has_ig:
+                _fig_ratio = _make_subplots(specs=[[{"secondary_y": True}]])
+                _hy_ig = (_df2["hy_spread"] / _df2["ig_spread"].replace(0, float("nan")))
+                _fig_ratio.add_trace(_go.Scatter(
+                    x=_df2["date"], y=_hy_ig,
+                    name="HY/IG Ratio", line=dict(color="#4f8ef7", width=2),
+                ), secondary_y=False)
+                if _has_bbb:
+                    _fig_ratio.add_trace(_go.Scatter(
+                        x=_df2["date"], y=_df2["bbb_spread"] - _df2["ig_spread"],
+                        name="BBB excess vs IG", line=dict(color="#e67e22", width=1.5, dash="dash"),
+                    ), secondary_y=True)
+                _fig_ratio.update_layout(**_dlayout(height=280))
+                _fig_ratio.update_yaxes(title_text="HY/IG Ratio", showgrid=True,
+                                        gridcolor="rgba(255,255,255,0.06)",
+                                        color="#6b7280", secondary_y=False)
+                _fig_ratio.update_yaxes(title_text="BBB excess (pp)", showgrid=False,
+                                        color="#e67e22", secondary_y=True)
+                _fig_ratio.update_xaxes(showgrid=False, color="#6b7280")
+                st.caption("HY/IG ratio rising = stress is idiosyncratic to lower-quality credit. "
+                           "BBB excess widening = fallen-angel risk rising.")
+                st.plotly_chart(_fig_ratio, use_container_width=True)
+            else:
+                st.info("IG OAS data unavailable — run pipeline to fetch BAMLC0A0CM.")
+
+    # ── 11. SLOOS — Bank Lending Standards ───────────────────────────────────
+    if "sloos_ci" in _df2.columns and _df2["sloos_ci"].notna().sum() > 10:
+        st.subheader("SLOOS — Bank C&I Lending Standards")
+        st.caption(
+            "Net % of banks tightening credit standards for C&I loans. "
+            "Positive = tightening (credit supply contracting). Leads default rates by 2–4 quarters."
+        )
+        _sloos = _df2["sloos_ci"].dropna()
+        _fig_sl = _go.Figure()
+        _fig_sl.add_hrect(y0=20, y1=max(100, float(_sloos.max()) + 5),
+                          fillcolor="rgba(231,76,60,0.07)", line_width=0,
+                          annotation_text="Significant Tightening",
+                          annotation_position="top left",
+                          annotation_font=dict(color="rgba(231,76,60,0.6)", size=9))
+        _fig_sl.add_hline(y=0, line_color="rgba(255,255,255,0.2)",
+                          line_width=1, line_dash="dot")
+        _fig_sl.add_trace(_go.Bar(
+            x=_df2["date"], y=_df2["sloos_ci"].fillna(0),
+            marker_color=[
+                "#e74c3c" if v > 10 else "#27ae60" if v < -5 else "#6b7280"
+                for v in _df2["sloos_ci"].fillna(0)
+            ],
+            name="SLOOS C&I",
+            marker_line_width=0,
+        ))
+        _fig_sl.update_layout(**_dlayout(height=240, showlegend=False))
+        st.plotly_chart(_fig_sl, use_container_width=True)
+
+    # ── 12. Strategy vs SP500 Equity Curve ───────────────────────────────────
     if "strategy_equity_curve" in _df2.columns:
         st.subheader("Strategy vs SP500 — Cumulative Return")
         _fig8 = _go.Figure()
@@ -1250,6 +1336,22 @@ with tab3:
     col2.metric("Credit Weight",  f"{_pw['credit_weight']:.0%}")
     col3.metric("Cash Weight",    f"{_pw['cash_weight']:.0%}")
     col4.metric("Duration Bias",  _pw["duration_bias"])
+
+    # Credit allocation breakdown
+    _hy_w = _pw.get("hy_weight", 0.0)
+    _ig_w = _pw.get("ig_weight", 0.0)
+    _dur  = _pw.get("duration_target", 6.0)
+    if _hy_w + _ig_w > 0:
+        st.markdown("**Credit Allocation Detail**")
+        _dc1, _dc2, _dc3, _dc4 = st.columns(4)
+        _dc1.metric("HY Weight",       f"{_hy_w:.1%}",
+                    delta=f"{_hy_w / (_hy_w + _ig_w):.0%} of credit" if (_hy_w + _ig_w) > 0 else None)
+        _dc2.metric("IG Weight",       f"{_ig_w:.1%}",
+                    delta=f"{_ig_w / (_hy_w + _ig_w):.0%} of credit" if (_hy_w + _ig_w) > 0 else None)
+        _dc3.metric("Duration Target", f"{_dur:.1f} yrs")
+        _dc4.metric("HY/IG Split",
+                    f"{_hy_w / (_hy_w + _ig_w):.0%} / {_ig_w / (_hy_w + _ig_w):.0%}"
+                    if (_hy_w + _ig_w) > 0 else "N/A")
 
     st.subheader("Decision Logic")
     st.write(f"**Decision:** {decision}")
@@ -2102,6 +2204,117 @@ with tab4:
             "vol_target = target_vol/realised_vol · momentum = score×trend_scalar · "
             "raw = mean of all four · strategy = raw clipped to [floor, cap]"
         )
+
+    # ── Credit Portfolio Backtest ─────────────────────────────────────────────
+    st.subheader("3. Credit Portfolio Backtest")
+    st.caption(
+        "Performance of the regime-based HY/IG credit allocation. "
+        "Total return = carry (all-in yield / 252) + duration-adjusted price return. "
+        "HY duration ≈ 4y · IG duration ≈ 7y · 10bps one-way transaction cost."
+    )
+
+    try:
+        from src.credit_backtest import run_credit_backtest as _run_cb
+        _cb_results = _run_cb(_bt_live)
+        _cb_returns  = _cb_results.get("returns_df", pd.DataFrame())
+        _cb_regimes  = _cb_results.get("regime_stats", pd.DataFrame())
+        _cb_buckets  = _cb_results.get("spread_buckets", pd.DataFrame())
+
+        if not _cb_returns.empty and _cb_results.get("has_hy_data"):
+            _cr1, _cr2 = st.columns(2)
+
+            with _cr1:
+                import plotly.graph_objects as _cgo
+                _cb_returns["date"] = pd.to_datetime(_cb_returns["date"])
+                _fig_cb = _cgo.Figure()
+                _fig_cb.add_trace(_cgo.Scatter(
+                    x=_cb_returns["date"],
+                    y=(_cb_returns["cum_hy"] - 1) * 100,
+                    name="HY", line=dict(color="#e74c3c", width=1.8),
+                ))
+                if _cb_results.get("has_ig_data"):
+                    _fig_cb.add_trace(_cgo.Scatter(
+                        x=_cb_returns["date"],
+                        y=(_cb_returns["cum_ig"] - 1) * 100,
+                        name="IG", line=dict(color="#27ae60", width=1.8),
+                    ))
+                _fig_cb.add_trace(_cgo.Scatter(
+                    x=_cb_returns["date"],
+                    y=(_cb_returns["cum_credit"] - 1) * 100,
+                    name="Credit Portfolio", line=dict(color="#4f8ef7", width=2.5),
+                    fill="tozeroy", fillcolor="rgba(79,142,247,0.07)",
+                ))
+                _fig_cb.add_trace(_cgo.Scatter(
+                    x=_cb_returns["date"],
+                    y=(_cb_returns["cum_net_credit"] - 1) * 100,
+                    name="Net (after costs)", line=dict(color="#9b59b6", width=1.5, dash="dash"),
+                ))
+                _fig_cb.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                _fig_cb.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=40, b=8),
+                    height=300,
+                    legend=dict(orientation="h", y=1.08, x=0, bgcolor="rgba(0,0,0,0)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Cumulative Return %"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                )
+                st.plotly_chart(_fig_cb, use_container_width=True)
+
+            with _cr2:
+                if _cb_results.get("ann_turnover") is not None:
+                    st.metric("Annualised Credit Turnover",
+                              f"{_cb_results['ann_turnover']:.1f}x/yr")
+                if not _cb_buckets.empty:
+                    st.markdown("**HY Spread Level → 30d Forward Change**")
+                    st.caption(
+                        "At what spread level does HY become attractive? "
+                        "Hit Rate = % of time spreads tightened over next 30 days."
+                    )
+                    _bkt_disp = _cb_buckets.copy()
+                    _bkt_disp.columns = [c.replace("_", " ").title() for c in _bkt_disp.columns]
+                    st.dataframe(
+                        _bkt_disp.style.format({
+                            "Avg Fwd 30D": "{:+.3f}",
+                            "Hit Rate Tightening": "{:.0%}",
+                            "Pct Risk Off": "{:.0f}%",
+                        }, na_rep="—"),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+        if not _cb_regimes.empty:
+            st.markdown("**Regime-Conditional Credit Performance**")
+            st.caption(
+                "Per-regime: avg spread levels, 30d forward HY OAS change, "
+                "tightening hit rate, and annualised credit portfolio Sharpe."
+            )
+            _reg_disp = _cb_regimes.copy()
+            _fmt_map  = {}
+            for _c in ["avg_hy_spread", "avg_ig_spread", "avg_hy_fwd_30d"]:
+                if _c in _reg_disp.columns:
+                    _fmt_map[_c] = "{:.2f}"
+            for _c in ["hit_rate_tightening", "avg_hy_daily_return", "avg_ig_daily_return"]:
+                if _c in _reg_disp.columns:
+                    _fmt_map[_c] = "{:.1%}"
+            if "credit_sharpe" in _reg_disp.columns:
+                _fmt_map["credit_sharpe"] = "{:.2f}"
+            _reg_disp.columns = [c.replace("_", " ").title() for c in _reg_disp.columns]
+            st.dataframe(
+                _reg_disp.style.format({
+                    k.replace("_", " ").title(): v for k, v in _fmt_map.items()
+                }, na_rep="—"),
+                use_container_width=True,
+                hide_index=True,
+            )
+        elif not _cb_results.get("has_hy_data"):
+            st.info(
+                "HY total return series not available. "
+                "Run the data pipeline to fetch HY effective yield (BAMLHYH0A0HYM2EY)."
+            )
+    except Exception as _cb_err:
+        st.warning(f"Credit backtest unavailable: {_cb_err}")
 
 with tab7:
     st.header("Model Run History")

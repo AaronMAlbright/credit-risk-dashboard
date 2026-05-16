@@ -34,14 +34,19 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 _FRED_SERIES: dict[str, str] = {
-    "DGS10":         "10Y Treasury Yield",
-    "DGS2":          "2Y Treasury Yield",
-    "UNRATE":        "Unemployment Rate",
-    "NFCI":          "NFCI (Liquidity)",
-    "BAMLH0A0HYM2":  "HY Credit Spread",
-    "SP500":         "SP500",
-    "VIXCLS":        "VIX",
-    "T10YIE":        "10Y Breakeven",
+    "DGS10":              "10Y Treasury Yield",
+    "DGS2":               "2Y Treasury Yield",
+    "UNRATE":             "Unemployment Rate",
+    "NFCI":               "NFCI (Liquidity)",
+    "BAMLH0A0HYM2":       "HY Credit Spread",
+    "SP500":              "SP500",
+    "VIXCLS":             "VIX",
+    "T10YIE":             "10Y Breakeven",
+    "BAMLC0A0CM":         "IG OAS",
+    "BAMLC0A4CBBB":       "BBB OAS",
+    "BAMLH0A0HYM2EY":   "HY Effective Yield",
+    "BAMLC0A0CMEY":       "IG Effective Yield",
+    "DRTSCILM":           "SLOOS (C&I Tightening)",
 }
 
 _DEFAULT_TIMEOUT  = 360     # seconds — pipeline can be slow on first run

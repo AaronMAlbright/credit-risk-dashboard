@@ -87,7 +87,10 @@ def compute_credit_market_risk_score(
     vix,
     vix_change_30d,
     credit_equity_divergence,
-    vol_credit_mismatch
+    vol_credit_mismatch,
+    ig_change_30d=None,
+    bbb_change_30d=None,
+    sloos_ci=None,
 ):
     score = 0
 
@@ -138,6 +141,31 @@ def compute_credit_market_risk_score(
         score += 20
     elif vol_credit_mismatch == "Recovery Confirmation":
         score -= 10
+
+    # IG OAS widening — cross-market confirmation that stress is systemic, not just HY
+    if pd.notna(ig_change_30d):
+        if ig_change_30d > 0.30:
+            score += 20
+        elif ig_change_30d > 0.15:
+            score += 10
+        elif ig_change_30d < -0.10:
+            score -= 5
+
+    # BBB OAS widening — cliff risk signal (BBB = bottom rung of IG; wide BBB → fallen angel risk)
+    if pd.notna(bbb_change_30d):
+        if bbb_change_30d > 0.40:
+            score += 20
+        elif bbb_change_30d > 0.20:
+            score += 10
+
+    # SLOOS tightening — leading indicator: banks tighten credit supply 2-4 quarters before defaults spike
+    if pd.notna(sloos_ci):
+        if sloos_ci > 30:
+            score += 20
+        elif sloos_ci > 10:
+            score += 10
+        elif sloos_ci < -10:
+            score -= 5
 
     return round(max(0, min(score, 100)), 1)
 
