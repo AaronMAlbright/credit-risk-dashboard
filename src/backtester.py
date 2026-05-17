@@ -153,6 +153,46 @@ def build_strategy_backtest(
     return df
 
 
+def compute_benchmark_returns(
+    df: "pd.DataFrame",
+    bond_annual_return: float = 0.03,
+    bond_vol: float = 0.04,
+) -> "pd.DataFrame":
+    """
+    Add 60/40 and simplified risk-parity benchmark columns to the backtest DataFrame.
+
+    Bond proxy is a constant annual return (approximates UST aggregate index).
+    Risk parity uses 21-day rolling realised SP500 vol vs a fixed bond vol estimate,
+    lagged 1 day to avoid look-ahead.
+
+    Adds columns:
+      sixty_forty_daily, sixty_forty_curve, sixty_forty_drawdown
+      risk_parity_daily, risk_parity_curve, risk_parity_drawdown
+    """
+    d = df.copy()
+    sp_ret = d["sp500"].pct_change().fillna(0)
+    bond_ret = pd.Series(bond_annual_return / 252, index=d.index)
+
+    # 60/40 — static, no rebalancing cost
+    d["sixty_forty_daily"]    = 0.60 * sp_ret + 0.40 * bond_ret
+    d["sixty_forty_curve"]    = (1 + d["sixty_forty_daily"]).cumprod()
+    d["sixty_forty_drawdown"] = d["sixty_forty_curve"] / d["sixty_forty_curve"].cummax() - 1
+
+    # Risk parity — inverse-vol weights, 21-day rolling, lagged 1 day
+    sp_vol_raw = sp_ret.rolling(21, min_periods=5).std() * np.sqrt(252)
+    sp_vol     = sp_vol_raw.replace(0, np.nan).fillna(0.15).clip(lower=0.05)
+    bond_vol_s = pd.Series(bond_vol, index=d.index)
+    total_inv  = (1 / sp_vol) + (1 / bond_vol_s)
+    sp_rp_w    = ((1 / sp_vol) / total_inv).shift(1).fillna(0.5)
+    bond_rp_w  = ((1 / bond_vol_s) / total_inv).shift(1).fillna(0.5)
+
+    d["risk_parity_daily"]    = sp_rp_w * sp_ret + bond_rp_w * bond_ret
+    d["risk_parity_curve"]    = (1 + d["risk_parity_daily"]).cumprod()
+    d["risk_parity_drawdown"] = d["risk_parity_curve"] / d["risk_parity_curve"].cummax() - 1
+
+    return d
+
+
 def compute_backtest_summary(df, tc_bps=10):
     """
     Compute backtest summary stats with optional transaction costs.

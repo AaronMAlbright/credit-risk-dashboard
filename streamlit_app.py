@@ -12,7 +12,7 @@ for _k, _v in st.secrets.items():
 from src.report_generator import generate_html_report, generate_excel_report
 from src.data_pipeline import check_api_key, run_pipeline, fetch_source_dates
 from src.bootstrap import run_bootstrap_analysis
-from src.regime_attribution import COMPOSITE_WEIGHTS, DISPLAY_NAMES, run_regime_attribution
+from src.regime_attribution import COMPOSITE_WEIGHTS, DISPLAY_NAMES, SCORE_COLS, run_regime_attribution
 from src.regime_charts import (
     build_decision_timeline,
     build_score_history,
@@ -987,6 +987,70 @@ with tab1:
         )
         st.caption("6 sheets: Summary, Scores, Sizing, Scenarios, Attribution, Monte Carlo.")
 
+    # ── Factor attribution delta ──────────────────────────────────────────────
+    st.subheader("What Moved the Score Today")
+    st.caption("Day-over-day change in each component's weighted contribution to the composite risk score.")
+    if len(df) >= 2:
+        _delta_today = df.iloc[-1]
+        _delta_prev  = df.iloc[-2]
+        _delta_rows  = []
+        for _dk, _dw in COMPOSITE_WEIGHTS.items():
+            _dcol = SCORE_COLS.get(_dk)
+            if _dcol and _dcol in df.columns:
+                _d_now  = float(_delta_today.get(_dcol, float("nan")))
+                _d_prev = float(_delta_prev.get(_dcol, float("nan")))
+                if not (pd.isna(_d_now) or pd.isna(_d_prev)):
+                    _d_raw_delta = _d_now - _d_prev
+                    _d_contrib_delta = _d_raw_delta * _dw
+                    _delta_rows.append({
+                        "Signal":        DISPLAY_NAMES.get(_dk, _dk),
+                        "Weight":        _dw,
+                        "Yesterday":     round(_d_prev, 1),
+                        "Today":         round(_d_now, 1),
+                        "Raw Δ":         round(_d_raw_delta, 1),
+                        "Weighted Δ":    round(_d_contrib_delta, 2),
+                    })
+        if _delta_rows:
+            import plotly.graph_objects as _dgo
+            _delta_df = pd.DataFrame(_delta_rows).sort_values("Weighted Δ", key=abs, ascending=False)
+            _delta_colors = ["#e74c3c" if v > 0 else "#27ae60" for v in _delta_df["Weighted Δ"]]
+            _delta_fig = _dgo.Figure(_dgo.Bar(
+                x=_delta_df["Signal"],
+                y=_delta_df["Weighted Δ"],
+                marker_color=_delta_colors,
+                text=[f"{v:+.2f}" for v in _delta_df["Weighted Δ"]],
+                textposition="outside",
+                hovertemplate="%{x}<br>Weighted Δ: %{y:+.2f}<br>Raw Δ: %{customdata:+.1f}<extra></extra>",
+                customdata=_delta_df["Raw Δ"].values,
+            ))
+            _delta_fig.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+            _delta_fig.update_layout(
+                height=280,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                margin=dict(l=8, r=8, t=8, b=80),
+                xaxis=dict(showgrid=False, color="#6b7280", tickangle=-25),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Weighted Contribution Δ"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_delta_fig, use_container_width=True)
+            _total_delta = _delta_df["Weighted Δ"].sum()
+            _composite_now  = float(_delta_today.get("composite_risk_score_smooth", float("nan")))
+            _composite_prev = float(_delta_prev.get("composite_risk_score_smooth", float("nan")))
+            _c1d, _c2d, _c3d = st.columns(3)
+            _c1d.metric("Composite Score (Yesterday)", f"{_composite_prev:.1f}" if not pd.isna(_composite_prev) else "—")
+            _c2d.metric("Composite Score (Today)",     f"{_composite_now:.1f}" if not pd.isna(_composite_now) else "—",
+                        delta=f"{_composite_now - _composite_prev:+.1f}" if not (pd.isna(_composite_now) or pd.isna(_composite_prev)) else None)
+            _c3d.metric("Sum of Weighted Δ", f"{_total_delta:+.2f}",
+                        help="Should approximately match the composite score change (rounding/smoothing may cause small diff).")
+            with st.expander("Full delta table"):
+                st.dataframe(
+                    _delta_df.style.format({"Weight": "{:.0%}", "Yesterday": "{:.1f}", "Today": "{:.1f}",
+                                           "Raw Δ": "{:+.1f}", "Weighted Δ": "{:+.2f}"}),
+                    use_container_width=True,
+                )
+
 with tab2:
     import plotly.graph_objects as _go
     from plotly.subplots import make_subplots as _make_subplots
@@ -1948,7 +2012,7 @@ with _analytics_sub1:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with tab4:
-    from src.backtester import OOS_CUTOFF, build_strategy_backtest, compute_oos_split
+    from src.backtester import OOS_CUTOFF, build_strategy_backtest, compute_oos_split, compute_benchmark_returns
     import plotly.graph_objects as _bt_go
 
     st.header("Backtest")
@@ -1999,6 +2063,7 @@ with tab4:
             target_vol     = _cfg_target_vol / 100,
             ma_window      = _cfg_momentum_lookback,
         )
+        _bt_live = compute_benchmark_returns(_bt_live)
         _split = compute_oos_split(_bt_live, cutoff=OOS_CUTOFF, tc_bps=_bt_tc)
         _is  = _split["in_sample"]
         _oos = _split["out_of_sample"]
@@ -2222,6 +2287,32 @@ with tab4:
         )
 
         # ── IS vs OOS summary table ───────────────────────────────────────────
+        # ── Benchmark stats (60/40 and risk parity) ──────────────────────────
+        def _bench_stats(col_daily, col_curve, mask):
+            sub = _bt_live[mask].copy()
+            if sub.empty or col_daily not in sub.columns:
+                return {}
+            ret_s = sub[col_daily].fillna(0)
+            eq    = (1 + ret_s).cumprod()
+            ann_ret = (eq.iloc[-1] ** (252 / max(len(eq), 1))) - 1
+            ann_vol = ret_s.std() * np.sqrt(252)
+            sharpe  = (ret_s.mean() / ret_s.std() * np.sqrt(252)) if ret_s.std() > 0 else float("nan")
+            max_dd  = (eq / eq.cummax() - 1).min()
+            return {"ret": ann_ret, "sharpe": sharpe, "dd": max_dd, "vol": ann_vol}
+
+        _cutoff_ts2 = pd.Timestamp(OOS_CUTOFF)
+        _bt_dates   = pd.to_datetime(_bt_live["date"])
+        _is_m  = (_bt_dates < _cutoff_ts2).values
+        _oos_m = (_bt_dates >= _cutoff_ts2).values
+        _all_m = pd.Series([True] * len(_bt_live)).values
+
+        _bm_6040_is  = _bench_stats("sixty_forty_daily",  "sixty_forty_curve",  _is_m)
+        _bm_6040_oos = _bench_stats("sixty_forty_daily",  "sixty_forty_curve",  _oos_m)
+        _bm_6040_fp  = _bench_stats("sixty_forty_daily",  "sixty_forty_curve",  _all_m)
+        _bm_rp_is    = _bench_stats("risk_parity_daily",  "risk_parity_curve",  _is_m)
+        _bm_rp_oos   = _bench_stats("risk_parity_daily",  "risk_parity_curve",  _oos_m)
+        _bm_rp_fp    = _bench_stats("risk_parity_daily",  "risk_parity_curve",  _all_m)
+
         _bt_metrics = {
             "Period":          [f"In-Sample ({_split['is_start']} → {_split['is_end']})",
                                 f"Out-of-Sample ({_split['oos_start']} → {_split['oos_end']})",
@@ -2234,15 +2325,27 @@ with tab4:
             "SP500 Return":    [_pct(_is.get("sp500_total_return")),
                                 _pct(_oos.get("sp500_total_return")),
                                 _pct(_fp.get("sp500_total_return"))],
+            "60/40 Return":    [_pct(_bm_6040_is.get("ret")),
+                                _pct(_bm_6040_oos.get("ret")),
+                                _pct(_bm_6040_fp.get("ret"))],
+            "Risk Parity Ret": [_pct(_bm_rp_is.get("ret")),
+                                _pct(_bm_rp_oos.get("ret")),
+                                _pct(_bm_rp_fp.get("ret"))],
             "Strategy Sharpe": [_f2(_is.get("strategy_sharpe")),
                                 _f2(_oos.get("strategy_sharpe")),
                                 _f2(_fp.get("strategy_sharpe"))],
             "SP500 Sharpe":    [_f2(_is.get("sp500_sharpe")),
                                 _f2(_oos.get("sp500_sharpe")),
                                 _f2(_fp.get("sp500_sharpe"))],
+            "60/40 Sharpe":    [_f2(_bm_6040_is.get("sharpe")),
+                                _f2(_bm_6040_oos.get("sharpe")),
+                                _f2(_bm_6040_fp.get("sharpe"))],
             "Max Drawdown":    [_pct(_is.get("strategy_max_drawdown")),
                                 _pct(_oos.get("strategy_max_drawdown")),
                                 _pct(_fp.get("strategy_max_drawdown"))],
+            "60/40 Max DD":    [_pct(_bm_6040_is.get("dd")),
+                                _pct(_bm_6040_oos.get("dd")),
+                                _pct(_bm_6040_fp.get("dd"))],
             "Volatility":      [_pct(_is.get("strategy_volatility")),
                                 _pct(_oos.get("strategy_volatility")),
                                 _pct(_fp.get("strategy_volatility"))],
@@ -2331,6 +2434,18 @@ with tab4:
             y=(_bt_df2["sp500_equity_curve"] - 1) * 100,
             name="SP500", line=dict(color="#6b7280", width=1.8, dash="dot"),
         ))
+        if "sixty_forty_curve" in _bt_live.columns:
+            _fig_bt.add_trace(_bt_go.Scatter(
+                x=_bt_df2["date"],
+                y=(_bt_live["sixty_forty_curve"] - 1) * 100,
+                name="60/40", line=dict(color="#f39c12", width=1.5, dash="dash"),
+            ))
+        if "risk_parity_curve" in _bt_live.columns:
+            _fig_bt.add_trace(_bt_go.Scatter(
+                x=_bt_df2["date"],
+                y=(_bt_live["risk_parity_curve"] - 1) * 100,
+                name="Risk Parity", line=dict(color="#9b59b6", width=1.5, dash="dashdot"),
+            ))
         _fig_bt.add_hline(y=0, line_color="rgba(255,255,255,0.12)", line_width=1)
         _fig_bt.update_layout(
             height=320,
