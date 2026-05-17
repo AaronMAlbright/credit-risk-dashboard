@@ -101,6 +101,13 @@ from src.merton import run_merton_analysis
 from src.efficient_frontier import compute_efficient_frontier
 from src.kelly import run_kelly_analysis
 from src.granger import run_granger_analysis
+from src.move_index import get_move_snapshot, run_move_analysis
+from src.spread_term_structure import run_term_structure_analysis
+from src.rolling_correlation_regime import run_correlation_analysis
+from src.forward_simulation import run_forward_simulation
+from src.cdx_proxy import run_cdx_analysis
+from src.fed_sentiment import run_fed_sentiment
+from src.snapshot_pdf import generate_snapshot_bytes
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -546,6 +553,42 @@ def load_kelly(_df):
 def load_granger(_df):
     """Run Granger causality tests (cached)."""
     return run_granger_analysis(_df)
+
+
+@st.cache_data
+def load_move(_df):
+    """Run MOVE index analysis (cached)."""
+    return run_move_analysis(_df)
+
+
+@st.cache_data
+def load_term_structure(_df):
+    """Run credit/rates term structure analysis (cached)."""
+    return run_term_structure_analysis(_df)
+
+
+@st.cache_data
+def load_correlation_regime(_df):
+    """Run equity-credit rolling correlation regime analysis (cached)."""
+    return run_correlation_analysis(_df)
+
+
+@st.cache_data
+def load_forward_simulation(_df):
+    """Run regime-conditioned forward simulation fan chart (cached)."""
+    return run_forward_simulation(_df, n_sim=500, seed=42)
+
+
+@st.cache_data
+def load_cdx_proxy(_df):
+    """Run synthetic CDX proxy analysis (cached)."""
+    return run_cdx_analysis(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_fed_sentiment(_df):
+    """Run Fed statement sentiment scoring (cached 1h — fetches live from Fed website)."""
+    return run_fed_sentiment(_df)
 
 
 @st.cache_data
@@ -1041,9 +1084,10 @@ with tab1:
     # ── Live intraday snapshot ────────────────────────────────────────────────
     try:
         _live = get_live_snapshot()
+        _move_snap = get_move_snapshot()
         if _live and "error" not in _live:
             st.subheader("Live Market Snapshot")
-            _ls_cols = st.columns(4)
+            _ls_cols = st.columns(5)
             for _ls_col, (_ls_key, _ls_label) in zip(
                 _ls_cols,
                 [("vix","VIX"), ("sp500","S&P 500"), ("hyg","HYG (HY ETF)"), ("lqd","LQD (IG ETF)")]
@@ -1057,7 +1101,15 @@ with tab1:
                         delta=f"{_ls_chg:+.2f}%",
                         delta_color="inverse" if _ls_key == "vix" else "normal",
                     )
-            st.caption(f"Live prices as of {_live.get('as_of','—')} · refreshes on page load")
+            if _move_snap and _move_snap.get("available"):
+                _ls_cols[4].metric(
+                    f"MOVE ({_move_snap.get('regime','—')})",
+                    f"{_move_snap['current']:.1f}",
+                    delta=f"{_move_snap.get('day_chg_pct', 0):+.2f}%",
+                    delta_color="inverse",
+                    help="ICE BofA MOVE Index — bond market implied volatility. >80 = elevated, >120 = stress.",
+                )
+            st.caption(f"Live prices as of {_live.get('as_of','—')} · refreshes on page load · MOVE: rates market volatility (bond VIX)")
             st.divider()
     except Exception:
         pass
@@ -1082,6 +1134,64 @@ with tab1:
         )
         st.caption(f"{'Cached' if _brief_cached else 'Generated'} {_briefing_result.get('date','')}"
                    f" · powered by Claude Haiku")
+
+    # ── Fed Communication Sentiment ───────────────────────────────────────────
+    st.divider()
+    _fed_col1, _fed_col2 = st.columns([2, 1])
+    with _fed_col1:
+        st.subheader("Fed Communication Sentiment")
+        st.caption(
+            "Scores the most recent FOMC statement 0–100 for hawkish/dovish tone using Claude AI. "
+            "0 = very dovish (cuts imminent), 50 = neutral, 100 = very hawkish (hikes signaled). "
+            "Hawkish statements → tighter financial conditions → wider credit spreads."
+        )
+    with _fed_col2:
+        try:
+            _pdf_bytes = generate_snapshot_bytes(df)
+            if _pdf_bytes:
+                import datetime as _dt
+                st.download_button(
+                    label="Download PDF Snapshot",
+                    data=_pdf_bytes,
+                    file_name=f"credit_dashboard_{_dt.date.today()}.pdf",
+                    mime="application/pdf",
+                    help="Download a PDF briefing of the current dashboard state",
+                )
+        except Exception:
+            pass
+
+    try:
+        _fed = load_fed_sentiment(df)
+        _fed_cur = _fed.get("current", {})
+        _fed_score = _fed_cur.get("score")
+        if _fed_score is not None:
+            _f1, _f2, _f3, _f4 = st.columns(4)
+            _fed_color = "#e74c3c" if _fed_score > 65 else "#f39c12" if _fed_score > 50 else "#27ae60" if _fed_score < 35 else "#6b7280"
+            _f1.metric("Hawkish/Dovish Score", f"{_fed_score}/100",
+                       help="0=Very Dovish · 50=Neutral · 100=Very Hawkish")
+            _f2.metric("Label", _fed_cur.get("label", "—"))
+            _f3.metric("Statement Date", _fed_cur.get("date", "—"))
+            _f4.metric("Trend", _fed.get("trend", "—"),
+                       help="Direction of last 3 cached FOMC statements")
+            if _fed_cur.get("reasoning"):
+                st.markdown(
+                    f'<div style="border-left:3px solid {_fed_color};background:rgba(255,255,255,0.03);'
+                    f'padding:10px 14px;border-radius:0 6px 6px 0;margin-top:8px">'
+                    f'<span style="color:#9aa0aa;font-size:0.85rem">{_fed_cur["reasoning"]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            _fed_hist = _fed.get("history", [])
+            if len(_fed_hist) > 1:
+                with st.expander(f"FOMC sentiment history ({len(_fed_hist)} meetings)"):
+                    _fh_df = pd.DataFrame(_fed_hist)
+                    st.dataframe(_fh_df, use_container_width=True, hide_index=True)
+        elif not _fed.get("api_key_present"):
+            st.caption("Set `ANTHROPIC_API_KEY` in Streamlit secrets to enable Fed sentiment scoring.")
+        else:
+            st.caption("Fetching FOMC statement… (first load may take a moment)")
+    except Exception as _fed_e:
+        st.caption(f"Fed sentiment unavailable: {_fed_e}")
 
     # ── NL query ─────────────────────────────────────────────────────────────
     with st.expander("Ask a question about the data"):
@@ -1985,6 +2095,74 @@ with tab2:
     except Exception as _qc_e:
         st.caption(f"Quality curve unavailable: {_qc_e}")
 
+    # ── Rates & Credit Term Structure ────────────────────────────────────────
+    st.subheader("Rates & Credit Term Structure")
+    st.caption(
+        "The **yield curve** (Treasury 3m/2y/10y) and **credit quality slope** (IG → HY spread differential) "
+        "jointly describe where stress sits in the maturity spectrum. "
+        "Front-end credit stress = near-term liquidity fear. Back-end = solvency concerns. "
+        "Negative 2s10s = inverted curve = classic recession signal."
+    )
+    try:
+        _ts = load_term_structure(df)
+        if _ts.get("available"):
+            _tsc = _ts.get("current", {})
+            _ts1, _ts2, _ts3, _ts4 = st.columns(4)
+            _ts1.metric("2s10s Slope", f"{_tsc.get('ts_curve_slope_2s10s', float('nan')):+.2f}pp",
+                        help="10y − 2y Treasury spread. Negative = inverted (recession signal)")
+            _ts2.metric("3m10y Slope", f"{_tsc.get('ts_curve_slope_3m10y', float('nan')):+.2f}pp",
+                        help="10y − 3m Treasury spread. Estrella-Mishkin recession predictor")
+            _ts3.metric("HY−IG Credit Slope", f"{_tsc.get('ts_credit_slope_hy_ig', float('nan')):+.2f}pp",
+                        help="HY OAS minus IG OAS. High = steep credit quality curve = risk aversion")
+            _ts4.metric("Treasury Regime", _tsc.get("ts_curve_regime", "—"))
+
+            if _tsc.get("interpretation"):
+                st.caption(_tsc["interpretation"])
+
+            # Percentile ranks
+            _ts_pct = _ts.get("history_percentiles", {})
+            if _ts_pct:
+                _pct_cols = st.columns(len(_ts_pct))
+                for _pc, (_pk, _pv) in zip(_pct_cols, _ts_pct.items()):
+                    _short_k = _pk.replace("ts_", "").replace("_zscore", " z").replace("_", " ").title()
+                    _pc.metric(f"{_short_k} Pctile", f"{_pv:.0f}th" if _pv is not None else "—",
+                               help=f"Current value's percentile vs full history")
+
+            # Time series of 2s10s and HY-IG slope
+            if "df" in _ts and "ts_curve_slope_2s10s" in _ts["df"].columns:
+                import plotly.graph_objects as _tsgo
+                _ts_df = _ts["df"].copy()
+                _ts_df["date"] = pd.to_datetime(_ts_df["date"])
+                _ts_fig = _tsgo.Figure()
+                _ts_fig.add_trace(_tsgo.Scatter(
+                    x=_ts_df["date"], y=_ts_df["ts_curve_slope_2s10s"],
+                    name="2s10s (Treasury)", line=dict(color="#4f8ef7", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>2s10s: %{y:+.2f}pp<extra></extra>",
+                ))
+                if "ts_credit_slope_hy_ig" in _ts_df.columns:
+                    _ts_fig.add_trace(_tsgo.Scatter(
+                        x=_ts_df["date"], y=_ts_df["ts_credit_slope_hy_ig"],
+                        name="HY−IG (Credit)", line=dict(color="#e74c3c", width=2),
+                        hovertemplate="%{x|%Y-%m-%d}<br>HY−IG: %{y:+.2f}pp<extra></extra>",
+                    ))
+                _ts_fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _ts_fig.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Spread (pp)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.1, bgcolor="rgba(0,0,0,0)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_ts_fig, use_container_width=True)
+                st.caption("Below zero = inverted. 2s10s inversion has preceded every US recession since 1970.")
+        else:
+            st.info("Term structure unavailable — requires Treasury yield columns (yield_3m, yield_10y).")
+    except Exception as _ts_e:
+        st.caption(f"Term structure unavailable: {_ts_e}")
+
 with tab3:
     st.header("Portfolio Stance")
 
@@ -2092,18 +2270,19 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 19 sub-tabs
+with tab5:  # Analytics — 22 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
      _analytics_sub12, _analytics_sub13, _analytics_sub14,
      _analytics_sub15, _analytics_sub16, _analytics_sub17, _analytics_sub18,
-     _analytics_sub19) = st.tabs([
+     _analytics_sub19, _analytics_sub20, _analytics_sub21, _analytics_sub22) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
         "Contagion", "Analogs", "Persistence",
         "Merton DD", "Frontier", "Kelly", "Granger", "Defaults",
+        "Fwd Sim", "CDX Proxy", "EQ-Credit Corr",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -7056,3 +7235,280 @@ with _analytics_sub19:
             st.info("Default rate model unavailable — requires HY spread data.")
     except Exception as _dfa_e:
         st.caption(f"Default analysis unavailable: {_dfa_e}")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 20: Regime-Conditioned Forward Simulation
+# =============================================================================
+with _analytics_sub20:
+    import plotly.graph_objects as _go_fs
+    st.header("Regime-Conditioned Forward Simulation")
+    st.markdown(
+        """
+        **Monte Carlo fan chart** of portfolio paths starting from today's regime.
+
+        Rather than a single expected return, 500 paths are simulated by:
+        1. Drawing regime sequences as a **Markov chain** using the historical transition matrix
+        2. Drawing daily returns from each regime's **empirical return distribution** (with skew correction)
+        3. Accumulating portfolio value and reporting percentile bands
+
+        The fan chart reveals the full distribution of outcomes — Risk-Off regimes produce
+        a wide, left-skewed distribution; Risk-On regimes cluster tightly upward.
+        The 5th percentile is the "bad scenario" for risk management purposes.
+        """
+    )
+    try:
+        _fs = load_forward_simulation(df)
+        if _fs.get("available"):
+            _fs_cur = _fs.get("current_regime", "—")
+            _fs_hs  = _fs.get("horizon_summary", {})
+            _fs_reg = _fs.get("regime_profiles", {})
+
+            _fsc1, _fsc2, _fsc3, _fsc4 = st.columns(4)
+            _fsc1.metric("Current Regime", _fs_cur)
+            _fsc2.metric("21d Median Return", f"{_fs_hs.get(21,{}).get(50,float('nan')):.2%}" if _fs_hs.get(21) else "—")
+            _fsc3.metric("21d 5th Pctile", f"{_fs_hs.get(21,{}).get(5,float('nan')):.2%}" if _fs_hs.get(21) else "—",
+                         help="Worst-case 5% outcome over 21 trading days")
+            _fsc4.metric("21d 95th Pctile", f"{_fs_hs.get(21,{}).get(95,float('nan')):.2%}" if _fs_hs.get(21) else "—")
+
+            _paths_df = _fs.get("paths_df", pd.DataFrame())
+            if not _paths_df.empty:
+                _fs_fig = _go_fs.Figure()
+                _band_pairs = [(5, 95, "rgba(231,76,60,0.08)"), (10, 90, "rgba(231,76,60,0.10)"),
+                               (25, 75, "rgba(79,142,247,0.12)")]
+                for _lo, _hi, _fill in _band_pairs:
+                    if _lo in _paths_df.columns and _hi in _paths_df.columns:
+                        _fs_fig.add_trace(_go_fs.Scatter(
+                            x=list(_paths_df.index) + list(_paths_df.index[::-1]),
+                            y=list((_paths_df[_hi] - 1) * 100) + list((_paths_df[_lo] - 1) * 100)[::-1],
+                            fill="toself", fillcolor=_fill,
+                            line=dict(color="rgba(0,0,0,0)"),
+                            name=f"P{_lo}–P{_hi}", showlegend=True,
+                            hoverinfo="skip",
+                        ))
+                if 50 in _paths_df.columns:
+                    _fs_fig.add_trace(_go_fs.Scatter(
+                        x=list(_paths_df.index), y=(_paths_df[50] - 1) * 100,
+                        name="Median (P50)", line=dict(color="#4f8ef7", width=2.5),
+                        hovertemplate="Day %{x}<br>Median: %{y:+.2f}%<extra></extra>",
+                    ))
+                _fs_fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _fs_fig.update_layout(
+                    height=340, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    xaxis=dict(showgrid=False, color="#6b7280", title="Trading Days Forward"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Cumulative Return (%)"),
+                    legend=dict(orientation="h", y=1.08, bgcolor="rgba(0,0,0,0)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fs_fig, use_container_width=True)
+                st.caption(f"500 Monte Carlo paths starting from **{_fs_cur}** regime · "
+                           "Shaded bands: P5–P95 (outer) / P10–P90 / P25–P75 (inner)")
+
+            # Regime return profiles
+            if _fs_reg:
+                st.markdown("**Empirical Return Profiles by Regime**")
+                _rp_rows = []
+                for _rg, _rp in _fs_reg.items():
+                    _rp_rows.append({
+                        "Regime": _rg,
+                        "Mean Daily": f"{_rp.get('mean_daily', 0):.3%}",
+                        "Daily Vol": f"{_rp.get('std_daily', 0):.3%}",
+                        "Skew": f"{_rp.get('skewness', 0):.2f}",
+                        "Annualised Return": f"{_rp.get('mean_daily', 0) * 252:.1%}",
+                        "Annualised Vol": f"{_rp.get('std_daily', 0) * (252**0.5):.1%}",
+                        "N Obs": _rp.get("n_obs", 0),
+                    })
+                st.dataframe(pd.DataFrame(_rp_rows), use_container_width=True, hide_index=True)
+
+            _fs_tm = _fs.get("transition_matrix", pd.DataFrame())
+            if not _fs_tm.empty:
+                with st.expander("Regime transition matrix (historical)"):
+                    st.dataframe(_fs_tm.style.format("{:.1%}"), use_container_width=True)
+                    st.caption("Row = current regime · Column = next day's regime probability")
+        else:
+            st.info("Forward simulation unavailable — requires strategy_daily_return with 100+ rows.")
+    except Exception as _fs_e:
+        st.caption(f"Forward simulation unavailable: {_fs_e}")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 21: Synthetic CDX Proxy
+# =============================================================================
+with _analytics_sub21:
+    import plotly.graph_objects as _go_cdx
+    st.header("Synthetic CDX — Credit Default Swap Index Proxy")
+    st.markdown(
+        """
+        **CDX.NA.IG** and **CDX.NA.HY** are OTC credit default swap indices — you pay a spread
+        (in bps/year) to insure a basket of 125 IG or 100 HY corporate names against default.
+        They are the most liquid instruments for expressing credit views and typically *lead*
+        cash bond spreads because derivatives markets price information faster.
+
+        Since CDX data is not freely available, this builds a **synthetic proxy** by normalising
+        available credit spread, volatility, and equity drawdown data into a 0–100 stress index:
+        - 0–30: Credit markets tight / risk-on
+        - 30–60: Normal conditions
+        - 60–80: Wide / stress building
+        - 80+: Crisis-level stress
+
+        The synthetic index is calibrated so that GFC 2008 and COVID March 2020 register near 100.
+        """
+    )
+    try:
+        _cdx = load_cdx_proxy(df)
+        if _cdx.get("available"):
+            _cdxc = _cdx.get("current", {})
+            _cx1, _cx2, _cx3, _cx4 = st.columns(4)
+            _cx1.metric("Synthetic CDX-HY", f"{_cdxc.get('cdx_hy_proxy', float('nan')):.1f}/100",
+                        help="0=Tight · 100=Crisis. Driven by HY spread, HY momentum, VIX, SP500 drawdown")
+            _cx2.metric("Synthetic CDX-IG", f"{_cdxc.get('cdx_ig_proxy', float('nan')):.1f}/100",
+                        help="0=Tight · 100=Crisis. Driven by IG spread, IG momentum, yield curve flattening")
+            _cx3.metric("Composite", f"{_cdxc.get('cdx_composite', float('nan')):.1f}/100")
+            _cx4.metric("Regime", _cdxc.get("cdx_regime", "—"))
+
+            _cdx_hist = _cdx.get("rolling_cdx", pd.DataFrame())
+            if not _cdx_hist.empty:
+                _cdx_hist = _cdx_hist.copy()
+                if "date" in df.columns:
+                    _cdx_hist.index = pd.to_datetime(df["date"].values[-len(_cdx_hist):])
+                _cdx_fig = _go_cdx.Figure()
+                if "cdx_hy_proxy" in _cdx_hist.columns:
+                    _cdx_fig.add_trace(_go_cdx.Scatter(
+                        x=_cdx_hist.index, y=_cdx_hist["cdx_hy_proxy"],
+                        name="Synthetic CDX-HY", line=dict(color="#e74c3c", width=2),
+                        fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+                    ))
+                if "cdx_ig_proxy" in _cdx_hist.columns:
+                    _cdx_fig.add_trace(_go_cdx.Scatter(
+                        x=_cdx_hist.index, y=_cdx_hist["cdx_ig_proxy"],
+                        name="Synthetic CDX-IG", line=dict(color="#4f8ef7", width=1.5, dash="dot"),
+                    ))
+                for _lv, _clr, _lbl in [(60, "#e67e22", "Stress"), (80, "#e74c3c", "Crisis")]:
+                    _cdx_fig.add_hline(y=_lv, line=dict(color=_clr, dash="dash", width=1),
+                                       annotation_text=_lbl, annotation_position="top right",
+                                       annotation_font=dict(color=_clr, size=10))
+                _cdx_fig.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Stress Score (0–100)", range=[0, 105]),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.1, bgcolor="rgba(0,0,0,0)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_cdx_fig, use_container_width=True)
+
+            _cdx_pct_hy = _cdx.get("historical_percentile_hy")
+            _cdx_pct_ig = _cdx.get("historical_percentile_ig")
+            _cdx_corr   = _cdx.get("correlation_with_composite")
+            _cx_info = []
+            if _cdx_pct_hy is not None:
+                _cx_info.append(f"CDX-HY at **{_cdx_pct_hy:.0f}th percentile** vs full history")
+            if _cdx_pct_ig is not None:
+                _cx_info.append(f"CDX-IG at **{_cdx_pct_ig:.0f}th percentile**")
+            if _cdx_corr is not None:
+                _cx_info.append(f"Correlation with composite risk score: **{_cdx_corr:.3f}**")
+            if _cx_info:
+                st.caption(" · ".join(_cx_info))
+
+            _cdx_peaks = _cdx.get("stress_peaks", pd.DataFrame())
+            if not _cdx_peaks.empty:
+                with st.expander("Top stress peaks (historical)"):
+                    st.dataframe(_cdx_peaks, use_container_width=True, hide_index=True)
+        else:
+            st.info("CDX proxy unavailable — requires HY spread data.")
+    except Exception as _cdx_e:
+        st.caption(f"CDX proxy unavailable: {_cdx_e}")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 22: Equity-Credit Correlation Regime
+# =============================================================================
+with _analytics_sub22:
+    import plotly.graph_objects as _go_cr
+    st.header("Equity-Credit Correlation Regime")
+    st.markdown(
+        """
+        **Normally, stocks and credit spreads move in opposite directions**: when equities rally,
+        spreads tighten (both signal risk appetite). This negative correlation is the foundation
+        of most risk-off hedging strategies.
+
+        When this correlation **breaks down or goes positive**, it signals a **dislocation**:
+        both asset classes are moving adversely at the same time. This has historically preceded
+        major credit stress episodes by 2–4 weeks.
+
+        - **Normal (negative)**: healthy risk-on / risk-off dynamics
+        - **Decoupling** (weakly negative): early warning — monitor closely
+        - **Dislocation** (positive): systemic risk elevated — both equities and credit under pressure
+
+        The 90-day rolling window captures medium-term regime shifts rather than daily noise.
+        """
+    )
+    try:
+        _cr = load_correlation_regime(df)
+        if _cr.get("available"):
+            _crc = _cr.get("current", {})
+            _cr1, _cr2, _cr3, _cr4 = st.columns(4)
+            _cr1.metric("90d EQ-Credit Corr", f"{_crc.get('corr_eq_hy_90d', float('nan')):.3f}",
+                        help="Pearson r between SP500 daily return and HY spread daily change. Normally negative.")
+            _cr2.metric("Correlation Regime", _crc.get("corr_regime_90d", "—"))
+            _cr3.metric("Active Dislocation", f"{_cr.get('current_streak', 0)} days",
+                        delta_color="inverse",
+                        delta=f"{_cr.get('current_streak', 0)} days" if _cr.get("current_streak", 0) > 0 else None)
+            _cr4.metric("21d Corr", f"{_crc.get('corr_eq_hy_21d', float('nan')):.3f}",
+                        help="Shorter-term 21d correlation — faster signal")
+
+            if _cr.get("warning"):
+                st.warning(_cr["warning"])
+
+            _cr_df = _cr.get("df", pd.DataFrame())
+            if not _cr_df.empty and "corr_eq_hy_90d" in _cr_df.columns:
+                _cr_df = _cr_df.copy()
+                _cr_df["date"] = pd.to_datetime(_cr_df["date"])
+                _cr_fig = _go_cr.Figure()
+                _cr_fig.add_trace(_go_cr.Scatter(
+                    x=_cr_df["date"], y=_cr_df["corr_eq_hy_90d"],
+                    name="90d EQ-Credit Correlation",
+                    line=dict(color="#4f8ef7", width=2),
+                    fill="tozeroy", fillcolor="rgba(79,142,247,0.08)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>90d Corr: %{y:.3f}<extra></extra>",
+                ))
+                if "corr_eq_hy_21d" in _cr_df.columns:
+                    _cr_fig.add_trace(_go_cr.Scatter(
+                        x=_cr_df["date"], y=_cr_df["corr_eq_hy_21d"],
+                        name="21d EQ-Credit Correlation",
+                        line=dict(color="#e67e22", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>21d Corr: %{y:.3f}<extra></extra>",
+                    ))
+                _cr_fig.add_hline(y=0, line_color="rgba(231,76,60,0.6)", line_width=1.5,
+                                  annotation_text="Dislocation threshold",
+                                  annotation_font=dict(color="#e74c3c", size=10))
+                _cr_fig.add_hline(y=-0.3, line_color="rgba(230,126,34,0.4)", line_width=1,
+                                  annotation_text="Decoupling threshold",
+                                  annotation_font=dict(color="#e67e22", size=10))
+                _cr_fig.update_layout(
+                    height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Pearson Correlation", range=[-1.05, 1.05]),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.1, bgcolor="rgba(0,0,0,0)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_cr_fig, use_container_width=True)
+                st.caption("Above 0 = dislocation (both assets moving adversely). Red line = warning threshold.")
+
+            _cr_eps = _cr.get("dislocation_episodes", pd.DataFrame())
+            if not _cr_eps.empty:
+                with st.expander(f"Historical dislocation episodes ({len(_cr_eps)})"):
+                    st.dataframe(_cr_eps, use_container_width=True, hide_index=True)
+                    st.caption("'Subsequent HY change' = HY spread change in the 4 weeks following dislocation start.")
+        else:
+            st.info("Correlation analysis unavailable — requires SP500 and HY spread data.")
+    except Exception as _cr_e:
+        st.caption(f"Correlation analysis unavailable: {_cr_e}")
