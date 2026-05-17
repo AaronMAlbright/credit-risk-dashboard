@@ -84,6 +84,13 @@ from src.alert_engine import (
     load_alert_state,
     run_alerts,
 )
+from src.llm_briefing import generate_morning_briefing
+from src.credit_cycle_clock import build_credit_cycle_clock
+from src.historical_analogs import find_historical_analogs, get_analog_summary
+from src.live_snapshot import get_live_snapshot
+from src.stress_contagion import run_contagion_analysis
+from src.regime_persistence import run_persistence_analysis
+from src.drawdown_attribution import run_drawdown_attribution
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -437,6 +444,41 @@ def load_regime_forecast(_df):
 
 
 @st.cache_data
+def load_llm_briefing(_df):
+    """Generate LLM morning briefing (cached by date via briefing_cache.json)."""
+    return generate_morning_briefing(_df)
+
+
+@st.cache_data
+def load_historical_analogs(_df):
+    """Find top-5 historical analog periods (cached)."""
+    return find_historical_analogs(_df)
+
+
+@st.cache_data
+def load_contagion(_df):
+    """Compute stress contagion matrix and index (cached)."""
+    return run_contagion_analysis(_df)
+
+
+@st.cache_data
+def load_persistence(_df):
+    """Compute regime persistence / dwell-time survival (cached)."""
+    return run_persistence_analysis(_df)
+
+
+@st.cache_data
+def load_drawdown_attribution(_df):
+    """Run drawdown attribution across sizing components (cached)."""
+    try:
+        from src.backtester import build_strategy_backtest, compute_benchmark_returns
+        _bt = compute_benchmark_returns(build_strategy_backtest(_df))
+        return run_drawdown_attribution(_bt)
+    except Exception as _e:
+        return {"drawdowns": [], "avg_component_drag": {}, "error": str(_e)}
+
+
+@st.cache_data
 def load_validation_audit(_df, _windows_df, _transition_counts):
     """Run full validation audit (cached)."""
     return run_validation_audit(_df, windows_df=_windows_df, transition_counts=_transition_counts)
@@ -581,6 +623,68 @@ if _alert_col2.button("Send Alert", key="sidebar_send_alert",
         st.sidebar.warning("SMTP not configured. Set ALERT_SMTP_* env vars.")
     else:
         st.sidebar.error("Email send failed.")
+
+st.sidebar.divider()
+
+# ── Sidebar: Custom Alert Rules ───────────────────────────────────────────────
+_CUSTOM_RULE_SIGNALS = {
+    "Composite Risk Score":    "composite_risk_score_smooth",
+    "HY Spread":               "hy_spread",
+    "VIX":                     "vix",
+    "Treasury Stress":         "treasury_stress_score_smooth",
+    "Credit Risk Score":       "credit_market_risk_score_smooth",
+    "Macro Risk Score":        "macro_risk_score_smooth",
+    "Complacency Score":       "complacency_score_smooth",
+    "Funding Stress":          "enhanced_funding_stress_score_smooth",
+    "FX/Commodity Score":      "fx_commodity_score_smooth",
+}
+_CUSTOM_RULE_OPS = {">": lambda a, b: a > b, "<": lambda a, b: a < b,
+                    "≥": lambda a, b: a >= b, "≤": lambda a, b: a <= b}
+
+with st.sidebar.expander("🔔 Custom Alert Rules"):
+    st.caption("Trigger a banner in the Signal tab when any rule fires.")
+    if "custom_rules" not in st.session_state:
+        st.session_state.custom_rules = [
+            {"signal": "Composite Risk Score", "op": ">", "threshold": 70.0},
+        ]
+    _n_rules = st.number_input("Number of rules", 1, 5,
+                               len(st.session_state.custom_rules), step=1,
+                               key="n_custom_rules")
+    while len(st.session_state.custom_rules) < _n_rules:
+        st.session_state.custom_rules.append(
+            {"signal": "HY Spread", "op": ">", "threshold": 5.0}
+        )
+    _updated_rules = []
+    for _ri in range(int(_n_rules)):
+        _rc = st.session_state.custom_rules[_ri]
+        _rc1, _rc2, _rc3 = st.columns([3, 1, 2])
+        _sig = _rc1.selectbox("Signal", list(_CUSTOM_RULE_SIGNALS.keys()),
+                              index=list(_CUSTOM_RULE_SIGNALS.keys()).index(_rc["signal"])
+                              if _rc["signal"] in _CUSTOM_RULE_SIGNALS else 0,
+                              key=f"rule_sig_{_ri}", label_visibility="collapsed")
+        _op  = _rc2.selectbox("Op", list(_CUSTOM_RULE_OPS.keys()),
+                              index=list(_CUSTOM_RULE_OPS.keys()).index(_rc["op"])
+                              if _rc["op"] in _CUSTOM_RULE_OPS else 0,
+                              key=f"rule_op_{_ri}", label_visibility="collapsed")
+        _thr = _rc3.number_input("Threshold", value=float(_rc["threshold"]),
+                                 key=f"rule_thr_{_ri}", label_visibility="collapsed",
+                                 format="%.1f")
+        _updated_rules.append({"signal": _sig, "op": _op, "threshold": _thr})
+    st.session_state.custom_rules = _updated_rules
+
+# Evaluate custom rules against latest row (results shown in tab1)
+_custom_rule_fires = []
+for _rule in st.session_state.custom_rules:
+    _col = _CUSTOM_RULE_SIGNALS.get(_rule["signal"])
+    _fn  = _CUSTOM_RULE_OPS.get(_rule["op"])
+    if _col and _fn and _col in df.columns:
+        _val = latest.get(_col)
+        if _val is not None and not pd.isna(_val):
+            if _fn(float(_val), float(_rule["threshold"])):
+                _custom_rule_fires.append(
+                    f"**{_rule['signal']}** {_rule['op']} {_rule['threshold']} "
+                    f"(current: {float(_val):.2f})"
+                )
 
 st.sidebar.divider()
 
@@ -859,6 +963,111 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
 with tab1:
     st.header("Current Signal Snapshot")
 
+    # ── Custom rule banners ───────────────────────────────────────────────────
+    if _custom_rule_fires:
+        for _fire_msg in _custom_rule_fires:
+            st.warning(f"⚠ Custom Alert: {_fire_msg}", icon="🔔")
+
+    # ── Live intraday snapshot ────────────────────────────────────────────────
+    try:
+        _live = get_live_snapshot()
+        if _live and "error" not in _live:
+            st.subheader("Live Market Snapshot")
+            _ls_cols = st.columns(4)
+            for _ls_col, (_ls_key, _ls_label) in zip(
+                _ls_cols,
+                [("vix","VIX"), ("sp500","S&P 500"), ("hyg","HYG (HY ETF)"), ("lqd","LQD (IG ETF)")]
+            ):
+                _ls_d = _live.get(_ls_key)
+                if _ls_d:
+                    _ls_chg = _ls_d.get("day_chg_pct", 0) or 0
+                    _ls_col.metric(
+                        _ls_label,
+                        f"{_ls_d['current']:.2f}",
+                        delta=f"{_ls_chg:+.2f}%",
+                        delta_color="inverse" if _ls_key == "vix" else "normal",
+                    )
+            st.caption(f"Live prices as of {_live.get('as_of','—')} · refreshes on page load")
+            st.divider()
+    except Exception:
+        pass
+
+    # ── LLM morning briefing ──────────────────────────────────────────────────
+    st.subheader("Morning Briefing")
+    _briefing_result = load_llm_briefing(df)
+    if _briefing_result.get("error"):
+        if "ANTHROPIC_API_KEY not set" in str(_briefing_result["error"]):
+            st.caption("Set `ANTHROPIC_API_KEY` in Streamlit secrets to enable AI briefings.")
+        else:
+            st.caption(f"Briefing unavailable: {_briefing_result['error']}")
+    elif _briefing_result.get("text"):
+        _brief_cached = _briefing_result.get("cached", False)
+        st.markdown(
+            f'<div style="border-left:3px solid #4f8ef7;background:rgba(79,142,247,0.06);'
+            f'padding:14px 18px;border-radius:0 6px 6px 0;margin-bottom:8px;'
+            f'font-size:0.9rem;color:#c8ccd4;line-height:1.6">'
+            f'{_briefing_result["text"].replace(chr(10), "<br>")}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(f"{'Cached' if _brief_cached else 'Generated'} {_briefing_result.get('date','')}"
+                   f" · powered by Claude Haiku")
+
+    # ── NL query ─────────────────────────────────────────────────────────────
+    with st.expander("Ask a question about the data"):
+        _nl_question = st.text_input(
+            "Question", placeholder='e.g. "When was the last Risk-Off regime longer than 30 days?"',
+            key="nl_query_input",
+        )
+        if _nl_question and st.button("Ask", key="nl_query_btn"):
+            import os as _os
+            _ant_key = _os.environ.get("ANTHROPIC_API_KEY", "")
+            if not _ant_key:
+                st.warning("Set ANTHROPIC_API_KEY to enable natural language queries.")
+            else:
+                try:
+                    import anthropic as _ant
+                    _nl_client = _ant.Anthropic(api_key=_ant_key)
+                    _nl_ctx = (
+                        f"You are an analyst assistant for a credit risk dashboard. "
+                        f"The scored dataset has {len(df)} rows from {df['date'].min()} to {df['date'].max()}. "
+                        f"Columns include: date, final_decision (Risk-On/Neutral/Caution/Risk-Off), "
+                        f"composite_risk_score_smooth (0-100), hy_spread, vix, sp500, "
+                        f"treasury_stress_score_smooth, credit_market_risk_score_smooth, "
+                        f"macro_risk_score_smooth, complacency_score_smooth. "
+                        f"Current: regime={latest.get('final_decision')}, "
+                        f"score={latest.get('composite_risk_score_smooth'):.1f}, "
+                        f"hy_spread={latest.get('hy_spread'):.2f}."
+                    )
+                    # Compute answer using Python on the df for factual questions
+                    _nl_data_ctx = ""
+                    if "risk-off" in _nl_question.lower() or "regime" in _nl_question.lower():
+                        _runs = []
+                        _cur_reg, _start, _cnt = None, None, 0
+                        for _, _r in df[["date","final_decision"]].iterrows():
+                            if _r["final_decision"] != _cur_reg:
+                                if _cur_reg is not None:
+                                    _runs.append((_cur_reg, _start, _r["date"], _cnt))
+                                _cur_reg, _start, _cnt = _r["final_decision"], _r["date"], 1
+                            else:
+                                _cnt += 1
+                        if _cur_reg:
+                            _runs.append((_cur_reg, _start, df["date"].iloc[-1], _cnt))
+                        _ro_runs = [(s,e,d) for reg,s,e,d in _runs if reg == "Risk-Off"]
+                        _nl_data_ctx = (
+                            f"Risk-Off episodes: {[(str(s)[:10], str(e)[:10], d) for s,e,d in sorted(_ro_runs, key=lambda x: x[2], reverse=True)[:5]]}"
+                        )
+                    with st.spinner("Thinking…"):
+                        _nl_resp = _nl_client.messages.create(
+                            model="claude-haiku-4-5-20251001",
+                            max_tokens=300,
+                            system=_nl_ctx + (" Data: " + _nl_data_ctx if _nl_data_ctx else ""),
+                            messages=[{"role": "user", "content": _nl_question}],
+                        )
+                    st.markdown(_nl_resp.content[0].text)
+                except Exception as _nl_e:
+                    st.error(f"Query failed: {_nl_e}")
+
     def _kv_card(label, value, color="#9aa0aa"):
         return (
             f'<div style="padding:10px 14px;border-radius:7px;background:#151820;'
@@ -1077,6 +1286,38 @@ with tab2:
 
     _df2 = df.copy()
     _df2["date"] = pd.to_datetime(_df2["date"])
+
+    # ── Credit Cycle Clock ────────────────────────────────────────────────────
+    st.subheader("Credit Cycle Clock")
+    st.caption(
+        "Circular map of the credit cycle phase derived from the composite risk score. "
+        "Dot = today · trail = last 90 days. "
+        "Early Expansion → Late Cycle → Contraction → Recovery."
+    )
+    try:
+        _clock_fig = build_credit_cycle_clock(df)
+        _clk_col1, _clk_col2 = st.columns([1, 1])
+        with _clk_col1:
+            st.plotly_chart(_clock_fig, use_container_width=True)
+        with _clk_col2:
+            st.markdown(
+                '<div style="padding:16px">'
+                '<p style="color:#9aa0aa;font-size:0.85rem;line-height:1.7">'
+                '<strong style="color:#27ae60">🟢 Early Expansion (315°–45°)</strong><br>'
+                'Score 0–30 · Spreads recovering, macro improving, low stress.<br><br>'
+                '<strong style="color:#f1c40f">🟡 Late Cycle (45°–135°)</strong><br>'
+                'Score 30–50 · Complacency rising, spreads near tight, momentum slowing.<br><br>'
+                '<strong style="color:#e74c3c">🔴 Contraction (135°–225°)</strong><br>'
+                'Score 50–70 · Stress rising, spreads widening, macro deteriorating.<br><br>'
+                '<strong style="color:#3498db">🔵 Recovery (225°–315°)</strong><br>'
+                'Score 70–100 · Stress near peak, spreads at highs, macro bottoming.'
+                '</p></div>',
+                unsafe_allow_html=True,
+            )
+    except Exception as _clk_e:
+        st.caption(f"Clock unavailable: {_clk_e}")
+
+    st.divider()
 
     # ── 1. Composite Risk Score ───────────────────────────────────────────────
     st.subheader("Composite Risk Score")
@@ -1625,13 +1866,15 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 11 sub-tabs
+with tab5:  # Analytics — 14 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
-     _analytics_sub9, _analytics_sub10, _analytics_sub11) = st.tabs([
+     _analytics_sub9, _analytics_sub10, _analytics_sub11,
+     _analytics_sub12, _analytics_sub13, _analytics_sub14) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
+        "Contagion", "Analogs", "Persistence",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -2514,6 +2757,83 @@ with tab4:
             "vol_target = target_vol/realised_vol · momentum = score×trend_scalar · "
             "raw = mean of all four · strategy = raw clipped to [floor, cap]"
         )
+
+    # ── Drawdown Attribution ──────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Drawdown Attribution — Which Component Drove Each Drawdown?")
+    st.caption(
+        "During each strategy drawdown > 5%, shows the counterfactual return "
+        "if only one sizing component (score, regime, vol-target, momentum) had been used. "
+        "Identifies which component was most/least defensive."
+    )
+    try:
+        _dd_attr = load_drawdown_attribution(df)
+        _dd_list = _dd_attr.get("drawdowns", [])
+        _dd_drag = _dd_attr.get("avg_component_drag", {})
+        if not _dd_list:
+            st.success("No drawdowns exceeding 5% found in the backtest history.")
+        else:
+            # Summary drag metrics
+            if _dd_drag:
+                _da_cols = st.columns(4)
+                for _da_c, (_da_k, _da_v) in zip(_da_cols, _dd_drag.items()):
+                    _da_label = {"score":"Score Weight","regime":"Regime Weight",
+                                 "vol_target":"Vol-Target","momentum":"Momentum"}.get(_da_k,_da_k)
+                    _da_cols[list(_dd_drag.keys()).index(_da_k)].metric(
+                        f"Avg {_da_label} Return", f"{_da_v:+.2%}",
+                        help=f"Mean return of {_da_label} used in isolation during drawdown periods")
+
+            # Per-drawdown table
+            import plotly.graph_objects as _go_da
+            _dd_rows = []
+            for _dd in _dd_list:
+                _dd_rows.append({
+                    "Start": str(_dd.get("start",""))[:10],
+                    "End":   str(_dd.get("end",""))[:10],
+                    "Days":  _dd.get("duration_days","—"),
+                    "Strategy": f"{_dd.get('strategy_return',0):+.2%}",
+                    "SP500":    f"{_dd.get('sp500_return',0):+.2%}",
+                    "Score-only":     f"{_dd.get('component_returns',{}).get('score',0):+.2%}",
+                    "Regime-only":    f"{_dd.get('component_returns',{}).get('regime',0):+.2%}",
+                    "VolTarget-only": f"{_dd.get('component_returns',{}).get('vol_target',0):+.2%}",
+                    "Momentum-only":  f"{_dd.get('component_returns',{}).get('momentum',0):+.2%}",
+                })
+            st.dataframe(pd.DataFrame(_dd_rows), use_container_width=True)
+
+            # Bar chart of component performance per drawdown
+            _dd_names = [f"{r['Start']} → {r['End']}" for r in _dd_rows]
+            _da_bar = _go_da.Figure()
+            for _da_comp, _da_label, _da_color in [
+                ("score","Score","#4f8ef7"), ("regime","Regime","#9b59b6"),
+                ("vol_target","Vol-Target","#27ae60"), ("momentum","Momentum","#f39c12"),
+            ]:
+                _da_bar.add_trace(_go_da.Bar(
+                    name=_da_label, x=_dd_names,
+                    y=[_dd.get("component_returns",{}).get(_da_comp,0)*100 for _dd in _dd_list],
+                    marker_color=_da_color,
+                    hovertemplate=f"{_da_label}<br>%{{x}}<br>Return: %{{y:+.2f}}%<extra></extra>",
+                ))
+            _da_bar.add_trace(_go_da.Scatter(
+                name="Strategy", x=_dd_names,
+                y=[_dd.get("strategy_return",0)*100 for _dd in _dd_list],
+                mode="markers", marker=dict(symbol="diamond", size=10, color="white"),
+                hovertemplate="Strategy<br>%{x}<br>%{y:+.2f}%<extra></extra>",
+            ))
+            _da_bar.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+            _da_bar.update_layout(
+                barmode="group", height=320,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"), margin=dict(l=8,r=8,t=8,b=80),
+                xaxis=dict(showgrid=False, color="#6b7280", tickangle=-20),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Cumulative Return %"),
+                legend=dict(orientation="h", y=1.1, bgcolor="rgba(0,0,0,0)"),
+                hoverlabel=dict(bgcolor="#1a1f2e", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_da_bar, use_container_width=True)
+            st.caption("Bars = each component used in isolation · diamond = actual blended strategy.")
+    except Exception as _da_e:
+        st.caption(f"Drawdown attribution unavailable: {_da_e}")
 
     # ── Credit Portfolio Backtest ─────────────────────────────────────────────
     st.subheader("3. Credit Portfolio Backtest")
@@ -5807,3 +6127,228 @@ with _analytics_sub11:
         )
     else:
         st.info("Confirmation engine requires at least credit and rates signals.")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 12: Stress Contagion
+# =============================================================================
+with _analytics_sub12:
+    import plotly.graph_objects as _go_cg
+    st.header("Stress Contagion")
+    st.caption(
+        "Rolling 90-day Pearson correlations between sub-scores. "
+        "High off-diagonal correlation = stress is spreading across asset classes. "
+        "The contagion index (mean absolute off-diagonal) spikes during systemic crises."
+    )
+    with st.spinner("Computing contagion analysis…"):
+        _cg_res = load_contagion(df)
+
+    _cg_matrix = _cg_res.get("matrix", pd.DataFrame())
+    _cg_index  = _cg_res.get("index",  pd.Series(dtype=float))
+    _cg_cur    = _cg_res.get("current_index", None)
+
+    if _cg_cur is not None:
+        _cg_color = "#e74c3c" if _cg_cur > 0.6 else "#e67e22" if _cg_cur > 0.4 else "#27ae60"
+        st.metric("Current Contagion Index", f"{_cg_cur:.3f}",
+                  help="Mean absolute off-diagonal correlation across all sub-score pairs (90d window). >0.6 = high contagion.")
+
+    _cg_c1, _cg_c2 = st.columns(2)
+    with _cg_c1:
+        st.subheader("Current Correlation Matrix")
+        if not _cg_matrix.empty:
+            _cg_heat = _go_cg.Figure(_go_cg.Heatmap(
+                z=_cg_matrix.values.tolist(),
+                x=_cg_matrix.columns.tolist(),
+                y=_cg_matrix.index.tolist(),
+                colorscale="RdYlGn_r",
+                zmin=-1, zmax=1,
+                text=[[f"{v:.2f}" for v in row] for row in _cg_matrix.values],
+                texttemplate="%{text}",
+                hovertemplate="%{y} × %{x}<br>Corr: %{z:.3f}<extra></extra>",
+            ))
+            _cg_heat.update_layout(
+                height=380, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"), margin=dict(l=8,r=8,t=8,b=8),
+                xaxis=dict(tickangle=-30, color="#6b7280"),
+                yaxis=dict(color="#6b7280"),
+            )
+            st.plotly_chart(_cg_heat, use_container_width=True)
+        else:
+            st.info("Not enough data for correlation matrix.")
+
+    with _cg_c2:
+        st.subheader("Contagion Index Over Time")
+        if not _cg_index.empty:
+            _cg_dates = pd.to_datetime(df["date"]) if "date" in df.columns else pd.RangeIndex(len(_cg_index))
+            _cg_idx_s = _cg_index.values if hasattr(_cg_index, "values") else _cg_index
+            _cg_line = _go_cg.Figure(_go_cg.Scatter(
+                x=list(_cg_dates)[-len(_cg_idx_s):],
+                y=list(_cg_idx_s),
+                line=dict(color="#e67e22", width=1.8),
+                fill="tozeroy", fillcolor="rgba(230,126,34,0.08)",
+                hovertemplate="Date: %{x}<br>Index: %{y:.3f}<extra></extra>",
+            ))
+            _cg_line.add_hline(y=0.6, line_color="#e74c3c", line_dash="dot",
+                               line_width=1, annotation_text="High (0.6)",
+                               annotation_font=dict(color="#e74c3c", size=10))
+            _cg_line.add_hline(y=0.4, line_color="#e67e22", line_dash="dot",
+                               line_width=1, annotation_text="Elevated (0.4)",
+                               annotation_font=dict(color="#e67e22", size=10))
+            _cg_line.update_layout(
+                height=380, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"), margin=dict(l=8,r=8,t=8,b=8),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Mean |Corr|", range=[0,1]),
+                hoverlabel=dict(bgcolor="#1a1f2e", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_cg_line, use_container_width=True)
+        else:
+            st.info("Not enough data for contagion index.")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 13: Historical Analogs
+# =============================================================================
+with _analytics_sub13:
+    import plotly.graph_objects as _go_ha
+    st.header("Historical Analogs")
+    st.caption(
+        "Finds the 5 closest historical dates to current conditions via cosine similarity "
+        "across all 7 composite sub-scores. Shows what happened to HY spreads and SP500 "
+        "over the next 30 and 60 days from each analog."
+    )
+    with st.spinner("Finding historical analogs…"):
+        _ha_df = load_historical_analogs(df)
+        _ha_summary = get_analog_summary(_ha_df) if not _ha_df.empty else {}
+
+    if _ha_df.empty:
+        st.info("Not enough historical data to find analogs.")
+    else:
+        # Summary metrics
+        _ha_c1, _ha_c2, _ha_c3, _ha_c4 = st.columns(4)
+        _ha_c1.metric("Avg SP500 30D Fwd",
+                      f"{_ha_summary.get('sp500_fwd_30d',{}).get('mean','—'):.1f}%" if _ha_summary.get('sp500_fwd_30d') else "—",
+                      help="Mean SP500 30-day forward return across top 5 analogs")
+        _ha_c2.metric("Avg SP500 60D Fwd",
+                      f"{_ha_summary.get('sp500_fwd_60d',{}).get('mean','—'):.1f}%" if _ha_summary.get('sp500_fwd_60d') else "—")
+        _ha_c3.metric("Avg HY Spread 30D Δ",
+                      f"{_ha_summary.get('hy_fwd_30d',{}).get('mean','—'):.2f}pp" if _ha_summary.get('hy_fwd_30d') else "—",
+                      help="Mean HY spread change (pp) over 30 days. Positive = widening.")
+        _ha_c4.metric("Avg HY Spread 60D Δ",
+                      f"{_ha_summary.get('hy_fwd_60d',{}).get('mean','—'):.2f}pp" if _ha_summary.get('hy_fwd_60d') else "—")
+
+        # Analog table
+        st.subheader("Top 5 Closest Historical Dates")
+        _ha_display = _ha_df.copy()
+        _ha_display["date"] = _ha_display["date"].astype(str).str[:10]
+        _ha_display["similarity"] = _ha_display["similarity"].map(lambda v: f"{v:.3f}")
+        _ha_display["composite_risk_score_smooth"] = _ha_display["composite_risk_score_smooth"].map(lambda v: f"{v:.1f}")
+        for _hc in ["sp500_fwd_30d","sp500_fwd_60d"]:
+            if _hc in _ha_display.columns:
+                _ha_display[_hc] = _ha_display[_hc].map(lambda v: f"{v:+.2f}%" if pd.notna(v) else "—")
+        for _hc in ["hy_fwd_30d","hy_fwd_60d"]:
+            if _hc in _ha_display.columns:
+                _ha_display[_hc] = _ha_display[_hc].map(lambda v: f"{v:+.2f}pp" if pd.notna(v) else "—")
+        _ha_display.columns = ["Date","Regime","Similarity","Comp Score",
+                               "SP500 30D","SP500 60D","HY Δ 30D","HY Δ 60D"]
+        st.dataframe(_ha_display, use_container_width=True)
+
+        # Bar chart of forward outcomes
+        _ha_bar = _go_ha.Figure()
+        _ha_bar.add_trace(_go_ha.Bar(
+            name="SP500 30D %", x=_ha_df["date"].astype(str).str[:10],
+            y=_ha_df["sp500_fwd_30d"], marker_color="#4f8ef7",
+            hovertemplate="%{x}<br>SP500 30D: %{y:+.2f}%<extra></extra>",
+        ))
+        _ha_bar.add_trace(_go_ha.Bar(
+            name="HY Δ 30D (pp)", x=_ha_df["date"].astype(str).str[:10],
+            y=_ha_df["hy_fwd_30d"], marker_color="#e74c3c",
+            hovertemplate="%{x}<br>HY 30D Δ: %{y:+.2f}pp<extra></extra>",
+        ))
+        _ha_bar.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+        _ha_bar.update_layout(
+            barmode="group", height=300,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"), margin=dict(l=8,r=8,t=8,b=60),
+            xaxis=dict(showgrid=False, color="#6b7280", tickangle=-20),
+            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+            legend=dict(orientation="h", y=1.1, bgcolor="rgba(0,0,0,0)"),
+            hoverlabel=dict(bgcolor="#1a1f2e", font=dict(color="#e2e8f0")),
+        )
+        st.plotly_chart(_ha_bar, use_container_width=True)
+        st.caption(
+            "Analogs exclude the last 252 trading days to avoid near-identical recent dates. "
+            "Similarity = cosine similarity of normalized 7-signal vector. "
+            "Forward outcomes show what actually happened from each analog date."
+        )
+
+
+# =============================================================================
+# ANALYTICS sub-tab 14: Regime Persistence
+# =============================================================================
+with _analytics_sub14:
+    import plotly.graph_objects as _go_rp
+    st.header("Regime Persistence")
+    st.caption(
+        "Empirical survival analysis of regime dwell times. "
+        "Given the current regime has lasted N days, estimates the probability it continues for another 10/20/30/60 days."
+    )
+    with st.spinner("Computing regime persistence…"):
+        _rp_res = load_persistence(df)
+
+    _rp_cur     = _rp_res.get("current_regime", "—")
+    _rp_days    = _rp_res.get("days_in_regime", 0)
+    _rp_start   = _rp_res.get("regime_start_date", "—")
+    _rp_surv    = _rp_res.get("survival_probs", {})
+    _rp_med     = _rp_res.get("median_dwell", None)
+    _rp_mean    = _rp_res.get("mean_dwell", None)
+    _rp_curves  = _rp_res.get("survival_curves", {})
+
+    _rp_h1, _rp_h2, _rp_h3, _rp_h4, _rp_h5, _rp_h6 = st.columns(6)
+    _rp_h1.metric("Current Regime", _rp_cur)
+    _rp_h2.metric("Days Active", _rp_days, help=f"Since {_rp_start}")
+    _rp_h3.metric("P(+10d)", f"{_rp_surv.get(10,0):.0%}" if _rp_surv.get(10) is not None else "—")
+    _rp_h4.metric("P(+20d)", f"{_rp_surv.get(20,0):.0%}" if _rp_surv.get(20) is not None else "—")
+    _rp_h5.metric("P(+30d)", f"{_rp_surv.get(30,0):.0%}" if _rp_surv.get(30) is not None else "—")
+    _rp_h6.metric("P(+60d)", f"{_rp_surv.get(60,0):.0%}" if _rp_surv.get(60) is not None else "—")
+    if _rp_med:
+        st.caption(f"Historical median dwell for **{_rp_cur}**: {_rp_med:.0f} days · mean: {_rp_mean:.0f} days")
+
+    # Survival curves for all regimes
+    if _rp_curves:
+        st.subheader("Survival Curves by Regime")
+        _rp_fig = _go_rp.Figure()
+        _rp_colors = {"Risk-On":"#27ae60","Neutral":"#4f8ef7","Caution":"#e67e22","Risk-Off":"#e74c3c"}
+        for _reg, _curve in _rp_curves.items():
+            if hasattr(_curve, "__len__") and len(_curve) > 0:
+                _rp_fig.add_trace(_go_rp.Scatter(
+                    x=list(range(len(_curve))),
+                    y=list(_curve) if not hasattr(_curve, "values") else list(_curve.values),
+                    name=_reg,
+                    line=dict(color=_rp_colors.get(_reg,"#9aa0aa"), width=2,
+                              dash="solid" if _reg == _rp_cur else "dot"),
+                    hovertemplate=f"{_reg}<br>Day %{{x}}: %{{y:.0%}} survive<extra></extra>",
+                ))
+        if _rp_days > 0:
+            _rp_fig.add_vline(x=_rp_days, line_color="rgba(255,255,255,0.3)",
+                              line_dash="dash", line_width=1.5,
+                              annotation_text=f"Now ({_rp_days}d)",
+                              annotation_font=dict(color="#9aa0aa", size=10))
+        _rp_fig.update_layout(
+            height=340, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"), margin=dict(l=8,r=8,t=8,b=8),
+            xaxis=dict(showgrid=False, color="#6b7280", title="Days Since Regime Start"),
+            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                       color="#6b7280", title="P(regime continues)", tickformat=".0%"),
+            legend=dict(orientation="h", y=1.1, bgcolor="rgba(0,0,0,0)"),
+            hoverlabel=dict(bgcolor="#1a1f2e", font=dict(color="#e2e8f0")),
+        )
+        st.plotly_chart(_rp_fig, use_container_width=True)
+        st.caption("Solid line = current regime · dotted = others · vertical dashed = today.")
+
+    # Dwell time table
+    _rp_dwell = _rp_res.get("dwell_times", pd.DataFrame())
+    if not _rp_dwell.empty:
+        with st.expander("Historical dwell-time log"):
+            st.dataframe(_rp_dwell.tail(50), use_container_width=True)
