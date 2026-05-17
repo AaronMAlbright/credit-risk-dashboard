@@ -41,6 +41,7 @@ jobs:
           git diff --cached --quiet || git commit -m "chore: daily data refresh $(date -u +%Y-%m-%d)"
 
       - name: Run alert checks
+        if: ${{ secrets.ALERT_SMTP_HOST != '' }}
         env:
           FRED_API_KEY:        ${{ secrets.FRED_API_KEY }}
           ALERT_SMTP_HOST:     ${{ secrets.ALERT_SMTP_HOST }}
@@ -52,6 +53,7 @@ jobs:
         run: python scripts/send_alerts.py --min-level INFO
 
       - name: Commit alert state
+        if: ${{ secrets.ALERT_SMTP_HOST != '' }}
         run: |
           git add history/alert_state.json
           git diff --cached --quiet || git commit -m "chore: update alert state $(date -u +%Y-%m-%d)"
