@@ -91,6 +91,16 @@ from src.live_snapshot import get_live_snapshot
 from src.stress_contagion import run_contagion_analysis
 from src.regime_persistence import run_persistence_analysis
 from src.drawdown_attribution import run_drawdown_attribution
+from src.taylor_rule import run_taylor_analysis
+from src.recession_model import run_recession_analysis
+from src.credit_curves import run_quality_curve_analysis
+from src.default_forecaster import run_default_analysis
+from src.dv01 import run_dv01_analysis
+from src.conditional_var import run_cvar_analysis
+from src.merton import run_merton_analysis
+from src.efficient_frontier import compute_efficient_frontier
+from src.kelly import run_kelly_analysis
+from src.granger import run_granger_analysis
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -476,6 +486,66 @@ def load_drawdown_attribution(_df):
         return run_drawdown_attribution(_bt)
     except Exception as _e:
         return {"drawdowns": [], "avg_component_drag": {}, "error": str(_e)}
+
+
+@st.cache_data
+def load_taylor(_df):
+    """Run Taylor Rule analysis (cached)."""
+    return run_taylor_analysis(_df)
+
+
+@st.cache_data
+def load_recession(_df):
+    """Run Estrella-Mishkin recession probability model (cached)."""
+    return run_recession_analysis(_df)
+
+
+@st.cache_data
+def load_quality_curve(_df):
+    """Run credit quality curve analysis (cached)."""
+    return run_quality_curve_analysis(_df)
+
+
+@st.cache_data
+def load_default_analysis(_df):
+    """Run Jarrow-Turnbull default rate analysis (cached)."""
+    return run_default_analysis(_df)
+
+
+@st.cache_data
+def load_dv01(_df):
+    """Run DV01 / spread sensitivity analysis (cached)."""
+    return run_dv01_analysis(_df)
+
+
+@st.cache_data
+def load_cvar(_df):
+    """Run CVaR by regime analysis (cached)."""
+    return run_cvar_analysis(_df)
+
+
+@st.cache_data
+def load_merton(_df):
+    """Run Merton Distance-to-Default analysis (cached)."""
+    return run_merton_analysis(_df)
+
+
+@st.cache_data
+def load_efficient_frontier(_df):
+    """Run efficient frontier Monte Carlo (cached)."""
+    return compute_efficient_frontier(_df)
+
+
+@st.cache_data
+def load_kelly(_df):
+    """Run Kelly criterion sizing analysis (cached)."""
+    return run_kelly_analysis(_df)
+
+
+@st.cache_data
+def load_granger(_df):
+    """Run Granger causality tests (cached)."""
+    return run_granger_analysis(_df)
 
 
 @st.cache_data
@@ -1260,6 +1330,117 @@ with tab1:
                     use_container_width=True,
                 )
 
+    # ── Taylor Rule + Monetary Policy Gap ────────────────────────────────────
+    st.divider()
+    st.subheader("Monetary Policy: Taylor Rule")
+    st.caption(
+        "The **Taylor Rule** (1993) estimates where the Fed funds rate *should* be based on "
+        "inflation and the output gap: r = r* + π + 0.5(π − π*) + 0.5(y − y*). "
+        "A **positive policy gap** (actual > Taylor rate) means policy is *restrictively tight* — "
+        "historically associated with credit spread widening and financial stress."
+    )
+    try:
+        _tr = load_taylor(df)
+        if _tr.get("available"):
+            _tr_cur = _tr["current"]
+            _tr1, _tr2, _tr3, _tr4 = st.columns(4)
+            _tr1.metric("Fed Funds Rate", f"{_tr_cur.get('fed_funds', float('nan')):.2f}%")
+            _tr2.metric("Taylor Rule Rate", f"{_tr_cur.get('taylor_rate', float('nan')):.2f}%",
+                        help="Estimated neutral rate given inflation and unemployment gap")
+            _tr3.metric("Policy Gap", f"{_tr_cur.get('policy_gap', 0):+.2f}pp",
+                        delta=f"{_tr_cur.get('policy_gap', 0):+.2f}pp",
+                        delta_color="inverse",
+                        help="Actual − Taylor rate. Positive = too tight.")
+            _tr4.metric("Stance", _tr_cur.get("stance", "—"))
+
+            # Rolling policy gap chart
+            if "df" in _tr and "policy_gap" in _tr["df"].columns:
+                import plotly.graph_objects as _trgo
+                _tr_df = _tr["df"].copy()
+                _tr_df["date"] = pd.to_datetime(_tr_df["date"])
+                _tr_fig = _trgo.Figure()
+                _tr_colors = ["#e74c3c" if v > 0 else "#27ae60" for v in _tr_df["policy_gap"].fillna(0)]
+                _tr_fig.add_trace(_trgo.Bar(
+                    x=_tr_df["date"], y=_tr_df["policy_gap"],
+                    marker_color=_tr_colors, name="Policy Gap",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Policy Gap: %{y:+.2f}pp<extra></extra>",
+                ))
+                _tr_fig.add_hline(y=0, line_color="rgba(255,255,255,0.25)", line_width=1)
+                _tr_fig.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Actual − Taylor Rate (pp)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_tr_fig, use_container_width=True)
+                st.caption("Red = policy tighter than Taylor Rule prescribes · Green = looser than prescribed")
+        else:
+            st.info("Taylor Rule unavailable — requires FEDFUNDS, CPIAUCSL / T10YIE, UNRATE in dataset.")
+    except Exception as _tr_e:
+        st.caption(f"Taylor Rule unavailable: {_tr_e}")
+
+    # ── Recession Probability ─────────────────────────────────────────────────
+    st.subheader("Recession Probability (Estrella-Mishkin)")
+    st.caption(
+        "The **Estrella-Mishkin (1998)** model uses the yield curve spread (10y − 3m) as "
+        "the sole predictor of recessions 12 months ahead via a probit regression. "
+        "It was calibrated on post-war US data and has accurately signaled every recession since 1969. "
+        "**Threshold**: p > 25% = elevated concern; p > 40% = high probability."
+    )
+    try:
+        _rec = load_recession(df)
+        if _rec.get("available"):
+            _rc = _rec["current"]
+            _r1, _r2, _r3, _r4 = st.columns(4)
+            _r1.metric("10y−3m Spread", f"{_rc['spread_10y3m']:.2f}%",
+                       help="Negative = inverted yield curve")
+            _r2.metric("10y−2y Spread", f"{_rc['spread_10y2y']:.2f}%")
+            _r3.metric("Recession Prob (12m)", f"{_rc['recession_prob_12m']:.1%}",
+                       delta_color="inverse",
+                       delta=f"{_rc['recession_prob_12m']:.1%}")
+            _r4.metric("Signal", _rc.get("signal", "—"))
+
+            # Rolling recession probability chart
+            if "df" in _rec and "recession_prob_12m" in _rec["df"].columns:
+                import plotly.graph_objects as _recgo
+                _rec_df = _rec["df"].copy()
+                _rec_df["date"] = pd.to_datetime(_rec_df["date"])
+                _rec_fig = _recgo.Figure()
+                _rec_fig.add_trace(_recgo.Scatter(
+                    x=_rec_df["date"], y=_rec_df["recession_prob_12m"] * 100,
+                    name="Recession Prob", line=dict(color="#e67e22", width=2),
+                    fill="tozeroy", fillcolor="rgba(230,126,34,0.12)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Recession Prob: %{y:.1f}%<extra></extra>",
+                ))
+                _rec_fig.add_hline(y=25, line=dict(color="#e74c3c", dash="dash", width=1),
+                                   annotation_text="25% Elevated", annotation_position="top right",
+                                   annotation_font=dict(color="#e74c3c", size=10))
+                _rec_fig.add_hline(y=40, line=dict(color="#9b59b6", dash="dot", width=1),
+                                   annotation_text="40% High", annotation_position="top right",
+                                   annotation_font=dict(color="#9b59b6", size=10))
+                _rec_fig.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Probability (%)", range=[0, 100]),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_rec_fig, use_container_width=True)
+
+            # Inversion episodes table
+            if _rec.get("historical_inversions") is not None and not _rec["historical_inversions"].empty:
+                with st.expander("Historical yield curve inversion episodes"):
+                    st.dataframe(_rec["historical_inversions"], use_container_width=True, hide_index=True)
+        else:
+            st.info("Recession model unavailable — requires 10-year and 3-month Treasury yields in dataset.")
+    except Exception as _rec_e:
+        st.caption(f"Recession model unavailable: {_rec_e}")
+
 with tab2:
     import plotly.graph_objects as _go
     from plotly.subplots import make_subplots as _make_subplots
@@ -1759,6 +1940,51 @@ with tab2:
                        color="#6b7280", title="Return %")))
         st.plotly_chart(_fig8, use_container_width=True)
 
+    # ── Credit Quality Curve ──────────────────────────────────────────────────
+    st.subheader("Credit Quality Curve")
+    st.caption(
+        "The **credit quality curve** measures the spread premium demanded at each rating tier: "
+        "IG → BBB → HY. A **steep curve** (large HY-IG differential) signals risk aversion — "
+        "investors demand extra compensation for credit risk. A **flat/inverted curve** signals complacency. "
+        "The z-score is relative to the trailing 252-day history."
+    )
+    try:
+        _qc = load_quality_curve(df)
+        if _qc.get("available"):
+            _qcc = _qc["current"]
+            _qc1, _qc2, _qc3, _qc4 = st.columns(4)
+            _qc1.metric("HY Spread", f"{_qcc.get('hy_spread', float('nan')):.2f}%")
+            _qc2.metric("HY−IG Premium", f"{_qcc.get('hy_ig_premium', float('nan')):.2f}pp")
+            _qc3.metric("Curve Z-Score", f"{_qcc.get('curve_slope_zscore', float('nan')):.2f}",
+                        help="High z-score = steep curve = elevated risk aversion")
+            _qc4.metric("Interpretation", _qcc.get("interpretation", "—"))
+
+            if "df" in _qc and "hy_ig_premium" in _qc["df"].columns:
+                _qc_df = _qc["df"].copy()
+                _qc_df["date"] = pd.to_datetime(_qc_df["date"])
+                _qcfig = _go.Figure()
+                if "bbb_ig_premium" in _qc_df.columns:
+                    _qcfig.add_trace(_go.Scatter(
+                        x=_qc_df["date"], y=_qc_df["bbb_ig_premium"],
+                        name="BBB−IG Premium", line=dict(color="#f39c12", width=1.5),
+                    ))
+                _qcfig.add_trace(_go.Scatter(
+                    x=_qc_df["date"], y=_qc_df["hy_ig_premium"],
+                    name="HY−IG Premium", line=dict(color="#e74c3c", width=2),
+                    fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+                ))
+                _qcfig.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                _qcfig.update_layout(**_dlayout(
+                    height=240,
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Spread Premium (pp)"),
+                ))
+                st.plotly_chart(_qcfig, use_container_width=True)
+        else:
+            st.info("Credit quality curve unavailable — requires HY spread data in dataset.")
+    except Exception as _qc_e:
+        st.caption(f"Quality curve unavailable: {_qc_e}")
+
 with tab3:
     st.header("Portfolio Stance")
 
@@ -1866,15 +2092,18 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 14 sub-tabs
+with tab5:  # Analytics — 19 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
-     _analytics_sub12, _analytics_sub13, _analytics_sub14) = st.tabs([
+     _analytics_sub12, _analytics_sub13, _analytics_sub14,
+     _analytics_sub15, _analytics_sub16, _analytics_sub17, _analytics_sub18,
+     _analytics_sub19) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
         "Contagion", "Analogs", "Persistence",
+        "Merton DD", "Frontier", "Kelly", "Granger", "Defaults",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -2834,6 +3063,108 @@ with tab4:
             st.caption("Bars = each component used in isolation · diamond = actual blended strategy.")
     except Exception as _da_e:
         st.caption(f"Drawdown attribution unavailable: {_da_e}")
+
+    # ── DV01 / Spread Sensitivity ─────────────────────────────────────────────
+    st.subheader("3. DV01 — Interest Rate & Spread Sensitivity")
+    st.caption(
+        "**DV01** (Dollar Value of 01) measures portfolio P&L impact of a 1 basis-point spread move. "
+        "Formula: DV01 = Portfolio Value × Blended Duration × 0.0001. "
+        "Duration is the price sensitivity of a bond to yield changes: a 4y HY bond loses ~4% in value "
+        "per 100bp rise in yields. This section shows scenario P&L across a range of spread shocks."
+    )
+    try:
+        _dv = load_dv01(df)
+        if _dv.get("available"):
+            _dvc = _dv["current"]
+            _dv1, _dv2, _dv3, _dv4 = st.columns(4)
+            _dv1.metric("Blended Duration", f"{_dvc.get('blended_duration', 0):.1f} yrs")
+            _dv_pnl = _dvc.get('pnl_scenarios', {})
+            _dv2.metric("DV01 (per $1M)", f"${_dvc.get('dv01', 0):,.0f}",
+                        help="P&L change per 1bp spread move on a $1M portfolio")
+            _dv3.metric("P&L at +100bps", f"${_dv_pnl.get('+100bps', 0):,.0f}",
+                        delta_color="inverse",
+                        delta=f"${_dv_pnl.get('+100bps', 0):,.0f}")
+            _dv4.metric("P&L at −50bps",  f"${_dv_pnl.get('-50bps', 0):,.0f}",
+                        delta=f"${_dv_pnl.get('-50bps', 0):,.0f}")
+
+            _scen_tbl = _dv.get("scenario_table", pd.DataFrame())
+            if not _scen_tbl.empty:
+                with st.expander("Full scenario table (−150 to +300 bps)"):
+                    _st_disp = _scen_tbl.copy()
+                    if "pnl_pct" in _st_disp.columns:
+                        _st_disp["pnl_pct"] = _st_disp["pnl_pct"].map("{:.2%}".format)
+                    if "pnl" in _st_disp.columns:
+                        _st_disp["pnl"] = _st_disp["pnl"].map("${:,.0f}".format)
+                    st.dataframe(_st_disp, use_container_width=True, hide_index=True)
+        else:
+            st.info("DV01 unavailable — requires HY spread data.")
+    except Exception as _dv_e:
+        st.caption(f"DV01 unavailable: {_dv_e}")
+
+    # ── CVaR by Regime ────────────────────────────────────────────────────────
+    st.subheader("4. Conditional Value-at-Risk (CVaR) by Regime")
+    st.caption(
+        "**CVaR** (Expected Shortfall) answers: *given that tomorrow is a bad day, how bad?* "
+        "It is the expected loss beyond the VaR threshold and is the preferred tail risk measure under Basel III. "
+        "CVaR_95 = average of the worst 5% of daily return observations. "
+        "Regimes have dramatically different tail profiles — Risk-Off CVaR is typically 3–5× worse than Risk-On."
+    )
+    try:
+        _cv = load_cvar(df)
+        if _cv.get("available"):
+            _cv_regime = _cv.get("regime_stats", pd.DataFrame())
+            if not _cv_regime.empty:
+                import plotly.graph_objects as _cvgo
+                _cv_cols = st.columns([2, 1])
+                with _cv_cols[0]:
+                    _cvar_fig = _cvgo.Figure()
+                    _regime_order = ["Risk-On", "Neutral", "Caution", "Risk-Off"]
+                    _cv_plot = _cv_regime[_cv_regime.index.isin(_regime_order)].reindex(
+                        [r for r in _regime_order if r in _cv_regime.index]
+                    )
+                    _cv_colors = {"Risk-On": "#27ae60", "Neutral": "#f39c12",
+                                  "Caution": "#e67e22", "Risk-Off": "#e74c3c"}
+                    for _rg in _cv_plot.index:
+                        _bar_color = _cv_colors.get(_rg, "#6b7280")
+                        _cvar_fig.add_trace(_cvgo.Bar(
+                            x=[_rg],
+                            y=[_cv_plot.loc[_rg, "cvar_95"] * 100] if "cvar_95" in _cv_plot.columns else [0],
+                            name=_rg, marker_color=_bar_color,
+                            hovertemplate=f"{_rg}<br>CVaR 95: %{{y:.2f}}%<extra></extra>",
+                        ))
+                    _cvar_fig.update_layout(
+                        height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11),
+                        margin=dict(l=8, r=8, t=30, b=8),
+                        title=dict(text="Daily CVaR 95% by Regime (annualised)", font=dict(size=12)),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                   color="#6b7280", title="CVaR 95% (daily %)"),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        showlegend=False,
+                        hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                                        font=dict(color="#e2e8f0")),
+                    )
+                    st.plotly_chart(_cvar_fig, use_container_width=True)
+                with _cv_cols[1]:
+                    _cv_disp = _cv_regime.copy()
+                    _cv_fmt = {}
+                    for _cc in ["mean_return", "volatility", "var_95", "cvar_95", "var_99", "cvar_99", "max_loss"]:
+                        if _cc in _cv_disp.columns:
+                            _cv_fmt[_cc] = "{:.2%}"
+                    for _cc in ["skewness", "kurtosis"]:
+                        if _cc in _cv_disp.columns:
+                            _cv_fmt[_cc] = "{:.2f}"
+                    if "n_obs" in _cv_disp.columns:
+                        _cv_fmt["n_obs"] = "{:.0f}"
+                    st.dataframe(
+                        _cv_disp.style.format(_cv_fmt, na_rep="—"),
+                        use_container_width=True,
+                    )
+                    st.caption("Regime-level tail risk statistics. CVaR = Expected Shortfall.")
+        else:
+            st.info("CVaR unavailable — requires strategy_daily_return or sp500_daily_return.")
+    except Exception as _cv_e:
+        st.caption(f"CVaR unavailable: {_cv_e}")
 
     # ── Credit Portfolio Backtest ─────────────────────────────────────────────
     st.subheader("3. Credit Portfolio Backtest")
@@ -6352,3 +6683,376 @@ with _analytics_sub14:
     if not _rp_dwell.empty:
         with st.expander("Historical dwell-time log"):
             st.dataframe(_rp_dwell.tail(50), use_container_width=True)
+
+# =============================================================================
+# ANALYTICS sub-tab 15: Merton Distance-to-Default
+# =============================================================================
+with _analytics_sub15:
+    import plotly.graph_objects as _go_mrt
+    st.header("Merton Distance-to-Default")
+    st.markdown(
+        """
+        **The Merton (1974) structural model** treats a company's equity as a **call option on its assets**.
+        If asset value falls below the face value of debt, the firm defaults (option expires worthless).
+
+        - **Distance-to-Default (DD)** = how many standard deviations of asset value separate the firm from insolvency.
+        - **DD > 3**: Low default risk (investment grade).  **DD 1–3**: Elevated. **DD < 1**: Distress territory.
+        - Here, DD is estimated *in aggregate* using VIX as a proxy for equity volatility (σ_E)
+          and HY spreads to imply leverage (L). This is a macro-level approximation, not a single-issuer model.
+
+        **Formula**: DD = (ln(1/L) − 0.5σ_V²) / σ_V, where σ_V = σ_E × (1 − L)
+        """
+    )
+    try:
+        _mrt = load_merton(df)
+        if _mrt.get("available"):
+            _mc = _mrt["current"]
+            _m1, _m2, _m3, _m4 = st.columns(4)
+            _m1.metric("Distance-to-Default", f"{_mc.get('dd', float('nan')):.2f}σ",
+                       help="Standard deviations from insolvency. Higher = safer.")
+            _m2.metric("Default Prob (1y)", f"{_mc.get('default_prob_1y', 0):.2%}",
+                       delta_color="inverse", delta=f"{_mc.get('default_prob_1y', 0):.2%}")
+            _m3.metric("Implied Leverage", f"{_mc.get('leverage', 0):.1%}",
+                       help="D/V ratio implied by HY spread level")
+            _m4.metric("Merton Regime", _mc.get("merton_regime", "—"))
+
+            _mrt_df = _mrt.get("df", pd.DataFrame())
+            if not _mrt_df.empty and "dd" in _mrt_df.columns:
+                _mrt_df = _mrt_df.copy()
+                _mrt_df["date"] = pd.to_datetime(_mrt_df["date"])
+                _mrt_fig = _go_mrt.Figure()
+                _mrt_fig.add_trace(_go_mrt.Scatter(
+                    x=_mrt_df["date"], y=_mrt_df["dd"],
+                    name="Distance-to-Default", line=dict(color="#4f8ef7", width=2),
+                    fill="tozeroy", fillcolor="rgba(79,142,247,0.08)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>DD: %{y:.2f}σ<extra></extra>",
+                ))
+                _mrt_fig.add_hline(y=3, line=dict(color="#27ae60", dash="dash", width=1),
+                                   annotation_text="DD=3 (IG threshold)", annotation_position="top left",
+                                   annotation_font=dict(color="#27ae60", size=10))
+                _mrt_fig.add_hline(y=1, line=dict(color="#e74c3c", dash="dash", width=1),
+                                   annotation_text="DD=1 (Distress)", annotation_position="top left",
+                                   annotation_font=dict(color="#e74c3c", size=10))
+                _mrt_fig.update_layout(
+                    height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Distance-to-Default (σ)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_mrt_fig, use_container_width=True)
+
+            _corr = _mrt.get("correlation_with_composite")
+            if _corr is not None:
+                st.caption(f"Pearson correlation of DD with composite risk score: **{_corr:.3f}** "
+                           "(negative expected — high DD = low risk = low score)")
+
+            _hist_low = _mrt.get("historical_low_dd", pd.DataFrame())
+            if not _hist_low.empty:
+                with st.expander(f"Periods with DD < 1 (distress episodes, {len(_hist_low)} rows)"):
+                    st.dataframe(_hist_low[["date", "dd", "default_prob_1y", "merton_regime"]].head(50),
+                                 use_container_width=True, hide_index=True)
+        else:
+            st.info("Merton model unavailable — requires SP500, VIX, and HY spread in dataset.")
+    except Exception as _mrt_e:
+        st.caption(f"Merton model unavailable: {_mrt_e}")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 16: Efficient Frontier
+# =============================================================================
+with _analytics_sub16:
+    import plotly.graph_objects as _go_ef
+    st.header("Mean-Variance Efficient Frontier")
+    st.markdown(
+        """
+        **Modern Portfolio Theory (Markowitz 1952)**: given a set of assets, the *efficient frontier*
+        traces portfolios with the **maximum return for each level of risk**.
+
+        Assets: HY credit, IG credit, Cash (3% p.a. proxy). Portfolios are long-only (weights ≥ 0, sum to 1).
+        Monte Carlo simulation draws 5,000 random weight combinations and plots each portfolio's
+        (volatility, return) pair. The upper-left envelope is the **efficient frontier**.
+
+        - **Min-Variance portfolio**: lowest possible volatility (safest).
+        - **Max-Sharpe portfolio**: best risk-adjusted return (tangency portfolio).
+        - Any portfolio *below* the frontier is suboptimal — you could get more return for the same risk.
+        """
+    )
+    try:
+        _ef = load_efficient_frontier(df)
+        if _ef.get("available"):
+            _efm = _ef.get("min_var", {})
+            _efs = _ef.get("max_sharpe", {})
+            _efc = _ef.get("current_allocation", {})
+
+            _ef1, _ef2, _ef3 = st.columns(3)
+            with _ef1:
+                st.markdown("**Min-Variance Portfolio**")
+                st.caption(f"HY: {_efm.get('hy_weight',0):.0%} · IG: {_efm.get('ig_weight',0):.0%} · Cash: {_efm.get('cash_weight',0):.0%}")
+                st.caption(f"Return: {_efm.get('annual_return',0):.1%} · Vol: {_efm.get('annual_vol',0):.1%} · Sharpe: {_efm.get('sharpe',0):.2f}")
+            with _ef2:
+                st.markdown("**Max-Sharpe Portfolio**")
+                st.caption(f"HY: {_efs.get('hy_weight',0):.0%} · IG: {_efs.get('ig_weight',0):.0%} · Cash: {_efs.get('cash_weight',0):.0%}")
+                st.caption(f"Return: {_efs.get('annual_return',0):.1%} · Vol: {_efs.get('annual_vol',0):.1%} · Sharpe: {_efs.get('sharpe',0):.2f}")
+            with _ef3:
+                st.markdown("**Current Allocation**")
+                st.caption(f"HY: {_efc.get('hy_weight',0):.0%} · IG: {_efc.get('ig_weight',0):.0%} · Cash: {_efc.get('cash_weight',0):.0%}")
+                st.caption(f"Return: {_efc.get('expected_return', _efc.get('annual_return',0)):.1%} · Vol: {_efc.get('annual_vol',0):.1%} · Sharpe: {_efc.get('sharpe',0):.2f}")
+
+            _sim = _ef.get("simulated", pd.DataFrame())
+            if not _sim.empty:
+                _ef_fig = _go_ef.Figure()
+                _ef_fig.add_trace(_go_ef.Scatter(
+                    x=_sim["vol"] * 100, y=_sim["ret"] * 100,
+                    mode="markers", name="Simulated portfolios",
+                    marker=dict(color=_sim["sharpe"], colorscale="Viridis", size=3,
+                                opacity=0.5, showscale=True,
+                                colorbar=dict(title="Sharpe", len=0.6)),
+                    hovertemplate="Vol: %{x:.1f}%<br>Return: %{y:.1f}%<br>Sharpe: %{marker.color:.2f}<extra></extra>",
+                ))
+                for _pt, _lbl, _clr, _sym in [
+                    (_efm, "Min-Variance", "#27ae60", "diamond"),
+                    (_efs, "Max-Sharpe",   "#f39c12", "star"),
+                    (_efc, "Current",      "#4f8ef7", "circle"),
+                ]:
+                    _pt_vol = _pt.get("annual_vol")
+                    _pt_ret = _pt.get("annual_return") or _pt.get("expected_return")
+                    if _pt_vol is not None and _pt_ret is not None:
+                        _ef_fig.add_trace(_go_ef.Scatter(
+                            x=[_pt_vol * 100], y=[_pt_ret * 100],
+                            mode="markers+text", name=_lbl,
+                            text=[_lbl], textposition="top center",
+                            marker=dict(color=_clr, size=12, symbol=_sym,
+                                        line=dict(color="white", width=1.5)),
+                            hovertemplate=f"{_lbl}<br>Vol: %{{x:.1f}}%<br>Return: %{{y:.1f}}%<extra></extra>"
+                        ))
+                _ef_fig.update_layout(
+                    height=400, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Annual Volatility (%)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Annual Return (%)"),
+                    legend=dict(orientation="h", y=1.08, bgcolor="rgba(0,0,0,0)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_ef_fig, use_container_width=True)
+                st.caption("Each dot = 1 random portfolio. Color = Sharpe ratio. Upper-left = efficient frontier.")
+        else:
+            st.info("Efficient frontier unavailable — requires HY or IG total return data (hy_total_return_daily / ig_total_return_daily).")
+    except Exception as _ef_e:
+        st.caption(f"Efficient frontier unavailable: {_ef_e}")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 17: Kelly Criterion
+# =============================================================================
+with _analytics_sub17:
+    st.header("Kelly Criterion — Optimal Position Sizing")
+    st.markdown(
+        """
+        **The Kelly Criterion** (Kelly 1956) gives the mathematically optimal bet size that maximises
+        the long-run geometric growth rate of wealth.
+
+        - **Discrete Kelly**: f* = (p × b − q) / b, where p = win probability, b = avg win/avg loss odds, q = 1 − p.
+        - **Continuous Kelly**: f* = μ / σ², where μ = mean return, σ = return standard deviation.
+        - In practice: **half-Kelly** is standard because full-Kelly has enormous variance and a single bad run
+          can wipe out gains. **Quarter-Kelly** is the conservative institutional choice.
+
+        A position *above* full-Kelly destroys geometric growth rate even if it wins on average.
+        """
+    )
+    try:
+        _kl = load_kelly(df)
+        if _kl.get("available"):
+            _klf = _kl.get("full", {})
+            _klo = _kl.get("oos", {})
+            _klr = _kl.get("regime_kelly", pd.DataFrame())
+            _klw = _kl.get("current_weight")
+            _klass = _kl.get("kelly_vs_current", "—")
+
+            _k1, _k2, _k3, _k4 = st.columns(4)
+            _k1.metric("Full Kelly (OOS)", f"{_klo.get('kelly_fraction', float('nan')):.1%}",
+                       help="Optimal equity weight from OOS performance data")
+            _k2.metric("Half-Kelly (OOS)", f"{_klo.get('half_kelly', float('nan')):.1%}",
+                       help="Practical sizing: half of full Kelly")
+            _k3.metric("Current Strategy Weight", f"{_klw:.1%}" if _klw is not None else "—",
+                       help="Actual strategy equity weight today")
+            _k4.metric("Sizing Assessment", _klass)
+
+            _kl_cols = st.columns(2)
+            with _kl_cols[0]:
+                st.markdown("**Full History Kelly**")
+                st.caption(
+                    f"Win rate: {_klf.get('win_rate',0):.1%} · "
+                    f"Avg win: {_klf.get('avg_win',0):.2%} · "
+                    f"Avg loss: {_klf.get('avg_loss',0):.2%}"
+                )
+                st.caption(
+                    f"Discrete Kelly: {_klf.get('kelly_fraction',0):.1%} · "
+                    f"Continuous Kelly: {_klf.get('continuous_kelly',0):.1%}"
+                )
+            with _kl_cols[1]:
+                st.markdown("**OOS Kelly (post-2016)**")
+                st.caption(
+                    f"Win rate: {_klo.get('win_rate',0):.1%} · "
+                    f"Avg win: {_klo.get('avg_win',0):.2%} · "
+                    f"Avg loss: {_klo.get('avg_loss',0):.2%}"
+                )
+                st.caption(
+                    f"Discrete Kelly: {_klo.get('kelly_fraction',0):.1%} · "
+                    f"Continuous Kelly: {_klo.get('continuous_kelly',0):.1%}"
+                )
+
+            if not _klr.empty:
+                st.markdown("**Per-Regime Kelly Sizing**")
+                st.caption("Optimal position size within each regime based on empirical win/loss stats.")
+                _klr_fmt = {}
+                for _c in ["win_rate", "avg_win", "avg_loss", "kelly_fraction", "half_kelly"]:
+                    if _c in _klr.columns:
+                        _klr_fmt[_c] = "{:.1%}"
+                for _c in ["odds_ratio", "continuous_kelly"]:
+                    if _c in _klr.columns:
+                        _klr_fmt[_c] = "{:.2f}"
+                st.dataframe(
+                    _klr.style.format(_klr_fmt, na_rep="—"),
+                    use_container_width=True,
+                )
+        else:
+            st.info("Kelly analysis unavailable — requires strategy_daily_return in backtest data.")
+    except Exception as _kl_e:
+        st.caption(f"Kelly analysis unavailable: {_kl_e}")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 18: Granger Causality
+# =============================================================================
+with _analytics_sub18:
+    st.header("Granger Causality — Lead/Lag Relationships")
+    st.markdown(
+        """
+        **Granger causality** (Granger 1969) tests whether knowing the history of series X
+        improves the forecast of series Y beyond Y's own history.
+
+        It is *not* true causality — it is **predictive precedence**. If HY spreads Granger-cause
+        VIX at 5-day lags, it means past spread moves help predict future VIX moves.
+
+        Test statistic: F-test comparing restricted VAR (Y on own lags) vs unrestricted (Y on own + X lags).
+        A significant F-statistic (p < 0.05) rejects the null that X does *not* help predict Y.
+
+        Tested pairs: HY Spread, VIX, Composite Risk Score, SP500 Return — all bidirectional at 1, 5, 21 day lags.
+        """
+    )
+    try:
+        _gr = load_granger(df)
+        if _gr.get("available"):
+            _gr_res = _gr.get("results", pd.DataFrame())
+            _gr_sum = _gr.get("summary", "")
+
+            if _gr_sum:
+                st.info(_gr_sum)
+
+            if not _gr_res.empty:
+                _gr_disp = _gr_res.copy()
+                _gr_fmt = {}
+                if "f_stat" in _gr_disp.columns:
+                    _gr_fmt["f_stat"] = "{:.2f}"
+                if "p_value" in _gr_disp.columns:
+                    _gr_fmt["p_value"] = "{:.4f}"
+
+                def _gr_sig_color(val):
+                    if isinstance(val, float) and val < 0.05:
+                        return "background-color: rgba(39,174,96,0.15); color: #27ae60"
+                    return ""
+
+                _styled = _gr_disp.style.format(_gr_fmt, na_rep="—")
+                if "p_value" in _gr_disp.columns:
+                    _styled = _styled.applymap(_gr_sig_color, subset=["p_value"])
+                st.dataframe(_styled, use_container_width=True, hide_index=True)
+                st.caption(
+                    "Green = p < 0.05 (significant at 5% level). "
+                    "Lags tested: 1d (daily), 5d (weekly), 21d (monthly). "
+                    "Data is first-differenced for stationarity (except SP500 return which is already stationary)."
+                )
+        else:
+            st.info("Granger causality unavailable — requires HY spread, VIX, and composite score data.")
+    except Exception as _gr_e:
+        st.caption(f"Granger analysis unavailable: {_gr_e}")
+
+
+# =============================================================================
+# ANALYTICS sub-tab 19: Default Rate Forecasting
+# =============================================================================
+with _analytics_sub19:
+    import plotly.graph_objects as _go_df
+    st.header("Implied Default Rate — Jarrow-Turnbull Model")
+    st.markdown(
+        """
+        **The Jarrow-Turnbull (1995) model** extracts the *market-implied* default rate from credit spreads.
+
+        The core insight: a credit spread over Treasuries compensates investors for **expected losses**.
+        If recovery rate R is known, the implied default intensity (hazard rate) λ is:
+
+        **λ = Spread / (1 − R)**  where  LGD = 1 − R  (Loss Given Default)
+
+        - **Recovery rate (R)**: historically ~40% for senior unsecured HY bonds (Moody's LossStats).
+        - **LGD** = 60% = the fraction of face value lost in default.
+        - A 500bp HY spread implies: λ = 5% / 0.60 = **8.3% annual default probability**.
+        - The **break-even spread** is what investors need to exactly cover expected credit losses.
+
+        This is a simplified single-name approximation applied to the aggregate HY index.
+        """
+    )
+    try:
+        _dfa = load_default_analysis(df)
+        if _dfa.get("available"):
+            _dfc = _dfa["current"]
+            _df1, _df2, _df3, _df4 = st.columns(4)
+            _df1.metric("HY Spread", f"{_dfc.get('hy_spread', float('nan')):.2f}%")
+            _df2.metric("Implied Default Rate", f"{_dfc.get('implied_default_rate', 0):.2%}",
+                        help="λ = spread / LGD. Market-implied annual default probability.")
+            _df3.metric("Excess Spread", f"{_dfc.get('excess_spread', 0):+.2f}pp",
+                        help="HY spread above break-even. Positive = investor compensated; negative = underpriced.")
+            _df4.metric("Default Regime", _dfc.get("default_regime", "—"))
+
+            if "df" in _dfa and "implied_default_rate" in _dfa["df"].columns:
+                _dfa_df = _dfa["df"].copy()
+                _dfa_df["date"] = pd.to_datetime(_dfa_df["date"])
+                _df_fig = _go_df.Figure()
+                _df_fig.add_trace(_go_df.Scatter(
+                    x=_dfa_df["date"], y=_dfa_df["implied_default_rate"] * 100,
+                    name="Implied Default Rate (%)", line=dict(color="#e74c3c", width=2),
+                    fill="tozeroy", fillcolor="rgba(231,76,60,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Implied Default Rate: %{y:.2f}%<extra></extra>",
+                ))
+                _df_fig.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Implied Default Rate (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_df_fig, use_container_width=True)
+
+            _spread_tbl = _dfa.get("spread_to_default_table", pd.DataFrame())
+            if not _spread_tbl.empty:
+                with st.expander("Spread → Implied Default Rate reference table"):
+                    _tbl_fmt = {}
+                    if "implied_default_rate" in _spread_tbl.columns:
+                        _tbl_fmt["implied_default_rate"] = "{:.2%}"
+                    if "break_even_spread" in _spread_tbl.columns:
+                        _tbl_fmt["break_even_spread"] = "{:.2f}"
+                    st.dataframe(
+                        _spread_tbl.style.format(_tbl_fmt, na_rep="—"),
+                        use_container_width=True, hide_index=True,
+                    )
+                    st.caption(f"Assumes Recovery Rate = {_dfa.get('recovery_rate', 0.40):.0%} · LGD = {_dfa.get('lgd', 0.60):.0%}")
+        else:
+            st.info("Default rate model unavailable — requires HY spread data.")
+    except Exception as _dfa_e:
+        st.caption(f"Default analysis unavailable: {_dfa_e}")
