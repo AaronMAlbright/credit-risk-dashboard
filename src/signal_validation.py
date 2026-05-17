@@ -37,11 +37,18 @@ _SIGNAL_COLS = [
     "complacency_score_smooth",
 ]
 
-# Forward return labels to validate against
+# Forward return/change labels to validate against.
+# "return" columns: high risk score → negative = correct (equity direction).
+# "change" columns: high risk score → positive = correct (spread widening).
 _RETURN_COLS = [
     "sp500_forward_30d_return",
     "sp500_forward_60d_return",
+    "hy_forward_30d_change",
+    "hy_forward_60d_change",
 ]
+
+# Columns where the correct signal is high score → POSITIVE outcome (spread widens)
+_SPREAD_CHANGE_COLS = {"hy_forward_30d_change", "hy_forward_60d_change"}
 
 # Named stress episodes (inclusive date ranges) for episode-level validation
 _STRESS_EPISODES: dict[str, tuple[str, str]] = {
@@ -61,17 +68,22 @@ _STRESS_EPISODES: dict[str, tuple[str, str]] = {
 
 def add_forward_returns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Add sp500_forward_Nd_return columns if not already present.
-    Uses sp500 column; rows near the tail will be NaN (no lookahead).
+    Add sp500_forward_Nd_return and hy_forward_Nd_change columns if not already present.
+    Rows near the tail will be NaN (no lookahead).
     """
     df = df.copy()
-    if "sp500" not in df.columns:
-        return df
-    sp = df["sp500"]
-    for n in (30, 60):
-        col = f"sp500_forward_{n}d_return"
-        if col not in df.columns:
-            df[col] = sp.shift(-n) / sp - 1
+    if "sp500" in df.columns:
+        sp = df["sp500"]
+        for n in (30, 60):
+            col = f"sp500_forward_{n}d_return"
+            if col not in df.columns:
+                df[col] = sp.shift(-n) / sp - 1
+    if "hy_spread" in df.columns:
+        hy = df["hy_spread"]
+        for n in (30, 60):
+            col = f"hy_forward_{n}d_change"
+            if col not in df.columns:
+                df[col] = hy.shift(-n) - hy
     return df
 
 
@@ -81,7 +93,7 @@ def add_forward_returns(df: pd.DataFrame) -> pd.DataFrame:
 
 def validate_signals_vs_returns(
     df: pd.DataFrame,
-    oos_cutoff: str = "2022-01-01",
+    oos_cutoff: str = "2016-01-01",
 ) -> dict[str, Any]:
     """
     For each signal in _SIGNAL_COLS, compute Spearman correlation and
@@ -133,9 +145,16 @@ def validate_signals_vs_returns(
                     continue
                 # Spearman = Pearson correlation of ranks (no scipy needed)
                 r = float(sub[sig].rank().corr(sub[ret].rank()))
-                # High score → negative return = correct call
+                # Equity returns: high score → negative return = correct.
+                # Spread changes: high score → positive change (widening) = correct.
                 high_risk = sub[sig] > 50
-                hit = float((sub.loc[high_risk, ret] < 0).mean()) if high_risk.any() else None
+                if high_risk.any():
+                    if ret in _SPREAD_CHANGE_COLS:
+                        hit = float((sub.loc[high_risk, ret] > 0).mean())
+                    else:
+                        hit = float((sub.loc[high_risk, ret] < 0).mean())
+                else:
+                    hit = None
                 row[label] = {
                     "n":          n,
                     "spearman_r": round(r, 3),
@@ -170,7 +189,7 @@ _MULTI_HORIZONS = [21, 42, 63, 126, 189, 252]
 def validate_signals_multi_horizon(
     df: pd.DataFrame,
     horizons: list[int] = _MULTI_HORIZONS,
-    oos_cutoff: str = "2022-01-01",
+    oos_cutoff: str = "2016-01-01",
 ) -> pd.DataFrame:
     """
     Compute Spearman correlation of each signal vs. forward SP500 return

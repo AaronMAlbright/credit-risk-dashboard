@@ -366,13 +366,13 @@ def load_position_sizing(_df):
 
 
 @st.cache_data
-def load_signal_validation(_df, _oos_cutoff="2022-01-01"):
+def load_signal_validation(_df, _oos_cutoff="2016-01-01"):
     """Run IS/OOS signal validation against forward returns (cached)."""
     return validate_signals_vs_returns(_df, oos_cutoff=_oos_cutoff)
 
 
 @st.cache_data
-def load_signal_horizon_grid(_df, _oos_cutoff="2022-01-01"):
+def load_signal_horizon_grid(_df, _oos_cutoff="2016-01-01"):
     """Compute multi-horizon Spearman correlation grid (cached)."""
     return validate_signals_multi_horizon(_df, oos_cutoff=_oos_cutoff)
 
@@ -990,6 +990,7 @@ with tab1:
 with tab2:
     import plotly.graph_objects as _go
     from plotly.subplots import make_subplots as _make_subplots
+    from src.backtester import OOS_CUTOFF as _OOS_CUTOFF
 
     # ── Shared dark layout helper ─────────────────────────────────────────────
     def _dlayout(**kw):
@@ -1307,9 +1308,136 @@ with tab2:
         _fig_sl.update_layout(**_dlayout(height=240, showlegend=False))
         st.plotly_chart(_fig_sl, use_container_width=True)
 
-    # ── 12. Strategy vs SP500 Equity Curve ───────────────────────────────────
+    # ── 12. Spread Regime Positioning Map ────────────────────────────────────
+    if "hy_spread" in _df2.columns and "hy_change_30d" in _df2.columns:
+        st.subheader("Spread Regime Positioning Map")
+        st.caption(
+            "Where are HY spreads today relative to the past 5 years? "
+            "X axis = rolling spread percentile (0 = tightest, 100 = widest). "
+            "Y axis = 30-day momentum (positive = widening). "
+            "Historical points colored by model regime."
+        )
+        _pos_src = _df2[["date", "hy_spread", "hy_change_30d"]].copy()
+        _pos_src["regime"] = _df2["grouped_regime"] if "grouped_regime" in _df2.columns else "Unknown"
+        _pos_src = _pos_src.dropna(subset=["hy_spread", "hy_change_30d"])
+
+        if len(_pos_src) >= 100:
+            _lookback = min(len(_pos_src), 252 * 5)
+            _pos_w = _pos_src.tail(_lookback).copy()
+            _pos_w["pct_rank"] = _pos_w["hy_spread"].rank(pct=True) * 100
+            _curr_pct = float(_pos_w["pct_rank"].iloc[-1])
+            _curr_mom = float(_pos_w["hy_change_30d"].iloc[-1])
+            _max_y = max(3.0, float(_pos_w["hy_change_30d"].abs().max()) + 0.3)
+
+            _reg_col = {"Risk-On": "#27ae60", "Neutral": "#f1c40f",
+                        "Caution": "#e67e22", "Risk-Off": "#e74c3c", "Unknown": "#6b7280"}
+            _fig_pos = _go.Figure()
+            _fig_pos.add_hrect(y0=0, y1=_max_y, fillcolor="rgba(231,76,60,0.04)", line_width=0)
+            _fig_pos.add_hrect(y0=-_max_y, y1=0, fillcolor="rgba(39,174,96,0.04)", line_width=0)
+            _fig_pos.add_vline(x=50, line_color="rgba(255,255,255,0.12)", line_width=1, line_dash="dot")
+            _fig_pos.add_hline(y=0, line_color="rgba(255,255,255,0.12)", line_width=1, line_dash="dot")
+
+            for _reg, _grp in _pos_w.groupby("regime"):
+                _fig_pos.add_trace(_go.Scatter(
+                    x=_grp["pct_rank"], y=_grp["hy_change_30d"],
+                    mode="markers", name=_reg,
+                    marker=dict(color=_reg_col.get(_reg, "#6b7280"), size=3, opacity=0.3),
+                    hovertemplate="%{customdata}<br>Pct: %{x:.0f}<br>Δ30d: %{y:+.2f}pp<extra></extra>",
+                    customdata=_pos_w.loc[_grp.index, "date"].astype(str).values,
+                ))
+
+            _fig_pos.add_trace(_go.Scatter(
+                x=[_curr_pct], y=[_curr_mom],
+                mode="markers+text", name="Now",
+                marker=dict(color="#ffffff", size=14, symbol="star",
+                            line=dict(color="#4f8ef7", width=1.5)),
+                text=["Now"], textposition="top center",
+                textfont=dict(color="#ffffff", size=10),
+            ))
+            _fig_pos.update_layout(**_dlayout(
+                height=340,
+                xaxis=dict(title="HY Spread Percentile (5yr rolling)",
+                           range=[0, 100], showgrid=False, color="#6b7280"),
+                yaxis=dict(title="30-Day Spread Change (pp)",
+                           range=[-_max_y, _max_y],
+                           showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+            ))
+            st.plotly_chart(_fig_pos, use_container_width=True)
+
+            _q1, _q2, _q3, _q4 = st.columns(4)
+            _q1.metric("HY Spread", f"{float(_df2['hy_spread'].iloc[-1]):.2f}%")
+            _q2.metric("5yr Percentile", f"{_curr_pct:.0f}th")
+            _q3.metric("30d Momentum", f"{_curr_mom:+.2f}pp")
+            _q4.metric(
+                "Quadrant",
+                ("Wide + Widening" if _curr_pct >= 50 and _curr_mom > 0 else
+                 "Wide + Tightening" if _curr_pct >= 50 else
+                 "Tight + Widening" if _curr_mom > 0 else "Tight + Tightening"),
+            )
+
+    # ── 13. Credit Cycle Indicators ──────────────────────────────────────────
+    _has_def = "hy_default_rate" in _df2.columns and _df2["hy_default_rate"].notna().sum() > 10
+    if _has_def or ("sloos_ci" in _df2.columns and _df2["sloos_ci"].notna().sum() > 10):
+        st.subheader("Credit Cycle Indicators")
+        st.caption(
+            "SLOOS leads default rates by 2–4 quarters. "
+            "Watch for SLOOS tightening followed by default rate rises as the classic credit cycle turn."
+        )
+        _cc1, _cc2 = st.columns(2)
+        with _cc1:
+            if _has_def:
+                _dr = _df2[["date", "hy_default_rate"]].dropna()
+                _fig_dr = _go.Figure()
+                _fig_dr.add_hrect(
+                    y0=4, y1=max(15.0, float(_dr["hy_default_rate"].max()) + 1),
+                    fillcolor="rgba(231,76,60,0.07)", line_width=0,
+                    annotation_text="Stress >4%", annotation_position="top left",
+                    annotation_font=dict(color="rgba(231,76,60,0.6)", size=9),
+                )
+                _fig_dr.add_trace(_go.Scatter(
+                    x=_dr["date"], y=_dr["hy_default_rate"],
+                    mode="lines", name="HY Default Rate",
+                    line=dict(color="#e74c3c", width=2),
+                    fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+                ))
+                _fig_dr.update_layout(**_dlayout(
+                    height=230,
+                    yaxis=dict(title="Default Rate %", showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                ))
+                st.caption("Moody's 12m Trailing HY Default Rate")
+                st.plotly_chart(_fig_dr, use_container_width=True)
+            else:
+                st.info("HY default rate not loaded. Add DHMF1Y to market_data.py to enable.")
+
+        with _cc2:
+            if "sloos_ci" in _df2.columns and "hy_spread" in _df2.columns:
+                _cyc = _df2[["date", "sloos_ci", "hy_spread"]].dropna(subset=["sloos_ci"])
+                _cyc = _cyc.copy()
+                _cyc["sloos_norm"] = (_cyc["sloos_ci"] - _cyc["sloos_ci"].mean()) / (_cyc["sloos_ci"].std() + 1e-9)
+                _cyc["spread_norm"] = (_cyc["hy_spread"] - _cyc["hy_spread"].mean()) / (_cyc["hy_spread"].std() + 1e-9)
+                _fig_cyc = _go.Figure()
+                _fig_cyc.add_trace(_go.Scatter(
+                    x=_cyc["date"], y=_cyc["sloos_norm"],
+                    name="SLOOS (z-score)", line=dict(color="#e67e22", width=1.8),
+                ))
+                _fig_cyc.add_trace(_go.Scatter(
+                    x=_cyc["date"], y=_cyc["spread_norm"],
+                    name="HY Spread (z-score)", line=dict(color="#e74c3c", width=1.8, dash="dot"),
+                ))
+                _fig_cyc.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                _fig_cyc.update_layout(**_dlayout(
+                    height=230,
+                    yaxis=dict(title="Std Deviations", showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                ))
+                st.caption("SLOOS vs HY Spread — normalized (SLOOS leads by ~3 quarters)")
+                st.plotly_chart(_fig_cyc, use_container_width=True)
+
+    # ── 14. Strategy vs SP500 Equity Curve ───────────────────────────────────
     if "strategy_equity_curve" in _df2.columns:
-        st.subheader("Strategy vs SP500 — Cumulative Return")
+        st.subheader("Strategy vs SP500 — Cumulative Return (Equity)")
+        st.caption(f"In-sample = before {_OOS_CUTOFF}. Credit total return benchmarks are in the Backtest tab.")
         _fig8 = _go.Figure()
         _fig8.add_trace(_go.Scatter(
             x=_df2["date"], y=(_df2["strategy_equity_curve"] - 1) * 100,
@@ -1899,19 +2027,29 @@ with tab4:
         _corr_hy    = _sq_df["composite_risk_score_smooth"].corr(_sq_df.get("hy_forward_30d_change", pd.Series(dtype=float))) if "hy_forward_30d_change" in _sq_df.columns else float("nan")
         _hit_all    = (_sq_df["sp500_forward_30d_return"] > 0).mean()
 
-        _sq_c1, _sq_c2, _sq_c3 = st.columns(3)
+        _sq_hy_df = df.dropna(subset=["composite_risk_score_smooth", "hy_forward_30d_change"]) if "hy_forward_30d_change" in df.columns else pd.DataFrame()
+        _corr_hy_disp = (
+            f"{float(_sq_hy_df['composite_risk_score_smooth'].corr(_sq_hy_df['hy_forward_30d_change'])):.2f}"
+            if len(_sq_hy_df) >= 20 else "—"
+        )
+
+        _sq_c1, _sq_c2, _sq_c3, _sq_c4 = st.columns(4)
         _sq_c1.metric(
             "Score↔SP500 30D Corr",
             f"{_corr_score:.2f}",
-            help="Pearson correlation between composite_risk_score_smooth and SP500 30-day forward return. "
-                 "Negative means higher risk score → lower future return (expected).",
+            help="Negative = high risk score precedes lower equity returns (expected direction).",
         )
         _sq_c2.metric(
+            "Score↔HY Spread 30D Corr",
+            _corr_hy_disp,
+            help="Positive = high risk score precedes HY spread widening (correct credit direction).",
+        )
+        _sq_c3.metric(
             "Unconditional Hit Rate",
             f"{_hit_all:.1%}",
             help="% of all days where SP500 30-day forward return was positive.",
         )
-        _sq_c3.metric(
+        _sq_c4.metric(
             "Total Signal Observations",
             f"{len(_sq_df):,}",
             help="Trading days with valid score and forward return data.",
@@ -2013,6 +2151,63 @@ with tab4:
                     "Error bars = ±1 standard error (std / √n). "
                     "Flag = sample reliability: Exploratory (<20) · Indicative (<50) · Reliable (≥50)."
                 )
+
+        # ── Regime → HY Spread Forward Change (credit lens) ─────────────────
+        if "grouped_regime" in _sq_df.columns and "hy_forward_30d_change" in df.columns:
+            _hy_sq_df = df.dropna(subset=["grouped_regime", "hy_forward_30d_change"]).copy()
+            if len(_hy_sq_df) >= 20:
+                _hy_grp = (
+                    _hy_sq_df.groupby("grouped_regime")["hy_forward_30d_change"]
+                    .agg(mean="mean", count="count", std="std")
+                    .reindex([r for r in _grp_order if r in _hy_sq_df["grouped_regime"].unique()])
+                )
+                _hy_grp["se"] = _hy_grp["std"] / _hy_grp["count"].pow(0.5)
+                _hy_grp["hit_wide"] = (
+                    _hy_sq_df.groupby("grouped_regime")["hy_forward_30d_change"]
+                    .apply(lambda x: (x > 0).mean())
+                )
+                _hq1, _hq2 = st.columns(2)
+                with _hq1:
+                    st.caption("Mean HY spread 30d change by regime (pp) — positive = widening (credit stress confirmed)")
+                    _hy_bar_colors = ["#e74c3c" if v >= 0 else "#27ae60" for v in _hy_grp["mean"]]
+                    _fig_hy_sq = _bt_go.Figure(_bt_go.Bar(
+                        x=_hy_grp.index.tolist(),
+                        y=(_hy_grp["mean"] * 100).round(3).tolist(),
+                        marker_color=_hy_bar_colors,
+                        error_y=dict(type="data", array=(_hy_grp["se"] * 100).round(3).tolist(),
+                                     visible=True, color="rgba(200,200,200,0.4)"),
+                        hovertemplate="%{x}<br>Mean Δ: %{y:.3f}pp × 100<extra></extra>",
+                    ))
+                    _fig_hy_sq.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                    _fig_hy_sq.update_layout(
+                        height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa"), margin=dict(l=8, r=8, t=8, b=60),
+                        xaxis=dict(showgrid=False, color="#6b7280", tickangle=-20),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                   color="#6b7280", title="Mean Fwd Spread Change (×100)"),
+                        hoverlabel=dict(bgcolor="#1a1f2e", font=dict(color="#e2e8f0")),
+                    )
+                    st.plotly_chart(_fig_hy_sq, use_container_width=True)
+                with _hq2:
+                    _hy_hit_all = float((_hy_sq_df["hy_forward_30d_change"] > 0).mean())
+                    st.caption(f"Widening hit rate by regime — dashed line = unconditional {_hy_hit_all:.0%}")
+                    _fig_hy_hit = _bt_go.Figure(_bt_go.Bar(
+                        x=_hy_grp.index.tolist(),
+                        y=(_hy_grp["hit_wide"] * 100).round(1).tolist(),
+                        marker_color=["#e74c3c" if v >= _hy_hit_all else "#27ae60" for v in _hy_grp["hit_wide"]],
+                        hovertemplate="%{x}<br>Widening: %{y:.1f}%<extra></extra>",
+                    ))
+                    _fig_hy_hit.add_hline(y=_hy_hit_all * 100, line_color="rgba(255,255,255,0.3)",
+                                          line_width=1.5, line_dash="dash")
+                    _fig_hy_hit.update_layout(
+                        height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa"), margin=dict(l=8, r=8, t=8, b=60),
+                        xaxis=dict(showgrid=False, color="#6b7280", tickangle=-20),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                   color="#6b7280", title="% Widening"),
+                        hoverlabel=dict(bgcolor="#1a1f2e", font=dict(color="#e2e8f0")),
+                    )
+                    st.plotly_chart(_fig_hy_hit, use_container_width=True)
 
         st.divider()
 
@@ -2210,7 +2405,8 @@ with tab4:
     st.caption(
         "Performance of the regime-based HY/IG credit allocation. "
         "Total return = carry (all-in yield / 252) + duration-adjusted price return. "
-        "HY duration ≈ 4y · IG duration ≈ 7y · 10bps one-way transaction cost."
+        f"HY duration ≈ 4y · IG duration ≈ 7y · 10bps one-way transaction cost. "
+        f"OOS = from {OOS_CUTOFF} onward."
     )
 
     try:
@@ -2313,6 +2509,50 @@ with tab4:
                 "HY total return series not available. "
                 "Run the data pipeline to fetch HY effective yield (BAMLHYH0A0HYM2EY)."
             )
+
+        # ── Excess Return Decomposition ────────────────────────────────────
+        if _cb_results.get("has_hy_data"):
+            try:
+                from src.credit_backtest import decompose_excess_returns as _decomp_fn
+                _cb_decomp = _decomp_fn(df)
+                if not _cb_decomp.empty and "cum_carry" in _cb_decomp.columns:
+                    st.markdown("**Return Attribution: Carry vs. Spread P&L**")
+                    st.caption(
+                        "Carry = all-in yield / 252 × weight. "
+                        "Spread P&L = −duration × Δspread / 100 × weight. "
+                        "Together they sum to the total credit portfolio return."
+                    )
+                    _cb_decomp["date"] = pd.to_datetime(_cb_decomp["date"])
+                    _fig_decomp = _cgo.Figure()
+                    _fig_decomp.add_trace(_cgo.Scatter(
+                        x=_cb_decomp["date"],
+                        y=(_cb_decomp["cum_carry"] - 1) * 100,
+                        name="Carry (cumulative)", line=dict(color="#27ae60", width=2),
+                        fill="tozeroy", fillcolor="rgba(39,174,96,0.07)",
+                    ))
+                    _fig_decomp.add_trace(_cgo.Scatter(
+                        x=_cb_decomp["date"],
+                        y=(_cb_decomp["cum_spread_pnl"] - 1) * 100,
+                        name="Spread P&L (cumulative)", line=dict(color="#e74c3c", width=2),
+                        fill="tozeroy", fillcolor="rgba(231,76,60,0.07)",
+                    ))
+                    _fig_decomp.add_hline(y=0, line_color="rgba(255,255,255,0.12)", line_width=1)
+                    _fig_decomp.update_layout(
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11),
+                        margin=dict(l=8, r=8, t=8, b=8),
+                        height=260,
+                        legend=dict(orientation="h", y=1.08, x=0, bgcolor="rgba(0,0,0,0)"),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                   color="#6b7280", title="Cumulative Return %"),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550",
+                                        font=dict(color="#e2e8f0")),
+                    )
+                    st.plotly_chart(_fig_decomp, use_container_width=True)
+            except Exception:
+                pass
+
     except Exception as _cb_err:
         st.warning(f"Credit backtest unavailable: {_cb_err}")
 

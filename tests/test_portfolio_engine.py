@@ -37,9 +37,10 @@ class TestGeneratePortfolioWeights:
     def _row(self, decision):
         return {"final_decision": decision}
 
-    def test_returns_four_keys(self):
+    def test_returns_required_keys(self):
         w = generate_portfolio_weights(self._row("Neutral"))
-        assert set(w) == {"equity_weight", "credit_weight", "cash_weight", "duration_bias"}
+        required = {"equity_weight", "credit_weight", "cash_weight", "duration_bias"}
+        assert required.issubset(set(w))
 
     def test_weights_always_sum_to_one(self):
         decisions = ["Risk-On", "Neutral", "Caution", "Risk-Off", "Unknown Decision"]

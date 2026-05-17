@@ -243,6 +243,61 @@ def hy_spread_bucket_returns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Excess return decomposition
+# ---------------------------------------------------------------------------
+
+def decompose_excess_returns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Decompose portfolio credit return into carry and spread P&L components.
+
+    Carry   = hy_w × (hy_yield_prev / 252) + ig_w × (ig_yield_prev / 252)
+    Spread  = hy_w × (−HY_DUR × Δhy_spread / 100) + ig_w × (−IG_DUR × Δig_spread / 100)
+    Total   ≈ Carry + Spread P&L
+
+    Returns DataFrame: date, carry_daily, spread_pnl_daily, cum_carry, cum_spread_pnl
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    n = len(df)
+    hy_w = df[_HY_W_COL].fillna(0).values.astype(float) if _HY_W_COL in df.columns else np.zeros(n)
+    ig_w = df[_IG_W_COL].fillna(0).values.astype(float) if _IG_W_COL in df.columns else np.zeros(n)
+    hy_w_lag = np.concatenate([[hy_w[0]], hy_w[:-1]])
+    ig_w_lag = np.concatenate([[ig_w[0]], ig_w[:-1]])
+
+    # Carry: all-in yield / 252, weight lagged 1 day
+    hy_carry = np.zeros(n)
+    ig_carry = np.zeros(n)
+    if "hy_yield" in df.columns:
+        hy_y = df["hy_yield"].ffill().values.astype(float)
+        hy_carry = hy_w_lag * np.concatenate([[hy_y[0]], hy_y[:-1]]) / 100.0 / _ANNUALIZE
+    if "ig_yield" in df.columns:
+        ig_y = df["ig_yield"].ffill().values.astype(float)
+        ig_carry = ig_w_lag * np.concatenate([[ig_y[0]], ig_y[:-1]]) / 100.0 / _ANNUALIZE
+    port_carry = hy_carry + ig_carry
+
+    # Spread P&L: −duration × Δspread / 100
+    hy_spnl = np.zeros(n)
+    ig_spnl = np.zeros(n)
+    if "hy_spread" in df.columns:
+        d_hy = pd.Series(df["hy_spread"].ffill().values).diff().fillna(0).values.astype(float)
+        hy_spnl = hy_w_lag * (-HY_DURATION * d_hy / 100.0)
+    if "ig_spread" in df.columns:
+        d_ig = pd.Series(df["ig_spread"].ffill().values).diff().fillna(0).values.astype(float)
+        ig_spnl = ig_w_lag * (-IG_DURATION * d_ig / 100.0)
+    port_spnl = hy_spnl + ig_spnl
+
+    out = pd.DataFrame()
+    if _DATE_COL in df.columns:
+        out["date"] = df[_DATE_COL].values
+    out["carry_daily"]      = port_carry
+    out["spread_pnl_daily"] = port_spnl
+    out["cum_carry"]        = (1 + pd.Series(port_carry).fillna(0)).cumprod().values
+    out["cum_spread_pnl"]   = (1 + pd.Series(port_spnl).fillna(0)).cumprod().values
+    return out.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -267,6 +322,7 @@ def run_credit_backtest(df: pd.DataFrame) -> dict:
     returns_df    = compute_credit_returns(df)
     regime_stats  = regime_credit_stats(df)
     spread_bkts   = hy_spread_bucket_returns(df)
+    decomposition = decompose_excess_returns(df)
 
     ann_turnover = None
     if not returns_df.empty and "turnover" in returns_df.columns:
@@ -276,6 +332,7 @@ def run_credit_backtest(df: pd.DataFrame) -> dict:
         "returns_df":     returns_df,
         "regime_stats":   regime_stats,
         "spread_buckets": spread_bkts,
+        "decomposition":  decomposition,
         "ann_turnover":   ann_turnover,
         "has_hy_data":    has_hy,
         "has_ig_data":    has_ig,

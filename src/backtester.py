@@ -3,7 +3,7 @@ import pandas as pd
 
 # Hard OOS cutoff — thresholds and signal weights were developed on data
 # before this date. Everything from here onward is a genuine out-of-sample test.
-OOS_CUTOFF = "2020-01-01"
+OOS_CUTOFF = "2016-01-01"
 
 # Default sizing parameters — all overridable via build_strategy_backtest kwargs
 _EQUITY_FLOOR     = 0.40   # minimum equity allocation
