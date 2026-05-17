@@ -111,8 +111,9 @@ def validate_signals_vs_returns(
     """
     df = add_forward_returns(df)
     cutoff = pd.Timestamp(oos_cutoff)
-    is_mask  = df.index < cutoff
-    oos_mask = df.index >= cutoff
+    _dates   = pd.to_datetime(df["date"]) if "date" in df.columns else pd.to_datetime(df.index)
+    is_mask  = _dates < cutoff
+    oos_mask = _dates >= cutoff
 
     results: dict[str, Any] = {}
 
@@ -237,9 +238,10 @@ def compute_stress_episode_stats(df: pd.DataFrame) -> pd.DataFrame:
     if not avail_sigs:
         return pd.DataFrame()
 
+    _ep_dates = pd.to_datetime(df["date"]) if "date" in df.columns else pd.to_datetime(df.index)
     records: list[dict] = []
     for ep_name, (start, end) in _STRESS_EPISODES.items():
-        mask = (df.index >= start) & (df.index <= end)
+        mask = (_ep_dates >= start) & (_ep_dates <= end)
         sub = df.loc[mask, avail_sigs]
         if len(sub) == 0:
             continue
