@@ -208,13 +208,18 @@ def validate_signals_multi_horizon(
 
     records: dict[str, dict] = {col: {} for col in avail}
 
+    _dates_series = (
+        pd.to_datetime(df["date"]) if "date" in df.columns else pd.to_datetime(df.index)
+    )
+
     for h in horizons:
         fwd = df["sp500"].shift(-h) / df["sp500"] - 1
         for col in avail:
             pair = pd.concat([df[col], fwd], axis=1).dropna()
             pair.columns = ["sig", "fwd"]
-            for split, mask in (("IS", pair.index < cutoff), ("OOS", pair.index >= cutoff)):
-                sub = pair.loc[mask]
+            _pair_dates = _dates_series.loc[pair.index]
+            for split, mask in (("IS", _pair_dates < cutoff), ("OOS", _pair_dates >= cutoff)):
+                sub = pair.loc[mask.values]
                 if len(sub) < 20:
                     records[col][(h, split)] = None
                 else:

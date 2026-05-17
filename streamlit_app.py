@@ -1343,7 +1343,7 @@ with tab2:
                     mode="markers", name=_reg,
                     marker=dict(color=_reg_col.get(_reg, "#6b7280"), size=3, opacity=0.3),
                     hovertemplate="%{customdata}<br>Pct: %{x:.0f}<br>Δ30d: %{y:+.2f}pp<extra></extra>",
-                    customdata=_pos_w.loc[_grp.index, "date"].astype(str).values,
+                    customdata=_grp["date"].astype(str).values,
                 ))
 
             _fig_pos.add_trace(_go.Scatter(
@@ -2513,6 +2513,7 @@ with tab4:
         # ── Excess Return Decomposition ────────────────────────────────────
         if _cb_results.get("has_hy_data"):
             try:
+                import plotly.graph_objects as _cgo
                 from src.credit_backtest import decompose_excess_returns as _decomp_fn
                 _cb_decomp = _decomp_fn(df)
                 if not _cb_decomp.empty and "cum_carry" in _cb_decomp.columns:
