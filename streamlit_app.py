@@ -120,6 +120,12 @@ from src.spread_volatility import run_spread_volatility_analysis
 from src.fallen_angel import run_fallen_angel_analysis
 from src.em_credit import run_em_credit_analysis
 from src.macro_nowcast import run_macro_nowcast
+from src.vrp import run_vrp_analysis
+from src.credit_momentum import run_credit_momentum_analysis
+from src.funding_stress import run_funding_stress_analysis
+from src.global_credit import run_global_credit_analysis
+from src.corporate_leverage import run_corporate_leverage_analysis
+from src.seasonality import run_seasonality_analysis
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -667,6 +673,42 @@ def load_em_credit(_df):
 def load_macro_nowcast(_df):
     """Compute macro GDP nowcast from weekly/monthly indicators."""
     return run_macro_nowcast(_df)
+
+
+@st.cache_data
+def load_vrp(_df):
+    """Compute Volatility Risk Premium (VIX minus realized vol)."""
+    return run_vrp_analysis(_df)
+
+
+@st.cache_data
+def load_credit_momentum(_df):
+    """Compute HY/IG spread momentum at 1M/3M/6M horizons."""
+    return run_credit_momentum_analysis(_df)
+
+
+@st.cache_data
+def load_funding_stress(_df):
+    """Compute TED/OIS funding stress proxy."""
+    return run_funding_stress_analysis(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_global_credit(_df):
+    """Run global credit divergence analysis (cached 1h — fetches live HYG/HYXU data)."""
+    return run_global_credit_analysis(_df)
+
+
+@st.cache_data
+def load_corporate_leverage(_df):
+    """Compute corporate leverage cycle signal."""
+    return run_corporate_leverage_analysis(_df)
+
+
+@st.cache_data
+def load_seasonality(_df):
+    """Compute historical credit spread seasonality."""
+    return run_seasonality_analysis(_df)
 
 
 @st.cache_data
@@ -1808,6 +1850,152 @@ with tab1:
     except Exception as _nc_e:
         st.caption(f"Macro nowcast unavailable: {_nc_e}")
 
+    # ── Volatility Risk Premium (VRP) ─────────────────────────────────────────
+    st.subheader("Volatility Risk Premium (VRP)")
+    st.caption(
+        "**VRP = VIX − 21d realized SP500 vol.** Positive = fear premium intact (normal). "
+        "Negative (inverted) = realized vol exceeds implied → fear premium collapsed → "
+        "historically precedes vol spikes and credit spread widening by ~2 weeks."
+    )
+    try:
+        _vrp = load_vrp(df)
+        if _vrp.get("available"):
+            _vc = _vrp["current"]
+            _vp1, _vp2, _vp3, _vp4 = st.columns(4)
+            _vp1.metric("VRP (21d)", f"{_vc.get('vrp_21d', 0):.1f}%",
+                        help="VIX minus 21d realized vol. Negative = inverted.")
+            _vp2.metric("VIX", f"{_vc.get('vix', 0):.1f}")
+            _vp3.metric("Realized Vol (21d)", f"{_vc.get('realized_vol_21d', 0):.1f}%")
+            _vp4.metric("Regime", _vc.get("vrp_regime", "—"))
+            if _vrp.get("warning"):
+                st.warning(_vrp["warning"])
+            _vrp_hist = _vrp.get("historical")
+            if _vrp_hist is not None and not _vrp_hist.empty and "vrp_21d" in _vrp_hist.columns:
+                import plotly.graph_objects as _vrpgo
+                _vrp_fig = _vrpgo.Figure()
+                _vrp_fig.add_trace(_vrpgo.Scatter(
+                    x=pd.to_datetime(_vrp_hist.index), y=_vrp_hist["vrp_21d"],
+                    name="VRP (21d)", line=dict(color="#9b59b6", width=2),
+                    fill="tozeroy", fillcolor="rgba(155,89,182,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>VRP: %{y:.1f}%<extra></extra>",
+                ))
+                _vrp_fig.add_hline(y=0, line_color="rgba(231,76,60,0.6)", line_width=1.5,
+                                   annotation_text="Inversion threshold",
+                                   annotation_font=dict(color="#e74c3c", size=10))
+                _vrp_fig.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="VRP (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_vrp_fig, use_container_width=True)
+        else:
+            st.info("VRP unavailable — requires VIX and SP500 data.")
+    except Exception as _vrp_e:
+        st.caption(f"VRP unavailable: {_vrp_e}")
+
+    # ── Credit Spread Momentum ────────────────────────────────────────────────
+    st.subheader("Credit Spread Momentum")
+    st.caption(
+        "Rate-of-change in HY and IG spreads at 1M, 3M, and 6M horizons. "
+        "Spread tightening (negative) = positive credit momentum = risk-on. "
+        "Momentum divergence between HY and IG signals which segment the market favors."
+    )
+    try:
+        _cm = load_credit_momentum(df)
+        if _cm.get("available"):
+            _cmc = _cm["current"]
+            _m1, _m2, _m3, _m4 = st.columns(4)
+            _m1.metric("HY Mom (1M)", f"{_cmc.get('hy_mom_21d', 0):+.0f} bps",
+                       delta_color="inverse")
+            _m2.metric("HY Mom (3M)", f"{_cmc.get('hy_mom_63d', 0):+.0f} bps",
+                       delta_color="inverse")
+            _m3.metric("HY Regime", _cmc.get("hy_mom_regime", "—"))
+            _m4.metric("Signal", f"{_cmc.get('credit_momentum_signal', 0):.0f}/100")
+            _div = _cmc.get("hy_ig_momentum_divergence", 0)
+            st.caption(
+                f"Trend: **{_cm['trend']}** · "
+                f"HY/IG divergence: {_div:+.0f} bps · "
+                f"{_cm.get('interpretation', '')}"
+            )
+            _cm_hist = _cm.get("historical")
+            if _cm_hist is not None and not _cm_hist.empty and "hy_mom_63d" in _cm_hist.columns:
+                import plotly.graph_objects as _cmgo
+                _cm_fig = _cmgo.Figure()
+                _cm_fig.add_trace(_cmgo.Scatter(
+                    x=pd.to_datetime(_cm_hist.index), y=_cm_hist["hy_mom_63d"],
+                    name="HY Mom (3M)", line=dict(color="#e74c3c", width=2),
+                    fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY 3M: %{y:+.0f} bps<extra></extra>",
+                ))
+                if "ig_mom_63d" in _cm_hist.columns:
+                    _cm_fig.add_trace(_cmgo.Scatter(
+                        x=pd.to_datetime(_cm_hist.index), y=_cm_hist["ig_mom_63d"],
+                        name="IG Mom (3M)", line=dict(color="#3498db", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>IG 3M: %{y:+.0f} bps<extra></extra>",
+                    ))
+                _cm_fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _cm_fig.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="bps"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_cm_fig, use_container_width=True)
+        else:
+            st.info("Credit momentum unavailable — requires HY or IG spread data.")
+    except Exception as _cm_e:
+        st.caption(f"Credit momentum unavailable: {_cm_e}")
+
+    # ── Funding Stress (TED / OIS proxy) ─────────────────────────────────────
+    st.subheader("Funding Stress (TED / OIS Proxy)")
+    st.caption(
+        "The **TED spread** (3m T-bill vs interbank rate) measures plumbing stress in credit markets. "
+        "Here proxied as the T-bill vs Fed Funds differential. "
+        "Stress in funding markets typically precedes broad HY spread widening by **3–5 weeks**."
+    )
+    try:
+        _fs = load_funding_stress(df)
+        if _fs.get("available"):
+            _fsc = _fs["current"]
+            _f1, _f2, _f3, _f4 = st.columns(4)
+            _f1.metric("TED Proxy (bps)", f"{_fsc.get('ted_spread_proxy_bps', 0):.1f}")
+            _f2.metric("Z-Score (1y)", f"{_fsc.get('ted_spread_zscore', 0):.2f}")
+            _f3.metric("Funding Regime", _fsc.get("funding_regime", "—"))
+            _f4.metric("Signal", f"{_fsc.get('funding_stress_signal', 0):.0f}/100")
+            if _fs.get("warning"):
+                st.error(_fs["warning"])
+            if _fs.get("interpretation"):
+                st.caption(_fs["interpretation"])
+            _fs_hist = _fs.get("historical")
+            if _fs_hist is not None and not _fs_hist.empty and "ted_spread_proxy" in _fs_hist.columns:
+                import plotly.graph_objects as _fsgo
+                _fs_fig = _fsgo.Figure()
+                _fs_fig.add_trace(_fsgo.Scatter(
+                    x=pd.to_datetime(_fs_hist.index), y=_fs_hist["ted_spread_proxy"],
+                    name="TED Proxy", line=dict(color="#e67e22", width=2),
+                    fill="tozeroy", fillcolor="rgba(230,126,34,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>TED: %{y:.1f} bps<extra></extra>",
+                ))
+                for _thresh, _col, _lbl in [(100, "#e74c3c", "Crisis"), (50, "#e67e22", "Stressed"), (25, "#f39c12", "Elevated")]:
+                    _fs_fig.add_hline(y=_thresh, line=dict(color=_col, dash="dash", width=1),
+                                      annotation_text=_lbl, annotation_font=dict(color=_col, size=9))
+                _fs_fig.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="bps"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fs_fig, use_container_width=True)
+        else:
+            st.info("Funding stress unavailable — requires yield_3m and Fed Funds rate (dff) in dataset.")
+    except Exception as _fs_e:
+        st.caption(f"Funding stress unavailable: {_fs_e}")
+
 with tab2:
     import plotly.graph_objects as _go
     from plotly.subplots import make_subplots as _make_subplots
@@ -2527,7 +2715,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 28 sub-tabs
+with tab5:  # Analytics — 31 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
@@ -2535,7 +2723,8 @@ with tab5:  # Analytics — 28 sub-tabs
      _analytics_sub15, _analytics_sub16, _analytics_sub17, _analytics_sub18,
      _analytics_sub19, _analytics_sub20, _analytics_sub21, _analytics_sub22,
      _analytics_sub23, _analytics_sub24, _analytics_sub25,
-     _analytics_sub26, _analytics_sub27, _analytics_sub28) = st.tabs([
+     _analytics_sub26, _analytics_sub27, _analytics_sub28,
+     _analytics_sub29, _analytics_sub30, _analytics_sub31) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2544,6 +2733,7 @@ with tab5:  # Analytics — 28 sub-tabs
         "Fwd Sim", "CDX Proxy", "EQ-Credit Corr",
         "Regime Returns", "Default Cycle", "Compare Dates",
         "Corr Heatmap", "Spread Vol", "Fallen Angel",
+        "Global Credit", "Corp Leverage", "Seasonality",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -8258,3 +8448,200 @@ with _analytics_sub28:
             st.info("Fallen angel monitor unavailable — requires both HY and IG spread data.")
     except Exception as _fa_e:
         st.caption(f"Fallen angel unavailable: {_fa_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 29: Global Credit Divergence
+# =============================================================================
+with _analytics_sub29:
+    import plotly.graph_objects as _go_gc
+    st.header("Global Credit Divergence (US vs International HY)")
+    st.markdown(
+        """
+        Tracks **EMB/HYG** and **HYXU/HYG** price ratios to detect when US and international
+        credit markets diverge. US leads in rate-driven stress; Europe/EM leads in
+        sovereign/bank stress. A falling ratio signals international credit underperforming
+        US — historically precedes contagion into US HY by 4–6 weeks.
+        """
+    )
+    try:
+        _gc = load_global_credit(df)
+        _gc_snap = _gc.get("snapshot", {})
+        _gc_cur = _gc.get("current", {})
+        _g1, _g2, _g3, _g4 = st.columns(4)
+        _g1.metric("US/Intl Ratio", f"{_gc_cur.get('us_intl_ratio', 0):.3f}" if _gc_cur.get('us_intl_ratio') else "—")
+        _g2.metric("63d Divergence", f"{(_gc_cur.get('us_intl_divergence_63d') or 0)*100:+.1f}%")
+        _g3.metric("Global Signal", f"{_gc_cur.get('global_credit_signal', 0):.0f}/100")
+        _g4.metric("Regime", _gc_snap.get("divergence_regime", "—"))
+        if _gc.get("lead_signal"):
+            st.warning(_gc["lead_signal"])
+        if _gc.get("interpretation"):
+            st.caption(_gc["interpretation"])
+        _gc_hist = _gc.get("historical")
+        if _gc_hist is not None and not _gc_hist.empty and "us_intl_ratio" in _gc_hist.columns:
+            _gc_fig = _go_gc.Figure()
+            _gc_fig.add_trace(_go_gc.Scatter(
+                x=pd.to_datetime(_gc_hist.index), y=_gc_hist["us_intl_ratio"],
+                name="HYG/HYXU Ratio", line=dict(color="#3498db", width=2),
+                hovertemplate="%{x|%Y-%m-%d}<br>US/Intl: %{y:.3f}<extra></extra>",
+            ))
+            _gc_fig.update_layout(
+                height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Ratio"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_gc_fig, use_container_width=True)
+            st.caption("Higher = US HY outperforming international HY. Falling = global stress or contagion risk.")
+        if not _gc.get("available"):
+            st.info("Global credit requires live market data (HYG, HYXU via yfinance).")
+    except Exception as _gc_e:
+        st.caption(f"Global credit unavailable: {_gc_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 30: Corporate Leverage Cycle
+# =============================================================================
+with _analytics_sub30:
+    import plotly.graph_objects as _go_cl
+    st.header("Corporate Leverage Cycle")
+    st.markdown(
+        """
+        Tracks US nonfinancial corporate leverage — the **fundamental credit quality backdrop**.
+        High leverage entering a downturn amplifies HY spread widening; deleveraging enables
+        tightening. When fundamental data is unavailable, uses a **synthetic proxy** based on
+        the rolling percentile rank of HY spreads (higher spread = higher implied leverage stress).
+        """
+    )
+    try:
+        _cl = load_corporate_leverage(df)
+        _clc = _cl.get("current", {})
+        _l1, _l2, _l3, _l4 = st.columns(4)
+        _l1.metric("Leverage Signal", f"{_clc.get('leverage_stress_signal', 0):.0f}/100")
+        _l2.metric("Cycle Phase", _cl.get("cycle_phase", "—"))
+        _lr = _clc.get("leverage_ratio")
+        _l3.metric("Leverage Ratio", f"{_lr:.1f}%" if _lr else "Synthetic proxy")
+        _l4.metric("Regime", _clc.get("leverage_regime", "—"))
+        if _clc.get("using_synthetic"):
+            st.caption("Using synthetic proxy (rolling HY spread percentile rank) — FRED leverage data not in dataset.")
+        if _cl.get("warning"):
+            st.warning(_cl["warning"])
+        if _cl.get("interpretation"):
+            st.caption(_cl["interpretation"])
+        _cl_hist = _cl.get("historical")
+        if _cl_hist is not None and not _cl_hist.empty:
+            _cl_fig = _go_cl.Figure()
+            if "leverage_stress_signal" in _cl_hist.columns:
+                _cl_fig.add_trace(_go_cl.Scatter(
+                    x=pd.to_datetime(_cl_hist.index), y=_cl_hist["leverage_stress_signal"],
+                    name="Leverage Signal", line=dict(color="#e67e22", width=2),
+                    fill="tozeroy", fillcolor="rgba(230,126,34,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Signal: %{y:.0f}<extra></extra>",
+                ))
+            if "synthetic_leverage_proxy" in _cl_hist.columns:
+                _cl_fig.add_trace(_go_cl.Scatter(
+                    x=pd.to_datetime(_cl_hist.index), y=_cl_hist["synthetic_leverage_proxy"],
+                    name="Synthetic Proxy", line=dict(color="#9b59b6", width=1.5, dash="dot"),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Proxy: %{y:.0f}<extra></extra>",
+                ))
+            _cl_fig.add_hline(y=70, line=dict(color="rgba(231,76,60,0.5)", dash="dash", width=1),
+                              annotation_text="Warning threshold",
+                              annotation_font=dict(color="#e74c3c", size=9))
+            _cl_fig.update_layout(
+                height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Signal (0-100)", range=[0, 100]),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_cl_fig, use_container_width=True)
+    except Exception as _cl_e:
+        st.caption(f"Corporate leverage unavailable: {_cl_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 31: Credit Spread Seasonality
+# =============================================================================
+with _analytics_sub31:
+    import plotly.graph_objects as _go_sea
+    st.header("Credit Spread Seasonality")
+    st.markdown(
+        """
+        Historical average HY and IG spread changes by calendar month.
+        Credit has persistent seasonal patterns: typically tightest in **January** (new-year
+        risk-on positioning), widest in **October** (year-end risk reduction, thin markets).
+        Use this as a ±20bp context signal — not a timing tool, but a calibration layer.
+        """
+    )
+    try:
+        _sea = load_seasonality(df)
+        if _sea.get("available"):
+            _sea_s = _sea.get("seasonality", {})
+            _sea_ctx = _sea.get("current_context", {})
+
+            # Current month context
+            _sea_bias = _sea_ctx.get("seasonal_bias", "Neutral")
+            _sea_col = {"Favorable": "#27ae60", "Unfavorable": "#e74c3c"}.get(_sea_bias, "#f39c12")
+            _s1, _s2, _s3, _s4 = st.columns(4)
+            _s1.metric("Current Month", _sea_ctx.get("current_month", "—"))
+            _s2.metric("Seasonal Bias", _sea_bias)
+            _s3.metric("Avg HY Change", f"{_sea_ctx.get('hy_seasonal_avg_bps', 0):+.1f} bps")
+            _s4.metric("HY Hit Rate", f"{_sea_ctx.get('hy_hit_rate', 0):.0%}",
+                       help="Fraction of years HY tightened this month")
+            st.caption(
+                f"Best months (HY tightening): **{', '.join(_sea_s.get('best_months_hy', []))}** · "
+                f"Worst months: **{', '.join(_sea_s.get('worst_months_hy', []))}** · "
+                f"Based on {_sea_s.get('n_years', 0)} years of data"
+            )
+            if _sea.get("interpretation"):
+                st.info(_sea["interpretation"])
+
+            # Bar chart of monthly avg HY change
+            _hy_avgs = _sea_s.get("hy_monthly_avg_change", [])
+            _ig_avgs = _sea_s.get("ig_monthly_avg_change", [])
+            if _hy_avgs:
+                from src.seasonality import MONTH_NAMES as _MONTHS
+                _sea_fig = _go_sea.Figure()
+                _bar_colors = ["#27ae60" if v < 0 else "#e74c3c" for v in _hy_avgs]
+                _sea_fig.add_trace(_go_sea.Bar(
+                    x=_MONTHS, y=_hy_avgs,
+                    name="HY Avg Change (bps)", marker_color=_bar_colors,
+                    hovertemplate="%{x}<br>HY avg: %{y:+.1f} bps<extra></extra>",
+                ))
+                if _ig_avgs:
+                    _sea_fig.add_trace(_go_sea.Scatter(
+                        x=_MONTHS, y=_ig_avgs,
+                        name="IG Avg Change (bps)", line=dict(color="#3498db", width=2),
+                        mode="lines+markers",
+                        hovertemplate="%{x}<br>IG avg: %{y:+.1f} bps<extra></extra>",
+                    ))
+                _sea_fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _sea_fig.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Avg Monthly Change (bps)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    barmode="overlay",
+                )
+                st.plotly_chart(_sea_fig, use_container_width=True)
+                st.caption("Green bars = historical avg tightening · Red bars = historical avg widening · Requires ≥3 years of data")
+
+            # Monthly hit rate table
+            _hy_hr = _sea_s.get("hy_monthly_hit_rate", [])
+            if _hy_hr:
+                from src.seasonality import MONTH_NAMES as _MN
+                _hr_df = pd.DataFrame({
+                    "Month": _MN,
+                    "HY Avg (bps)": [f"{v:+.1f}" for v in _hy_avgs] if _hy_avgs else ["—"]*12,
+                    "HY Hit Rate": [f"{v:.0%}" for v in _hy_hr],
+                    "IG Avg (bps)": [f"{v:+.1f}" for v in _ig_avgs] if _ig_avgs else ["—"]*12,
+                })
+                with st.expander("Full monthly statistics table"):
+                    st.dataframe(_hr_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Seasonality analysis unavailable — requires HY spread data with ≥3 years of history.")
+    except Exception as _sea_e:
+        st.caption(f"Seasonality unavailable: {_sea_e}")
