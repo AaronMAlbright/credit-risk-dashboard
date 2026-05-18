@@ -1189,8 +1189,8 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-    "Signal", "Charts", "Portfolio", "Backtest", "Analytics", "Models", "History", "Allocation"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    "Signal", "Charts", "Portfolio", "Backtest", "Analytics", "Models", "History", "Allocation", "⚙ Health"
 ])
 
 with tab1:
@@ -8645,3 +8645,99 @@ with _analytics_sub31:
             st.info("Seasonality analysis unavailable — requires HY spread data with ≥3 years of history.")
     except Exception as _sea_e:
         st.caption(f"Seasonality unavailable: {_sea_e}")
+
+# =============================================================================
+# TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
+# =============================================================================
+with tab8:
+    st.header("Allocation")
+    st.info("Allocation content is integrated into the **Portfolio** and **Backtest** tabs.")
+
+# =============================================================================
+# TAB 9: Signal Health Monitor
+# =============================================================================
+with tab9:
+    st.header("Signal Health Monitor")
+    st.markdown(
+        "Meta-view of all signal modules — which data sources loaded, which are stale, "
+        "and which are running on synthetic/fallback data."
+    )
+    try:
+        from src.signal_health import check_signal_health, get_health_summary
+        _sh = check_signal_health(df)
+        _sh_sum = _sh.get("summary", {})
+
+        # Overall health banner
+        _oh = _sh.get("overall_health", "Unknown")
+        _oh_color = {"Healthy": "success", "Degraded": "warning", "Critical": "error"}.get(_oh, "info")
+        getattr(st, _oh_color)(
+            f"Overall Health: **{_oh}** · "
+            f"{_sh_sum.get('ok', 0)} OK · "
+            f"{_sh_sum.get('live_fetch', 0)} Live · "
+            f"{_sh_sum.get('degraded', 0)} Degraded · "
+            f"{_sh_sum.get('unavailable', 0)} Unavailable · "
+            f"Checked at {_sh.get('checked_at', '—')}"
+        )
+
+        # Data range
+        st.caption(
+            f"Dataset: **{_sh.get('data_rows', 0):,} rows** · "
+            f"Date range: {_sh.get('date_range', '—')}"
+        )
+
+        # Summary table
+        import plotly.graph_objects as _sh_go
+        _sh_df = get_health_summary(df)
+        if not _sh_df.empty:
+            # Color-code the Status column
+            def _sh_status_color(val):
+                return {
+                    "OK": "background-color: rgba(39,174,96,0.15)",
+                    "Live": "background-color: rgba(52,152,219,0.15)",
+                    "Degraded": "background-color: rgba(230,126,34,0.15)",
+                    "Unavailable": "background-color: rgba(231,76,60,0.15)",
+                }.get(val, "")
+            st.dataframe(
+                _sh_df.style.applymap(_sh_status_color, subset=["Status"]),
+                use_container_width=True, hide_index=True,
+            )
+
+        # Category breakdown donut chart
+        _sh_cats = {}
+        for _m in _sh.get("modules", []):
+            _cat = _m.get("category", "Other")
+            _st = _m.get("status", "Unknown")
+            _sh_cats.setdefault(_cat, {"OK": 0, "Live": 0, "Degraded": 0, "Unavailable": 0})
+            _sh_cats[_cat][_st] = _sh_cats[_cat].get(_st, 0) + 1
+
+        # Status breakdown bar
+        _sb_fig = _sh_go.Figure()
+        _status_colors = {"OK": "#27ae60", "Live": "#3498db", "Degraded": "#e67e22", "Unavailable": "#e74c3c"}
+        for _s, _c in _status_colors.items():
+            _count = _sh_sum.get(_s.lower().replace(" ", "_"), _sh_sum.get(_s.lower(), 0))
+            if _count > 0:
+                _sb_fig.add_trace(_sh_go.Bar(
+                    x=[_s], y=[_count], name=_s, marker_color=_c,
+                    text=[_count], textposition="auto",
+                ))
+        _sb_fig.update_layout(
+            height=180, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+            xaxis=dict(showgrid=False, color="#6b7280"), showlegend=False,
+            title=dict(text="Module Status Breakdown", font=dict(size=12, color="#9aa0aa")),
+        )
+        st.plotly_chart(_sb_fig, use_container_width=True)
+
+        # Unavailable modules detail
+        _unavail = [m for m in _sh.get("modules", []) if m.get("status") == "Unavailable"]
+        if _unavail:
+            with st.expander(f"{len(_unavail)} unavailable modules — missing data columns"):
+                for _um in _unavail:
+                    st.markdown(
+                        f"**{_um['name']}** — missing: `{'`, `'.join(_um.get('cols_missing', []))}`"
+                    )
+    except ImportError:
+        st.info("Signal health monitor is loading — the `src/signal_health.py` module will be available after the next data refresh.")
+    except Exception as _sh_e:
+        st.caption(f"Signal health unavailable: {_sh_e}")

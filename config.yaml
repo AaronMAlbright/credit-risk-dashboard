@@ -1,0 +1,149 @@
+# Central configuration for the Credit Risk Dashboard
+# All tunable thresholds and parameters in one place.
+# Modules read their own sections; edit here to tune without touching code.
+
+# ── Data / pipeline ──────────────────────────────────────────────────────────
+data:
+  oos_cutoff: "2016-01-01"   # First date of the genuine out-of-sample test window (set in backtester.py)
+  cache_ttl_seconds: 3600    # How long Streamlit caches fetched market data before re-pulling
+
+# ── Backtester / position sizing ─────────────────────────────────────────────
+backtester:
+  equity_floor: 0.40         # Minimum equity allocation — never go below this even in Risk-Off
+  equity_cap: 1.00           # Maximum equity allocation — fully invested ceiling
+  trend_ma_window: 200       # Days for the SP500 moving-average trend filter
+  trend_boost: 1.15          # Weight multiplier when SP500 is above its MA (momentum tailwind)
+  trend_damp: 0.85           # Weight multiplier when SP500 is below its MA (momentum headwind)
+  vol_target: 0.10           # Annualised volatility target for the vol-targeting sizing component
+  vol_window: 21             # Rolling window (days) for realised-vol estimate used in vol targeting
+  min_persistence: 3         # EWM span (days) to smooth rapid day-to-day weight flips
+
+# ── Taylor Rule ───────────────────────────────────────────────────────────────
+taylor_rule:
+  r_neutral: 2.0             # Long-run neutral real Fed Funds rate (%)
+  pi_star: 2.0               # Fed inflation target (%)
+  u_star: 4.0                # NAIRU estimate — the "full employment" unemployment rate (%)
+  okun_multiplier: 2.0       # Okun's law coefficient mapping unemployment gap to output gap
+  alpha_pi: 0.5              # Taylor weight on the inflation gap
+  alpha_y: 0.5               # Taylor weight on the output gap
+  # Stance thresholds: policy_gap = actual Fed Funds − Taylor rate (pp)
+  stance_too_tight: 1.0      # Gap above this → "Too Tight"
+  stance_slightly_tight: 0.25  # Gap above this (and ≤ too_tight) → "Slightly Tight"
+  stance_slightly_loose: -0.25 # Gap above this (and ≤ 0) → "Neutral" band lower bound
+  stance_too_loose: -1.0     # Gap below this → "Too Loose"
+
+# ── Rolling correlation regime ────────────────────────────────────────────────
+correlation_regime:
+  windows: [21, 63, 90, 252] # Rolling windows (trading days) for equity-credit correlation
+  primary_window: 90         # Window used for regime classification labels
+  min_periods: 20            # Minimum joint observations before a correlation value is emitted
+  dislocation_threshold: 0.0   # Correlation above this → "Dislocation (positive)"
+  decoupling_threshold: -0.3   # Correlation above this (and ≤ 0) → "Decoupling"
+  dislocation_warning_streak: 10  # Consecutive dislocation days before a warning string fires
+
+# ── Carry breakeven ───────────────────────────────────────────────────────────
+carry_breakeven:
+  hy_duration: 4.0           # Approximate spread duration of the HY index (years)
+  ig_duration: 7.0           # Approximate spread duration of the IG index (years)
+  bbb_duration: 6.0          # Approximate spread duration of the BBB tranche (years)
+  shock_scenarios: [25, 50, 100, 150, 200, 300]  # Spread shock sizes (bps) for the scenario table
+  # Carry regime thresholds (HY carry, annual bps)
+  carry_regime_rich_threshold: 150   # Below this → "Rich (<150bps)"
+  carry_regime_fair_threshold: 300   # Between rich and this → "Fair (150-300bps)", above → "Cheap"
+
+# ── Volatility Risk Premium (VRP) ────────────────────────────────────────────
+vrp:
+  realized_vol_window: 21    # Primary realised-vol window (trading days) for VRP computation
+  signal_windows: [21, 63]   # Windows used for VRP calculation (21d primary, 63d secondary)
+  zscore_window: 252         # Rolling window (days) for the VRP z-score context
+  # Regime thresholds for vrp_21d (VIX minus realised vol, %)
+  normal_threshold: 2.0      # VRP above this → "Normal (positive)"
+  compressed_threshold: 0.0  # VRP above this (and ≤ normal) → "Compressed"
+  inverted_threshold: -2.0   # VRP above this (and ≤ 0) → "Inverted (negative)", below → "Deeply Inverted"
+  # Stress signal breakpoints for vrp_to_signal mapping (0-100)
+  signal_very_benign: 15     # vrp > 4 → this score
+  signal_benign: 30          # 2 < vrp ≤ 4 → this score
+  signal_neutral: 50         # 0 < vrp ≤ 2 → this score
+  signal_stress: 70          # -2 < vrp ≤ 0 → this score
+  signal_deep_stress: 88     # vrp ≤ -2 → this score
+
+# ── Credit momentum ───────────────────────────────────────────────────────────
+credit_momentum:
+  windows: [21, 63, 126]     # Momentum look-back windows: 1M, 3M, 6M (trading days)
+  zscore_window: 252         # Rolling window (days) for z-score normalisation
+  # HY 63d momentum regime thresholds (bps change in spread)
+  strong_tight_threshold: -50.0   # hy_mom_63d below this → "Strong Tightening"
+  tight_threshold: -15.0          # hy_mom_63d below this (and ≥ strong_tight) → "Tightening"
+  flat_high_threshold: 15.0       # hy_mom_63d at or below this (and ≥ tight) → "Flat"
+  wide_threshold: 50.0            # hy_mom_63d at or below this (and > flat) → "Widening", above → "Strong Widening"
+  # Trend directional threshold for hy_mom_21d (bps)
+  trend_threshold: 5.0       # |hy_mom_21d| must exceed this to call "Improving" or "Deteriorating"
+
+# ── Fallen angel risk ────────────────────────────────────────────────────────
+fallen_angel:
+  threshold: 1.5             # HY/IG ratio × historical median triggers the cliff risk flag
+  zscore_window: 252         # Rolling window (days) for the HY/IG ratio z-score
+  # Regime thresholds for HY/IG ratio level
+  regime_compressed: 3.5     # Ratio below this → "Compressed (low stress)"
+  regime_normal: 4.5         # Ratio below this (and ≥ compressed) → "Normal"
+  regime_elevated: 6.0       # Ratio below this (and ≥ normal) → "Elevated (watch)", above → "Crisis"
+  # Stress signal breakpoints (z-score based, 0-100)
+  signal_low: 20             # zscore < 0 → this score
+  signal_moderate: 40        # 0 ≤ zscore < 1 → this score
+  signal_elevated: 65        # 1 ≤ zscore < 2 → this score
+  signal_crisis: 85          # zscore ≥ 2 → this score
+
+# ── Spread volatility ────────────────────────────────────────────────────────
+spread_volatility:
+  windows: [21, 63, 90]      # Rolling windows (trading days) for annualised spread vol
+  regime_window: 252         # Trailing window (days) for percentile rank / z-score context
+  # Vol regime percentile thresholds (percentile of trailing 252d distribution)
+  regime_low: 40             # Percentile below this → "Low"
+  regime_normal: 70          # Percentile below this (and ≥ low) → "Normal"
+  regime_elevated: 90        # Percentile below this (and ≥ normal) → "Elevated", above → "Stress"
+  # GARCH(1,1) fixed parameters (pure numpy implementation, no arch/statsmodels)
+  garch_omega_frac: 0.05     # omega = omega_frac × unconditional variance
+  garch_alpha: 0.10          # ARCH coefficient (sensitivity to recent shocks)
+  garch_beta: 0.85           # GARCH coefficient (persistence of conditional variance)
+
+# ── Real rates ────────────────────────────────────────────────────────────────
+real_rates:
+  # Regime thresholds for real_rate_10y (%)
+  very_restrictive: 2.0      # Real rate above this → "Very Restrictive"
+  restrictive: 1.0           # Real rate above this (and ≤ 2) → "Restrictive"
+  low_positive: 0.0          # Real rate above this (and ≤ 1) → "Low Positive"
+  negative: -1.0             # Real rate above this (and ≤ 0) → "Negative", below → "Deeply Negative"
+  # Credit stress signal breakpoints (0-100)
+  signal_repression: 20      # real rate < -1% → financial repression score
+  signal_negative: 35        # -1% ≤ real rate < 0% → score
+  signal_neutral: 50         # 0% ≤ real rate < 1% → score
+  signal_restrictive: 70     # 1% ≤ real rate < 2% → score
+  signal_very_restrictive: 85  # real rate ≥ 2% → score
+  rising_rate_modifier: 10   # Extra stress points added when real_rate_change_1m > 0.5pp
+  rising_rate_threshold: 0.5 # 1-month change (pp) above which the rising-rate modifier fires
+  change_lookback_days: 21   # Days used to compute real_rate_change_1m
+
+# ── Macro nowcast ────────────────────────────────────────────────────────────
+macro_nowcast:
+  rolling_window: 252        # Trailing window (days) for z-score standardisation of each indicator
+  min_periods: 63            # Minimum history (days) before a z-score observation is valid
+  sp500_mom_window: 63       # Look-back (days) for SP500 momentum input before z-scoring
+  # Nowcast regime thresholds (0-100 composite score)
+  regime_strong_growth: 70   # Score above this → "Strong Growth"
+  regime_expansion: 55       # Score above this (and ≤ strong_growth) → "Expansion"
+  regime_neutral: 45         # Score above this (and ≤ expansion) → "Neutral"
+  regime_slowdown: 35        # Score above this (and ≤ neutral) → "Slowdown", below → "Contraction"
+  # Momentum classification threshold (1-month score change)
+  momentum_threshold: 3.0    # |nowcast_change_1m| must exceed this to call Improving/Deteriorating
+  # Indicator registry: each entry is [column_name, label, sign]
+  # sign = +1 means higher value → better growth; -1 means higher value → worse growth
+  # Mutually exclusive pairs: (unemployment/unrate) and (ism_pmi/pmi) — first present column wins
+  indicators:
+    - [unemployment,    "Unemployment",   -1]
+    - [unrate,          "Unemployment",   -1]
+    - [initial_claims,  "Initial Claims", -1]
+    - [yield_10y,       "10y Yield",       1]
+    - [sp500,           "SP500 Mom",       1]
+    - [ism_pmi,         "ISM PMI",         1]
+    - [pmi,             "PMI",             1]
+    - [retail_sales,    "Retail Sales",    1]

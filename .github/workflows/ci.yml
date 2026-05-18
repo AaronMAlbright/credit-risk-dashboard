@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Lint · Test · Import
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── Step 1: Syntax check ─────────────────────────────────────────────────
+      - name: Syntax check (py_compile)
+        continue-on-error: false
+        run: |
+          find src/ -name "*.py" -print0 | xargs -0 python -m py_compile
+          python -m py_compile streamlit_app.py
+
+      # ── Step 2: Test suite ───────────────────────────────────────────────────
+      - name: Run test suite
+        continue-on-error: false
+        timeout-minutes: 10
+        run: python -m pytest tests/ -q --tb=short
+
+      # ── Step 3: Import check ─────────────────────────────────────────────────
+      - name: Import check (streamlit_app)
+        continue-on-error: false
+        env:
+          STREAMLIT_TESTING: "1"
+        run: python -c "import streamlit_app"
