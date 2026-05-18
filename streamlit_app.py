@@ -162,6 +162,12 @@ from src.credit_impulse import run_credit_impulse_analysis
 from src.etf_premium_discount import run_etf_premium_discount
 from src.sovereign_contagion import run_sovereign_contagion
 from src.consumer_credit_stress import run_consumer_credit_stress
+from src.term_premium import run_term_premium_analysis
+from src.yield_curve_butterfly import run_butterfly_analysis
+from src.sloos_monitor import run_sloos_monitor
+from src.etf_fund_flows import run_etf_fund_flows
+from src.corporate_profit_cycle import run_corporate_profit_cycle
+from src.cds_implied_pd import run_cds_implied_pd
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -925,6 +931,36 @@ def load_sovereign_contagion(_df):
 @st.cache_data
 def load_consumer_credit_stress(_df):
     return run_consumer_credit_stress(_df)
+
+
+@st.cache_data
+def load_term_premium(_df):
+    return run_term_premium_analysis(_df)
+
+
+@st.cache_data
+def load_yield_curve_butterfly(_df):
+    return run_butterfly_analysis(_df)
+
+
+@st.cache_data
+def load_sloos_monitor(_df):
+    return run_sloos_monitor(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_etf_fund_flows(_df):
+    return run_etf_fund_flows(_df)
+
+
+@st.cache_data
+def load_corporate_profit_cycle(_df):
+    return run_corporate_profit_cycle(_df)
+
+
+@st.cache_data
+def load_cds_implied_pd(_df):
+    return run_cds_implied_pd(_df)
 
 
 @st.cache_data
@@ -2931,7 +2967,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 67 sub-tabs
+with tab5:  # Analytics — 73 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
@@ -2952,7 +2988,9 @@ with tab5:  # Analytics — 67 sub-tabs
      _analytics_sub56, _analytics_sub57, _analytics_sub58,
      _analytics_sub59, _analytics_sub60, _analytics_sub61,
      _analytics_sub62, _analytics_sub63, _analytics_sub64,
-     _analytics_sub65, _analytics_sub66, _analytics_sub67) = st.tabs([
+     _analytics_sub65, _analytics_sub66, _analytics_sub67,
+     _analytics_sub68, _analytics_sub69, _analytics_sub70,
+     _analytics_sub71, _analytics_sub72, _analytics_sub73) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2974,6 +3012,8 @@ with tab5:  # Analytics — 67 sub-tabs
         "CRE Stress", "Issuance", "Distressed",
         "CLO", "FCI", "Credit Impulse",
         "ETF Disloc", "Sovereign", "Consumer Credit",
+        "Term Premium", "Curve Fly", "SLOOS",
+        "ETF Flows", "Corp Profits", "CDS PD",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -11339,6 +11379,360 @@ with _analytics_sub67:
             st.info("Consumer credit stress unavailable — requires FRED API key (DRCCLACBS, DRAUTOACBS, DRSFRMACBS, REVOLSL).")
     except Exception as _cons_e:
         st.caption(f"Consumer credit stress unavailable: {_cons_e}")
+
+# --- sub-tab 68: Term Premium ------------------------------------------------
+with _analytics_sub68:
+    import plotly.graph_objects as _go_tp
+    st.header("Term Premium Monitor")
+    st.markdown(
+        "Decomposes the 10y Treasury yield into **expected short rate** (where markets "
+        "expect rates to go) and **term premium** (extra yield for duration/uncertainty risk). "
+        "Rising term premium → duration costly → bad for IG; "
+        "rising rate expectations → growth optimism → mildly positive for HY."
+    )
+    try:
+        _tp = load_term_premium(df)
+        if _tp.get("available"):
+            _tpc = _tp.get("current", {})
+            _c1tp, _c2tp, _c3tp, _c4tp = st.columns(4)
+            _tp_val = _tpc.get("term_premium")
+            _c1tp.metric("Term Premium", f"{_tp_val:.2f}%" if _tp_val is not None else "N/A")
+            _c2tp.metric("Regime", _tpc.get("term_premium_regime", "N/A"))
+            _c3tp.metric("Direction", _tpc.get("term_premium_direction", "N/A"))
+            _dur_score = _tpc.get("duration_risk_score")
+            _c4tp.metric("Duration Risk Score", f"{_dur_score:.0f}/100" if _dur_score is not None else "N/A")
+            if _tpc.get("warning"):
+                st.warning(_tpc["warning"])
+            if _tpc.get("credit_implication"):
+                st.info(_tpc["credit_implication"])
+            _tp_hist = _tp.get("term_premium_history")
+            _er_hist = _tp.get("expected_rate_history")
+            if _tp_hist is not None and len(_tp_hist.dropna()) > 50:
+                _fig_tp = _go_tp.Figure()
+                _fig_tp.add_trace(_go_tp.Scatter(
+                    x=_tp_hist.index, y=_tp_hist.values,
+                    name="Term Premium (%)", line=dict(color="#a78bfa", width=1.5)
+                ))
+                if _er_hist is not None and len(_er_hist.dropna()) > 50:
+                    _fig_tp.add_trace(_go_tp.Scatter(
+                        x=_er_hist.index, y=_er_hist.values,
+                        name="Expected Short Rate (%)", line=dict(color="#60a5fa", width=1.2, dash="dot")
+                    ))
+                _fig_tp.add_hline(y=0, line_dash="solid", line_color="#6b7280")
+                _fig_tp.add_hline(y=1.5, line_dash="dot", line_color="#f59e0b", annotation_text="Elevated")
+                _fig_tp.update_layout(
+                    template="plotly_dark", height=320, title="Term Premium Decomposition",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="%"),
+                    legend=dict(orientation="h", y=1.05),
+                )
+                st.plotly_chart(_fig_tp, use_container_width=True)
+            _tp_r2 = _tp.get("tp_fraction_of_yield_move")
+            if _tp_r2 is not None:
+                st.metric("Term Premium Share of 10y Yield Moves (rolling R²)", f"{_tp_r2:.1%}")
+        else:
+            st.info("Term premium unavailable — requires yield_10y and yield_3m or yield_2y columns.")
+    except Exception as _tp_e:
+        st.caption(f"Term premium unavailable: {_tp_e}")
+
+# --- sub-tab 69: Yield Curve Butterfly ---------------------------------------
+with _analytics_sub69:
+    import plotly.graph_objects as _go_fly
+    st.header("Yield Curve Butterfly (2s5s10s)")
+    st.markdown(
+        "2s5s10s butterfly = 2×yield_5y − yield_2y − yield_10y. "
+        "Measures curve curvature — negative butterfly means the belly is cheap = "
+        "curve flattening = historically precedes recession and spread widening by 3–6 months."
+    )
+    try:
+        _fly = load_yield_curve_butterfly(df)
+        if _fly.get("available"):
+            _flyc = _fly.get("current", {})
+            _c1fly, _c2fly, _c3fly, _c4fly = st.columns(4)
+            _fly_bps = _flyc.get("butterfly_bps")
+            _c1fly.metric("Butterfly (2s5s10s)", f"{_fly_bps:.0f}bps" if _fly_bps is not None else "N/A")
+            _slope_2s10s = _flyc.get("slope_2s10s_bps")
+            _c2fly.metric("2s10s Slope", f"{_slope_2s10s:.0f}bps" if _slope_2s10s is not None else "N/A")
+            _c3fly.metric("Curve Regime", _flyc.get("curve_regime", "N/A"))
+            _inv_days = _flyc.get("inversion_duration_days", 0)
+            _c4fly.metric("Inversion Duration", f"{_inv_days}d")
+            if _flyc.get("warning"):
+                st.warning(_flyc["warning"])
+            if _flyc.get("credit_implication"):
+                st.info(_flyc["credit_implication"])
+            _fly_hist = _fly.get("butterfly_history")
+            _slope_hist = _fly.get("slope_2s10s_history")
+            if _fly_hist is not None and len(_fly_hist.dropna()) > 50:
+                _fig_fly = _go_fly.Figure()
+                _fig_fly.add_trace(_go_fly.Scatter(
+                    x=_fly_hist.index, y=_fly_hist.values,
+                    name="2s5s10s Butterfly (bps)", line=dict(color="#34d399", width=1.5)
+                ))
+                if _slope_hist is not None and len(_slope_hist.dropna()) > 50:
+                    _fig_fly.add_trace(_go_fly.Scatter(
+                        x=_slope_hist.index, y=_slope_hist.values,
+                        name="2s10s Slope (bps)", line=dict(color="#60a5fa", width=1.2, dash="dot")
+                    ))
+                _fig_fly.add_hline(y=0, line_dash="solid", line_color="#6b7280")
+                _fig_fly.add_hline(y=-50, line_dash="dot", line_color="#ef4444",
+                                   annotation_text="Recession Warning")
+                _fig_fly.update_layout(
+                    template="plotly_dark", height=320, title="Yield Curve Butterfly & 2s10s Slope (bps)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="bps"),
+                    legend=dict(orientation="h", y=1.05),
+                )
+                st.plotly_chart(_fig_fly, use_container_width=True)
+            _fly_corr = _fly.get("credit_lead_correlation")
+            if _fly_corr is not None:
+                st.metric("Lead Correlation (butterfly → HY spread 6m forward)", f"{_fly_corr:.3f}")
+        else:
+            st.info("Yield curve butterfly unavailable — requires yield_2y, yield_5y, yield_10y columns.")
+    except Exception as _fly_e:
+        st.caption(f"Yield curve butterfly unavailable: {_fly_e}")
+
+# --- sub-tab 70: SLOOS -------------------------------------------------------
+with _analytics_sub70:
+    import plotly.graph_objects as _go_sl
+    st.header("Bank Lending Standards (SLOOS)")
+    st.markdown(
+        "Senior Loan Officer Opinion Survey — net % of banks tightening C&I loan standards. "
+        "One of the most powerful leading indicators for corporate credit spreads, "
+        "with a 2–4 quarter lead time. Requires FRED API key."
+    )
+    try:
+        _sl = load_sloos_monitor(df)
+        if _sl.get("available"):
+            _slc = _sl.get("current", {})
+            _c1sl, _c2sl, _c3sl = st.columns(3)
+            _sl_score = _slc.get("sloos_score")
+            _c1sl.metric("SLOOS Score", f"{_sl_score:.0f}/100" if _sl_score is not None else "N/A")
+            _c2sl.metric("Regime", _slc.get("sloos_regime", "N/A"))
+            _c3sl.metric("Direction", _slc.get("sloos_direction", "N/A"))
+            _nt_ci = _slc.get("net_tightening_ci_large")
+            if _nt_ci is not None:
+                st.metric("C&I Net Tightening (large firms)", f"{_nt_ci:+.1f}%")
+            if _slc.get("warning"):
+                st.warning(_slc["warning"])
+            if _slc.get("lead_signal"):
+                st.info(_slc["lead_signal"])
+            if _slc.get("interpretation"):
+                st.caption(_slc["interpretation"])
+            _sl_hist = _sl.get("sloos_history")
+            if _sl_hist is not None and len(_sl_hist.dropna()) > 10:
+                _fig_sl = _go_sl.Figure()
+                _fig_sl.add_trace(_go_sl.Scatter(
+                    x=_sl_hist.index, y=_sl_hist.values,
+                    name="SLOOS Score", line=dict(color="#f59e0b", width=1.5)
+                ))
+                _fig_sl.add_hline(y=65, line_dash="dot", line_color="#ef4444",
+                                  annotation_text="Tightening")
+                _fig_sl.add_hline(y=35, line_dash="dot", line_color="#34d399",
+                                  annotation_text="Easing")
+                _fig_sl.update_layout(
+                    template="plotly_dark", height=300,
+                    title="Bank Lending Standards Score (0=Easing, 100=Tightening)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_sl, use_container_width=True)
+            _sl_corr = _sl.get("lead_correlation_6m")
+            if _sl_corr is not None:
+                st.metric("Lead Correlation (SLOOS → HY spread 6m forward)", f"{_sl_corr:.3f}")
+        else:
+            st.info("SLOOS monitor unavailable — requires FRED API key (DRTSCILM, DRTSCIS, SUBLPPDCNOT).")
+    except Exception as _sl_e:
+        st.caption(f"SLOOS monitor unavailable: {_sl_e}")
+
+# --- sub-tab 71: ETF Fund Flows ----------------------------------------------
+with _analytics_sub71:
+    import plotly.graph_objects as _go_ff
+    st.header("Credit ETF Fund Flows")
+    st.markdown(
+        "Estimates net flows into/out of HYG, LQD, JNK as a proxy for institutional "
+        "credit demand. Sustained outflows create technical selling pressure → spread widening. "
+        "HYG is the most liquid HY vehicle — its flows have a short-term lead on spreads."
+    )
+    try:
+        _ff = load_etf_fund_flows(df)
+        if _ff.get("available"):
+            _ffc = _ff.get("current", {})
+            _c1ff, _c2ff, _c3ff = st.columns(3)
+            _ff_score = _ffc.get("flow_score")
+            _c1ff.metric("Flow Score", f"{_ff_score:.0f}/100" if _ff_score is not None else "N/A")
+            _c2ff.metric("Regime", _ffc.get("flow_regime", "N/A"))
+            _c3ff.metric("Most Outflow", _ffc.get("largest_outflow_etf", "N/A"))
+            if _ffc.get("warning"):
+                st.warning(_ffc["warning"])
+            if _ffc.get("interpretation"):
+                st.info(_ffc["interpretation"])
+            _ff_etfs = _ffc.get("etf_flows", {})
+            if _ff_etfs:
+                _ff_rows = [
+                    {"ETF": t,
+                     "Flow Z-score": f"{v.get('flow_z', 0):.2f}",
+                     "Direction": v.get("flow_direction", "N/A")}
+                    for t, v in _ff_etfs.items()
+                ]
+                import pandas as _pd_ff
+                st.dataframe(_pd_ff.DataFrame(_ff_rows).set_index("ETF"), use_container_width=True)
+            _ff_hist = _ff.get("flow_history")
+            if _ff_hist is not None and len(_ff_hist.dropna()) > 20:
+                _fig_ff = _go_ff.Figure()
+                _fig_ff.add_trace(_go_ff.Scatter(
+                    x=_ff_hist.index, y=_ff_hist.values,
+                    name="Flow Score", line=dict(color="#22d3ee", width=1.5)
+                ))
+                _fig_ff.add_hline(y=30, line_dash="dot", line_color="#ef4444",
+                                  annotation_text="Heavy Outflow")
+                _fig_ff.add_hline(y=70, line_dash="dot", line_color="#34d399",
+                                  annotation_text="Heavy Inflow")
+                _fig_ff.update_layout(
+                    template="plotly_dark", height=300,
+                    title="Credit ETF Flow Score (0=Heavy Outflow, 100=Heavy Inflow)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_ff, use_container_width=True)
+        else:
+            st.info("ETF fund flows unavailable — requires live yfinance data (HYG, LQD, JNK).")
+    except Exception as _ff_e:
+        st.caption(f"ETF fund flows unavailable: {_ff_e}")
+
+# --- sub-tab 72: Corporate Profit Cycle --------------------------------------
+with _analytics_sub72:
+    import plotly.graph_objects as _go_cp
+    st.header("Corporate Profit Cycle")
+    st.markdown(
+        "Tracks corporate profit margins (profits/GDP) as a macro-credit link. "
+        "Margin compression → deteriorating debt coverage → rising default probability → "
+        "HY spread widening. Leads credit spreads by 2–4 quarters. Requires FRED API key."
+    )
+    try:
+        _cp = load_corporate_profit_cycle(df)
+        if _cp.get("available"):
+            _cpc = _cp.get("current", {})
+            _c1cp, _c2cp, _c3cp, _c4cp = st.columns(4)
+            _pm = _cpc.get("profit_margin")
+            _c1cp.metric("Profit Margin", f"{_pm:.1%}" if _pm is not None else "N/A")
+            _pm_yoy = _cpc.get("profit_margin_yoy")
+            _c2cp.metric("YoY Change", f"{_pm_yoy:+.1f}%" if _pm_yoy is not None else "N/A")
+            _ps = _cpc.get("profit_stress_score")
+            _c3cp.metric("Profit Stress Score", f"{_ps:.0f}/100" if _ps is not None else "N/A")
+            _c4cp.metric("Regime", _cpc.get("profit_cycle_regime", "N/A"))
+            if _cpc.get("leverage_flag"):
+                st.warning("Leverage flag: Margin compression + rising rates — debt service stress.")
+            if _cpc.get("warning"):
+                st.error(_cpc["warning"])
+            if _cpc.get("lead_signal"):
+                st.info(_cpc["lead_signal"])
+            if _cpc.get("interpretation"):
+                st.caption(_cpc["interpretation"])
+            _cp_hist = _cp.get("profit_margin_history")
+            _ps_hist = _cp.get("profit_stress_history")
+            if _cp_hist is not None and len(_cp_hist.dropna()) > 10:
+                _fig_cp = _go_cp.Figure()
+                _fig_cp.add_trace(_go_cp.Scatter(
+                    x=_cp_hist.index, y=(_cp_hist * 100).values,
+                    name="Profit Margin (% of GDP)", line=dict(color="#34d399", width=1.5)
+                ))
+                _fig_cp.update_layout(
+                    template="plotly_dark", height=280,
+                    title="Corporate Profit Margin (% of GDP)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="%"),
+                )
+                st.plotly_chart(_fig_cp, use_container_width=True)
+            if _ps_hist is not None and len(_ps_hist.dropna()) > 10:
+                _fig_ps = _go_cp.Figure()
+                _fig_ps.add_trace(_go_cp.Scatter(
+                    x=_ps_hist.index, y=_ps_hist.values,
+                    name="Profit Stress Score", line=dict(color="#f87171", width=1.5)
+                ))
+                _fig_ps.add_hline(y=60, line_dash="dot", line_color="#f59e0b",
+                                  annotation_text="Compression Zone")
+                _fig_ps.update_layout(
+                    template="plotly_dark", height=260,
+                    title="Corporate Profit Stress Score (0=Boom, 100=Recession Risk)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_ps, use_container_width=True)
+            _cp_lc = _cp.get("lead_correlation")
+            if _cp_lc is not None:
+                st.metric("Lead Correlation (profit stress → HY spread 6m forward)", f"{_cp_lc:.3f}")
+        else:
+            st.info("Corporate profit cycle unavailable — requires FRED API key (CP, NFCPATAX, GDP).")
+    except Exception as _cp_e:
+        st.caption(f"Corporate profit cycle unavailable: {_cp_e}")
+
+# --- sub-tab 73: CDS-Implied Default Probability -----------------------------
+with _analytics_sub73:
+    import plotly.graph_objects as _go_pd
+    st.header("CDS-Implied Default Probability Surface")
+    st.markdown(
+        "Converts HY and IG spread levels into implied default probabilities across "
+        "1y/3y/5y/10y horizons using standard CDS pricing. Recovery rate is cycle-adjusted "
+        "— spreads widening past 450bps compress recoveries, amplifying implied PD nonlinearly."
+    )
+    try:
+        _pd_res = load_cds_implied_pd(df)
+        if _pd_res.get("available"):
+            _pdc = _pd_res.get("current", {})
+            _c1pd, _c2pd, _c3pd, _c4pd = st.columns(4)
+            _pd_1y = _pdc.get("pd_surface_hy", {}).get(1)
+            _c1pd.metric("HY 1y Implied PD", f"{_pd_1y:.1f}%" if _pd_1y is not None else "N/A")
+            _pd_5y = _pdc.get("pd_surface_hy", {}).get(5)
+            _c2pd.metric("HY 5y Cumulative PD", f"{_pd_5y:.1f}%" if _pd_5y is not None else "N/A")
+            _rr = _pdc.get("recovery_rate_current")
+            _c3pd.metric("Cycle-Adj Recovery Rate", f"{_rr:.1f}%" if _rr is not None else "N/A")
+            _el = _pdc.get("el_hy_1y")
+            _c4pd.metric("Expected Loss (HY 1y)", f"${_el:.2f}/$100" if _el is not None else "N/A")
+            if _pdc.get("warning"):
+                st.error(_pdc["warning"])
+            if _pdc.get("interpretation"):
+                st.info(_pdc["interpretation"])
+            if _pdc.get("pd_vs_historical"):
+                st.caption(_pdc["pd_vs_historical"])
+            _hy_surf = _pdc.get("pd_surface_hy", {})
+            _ig_surf = _pdc.get("pd_surface_ig", {})
+            if _hy_surf:
+                import pandas as _pd_surf
+                _surf_rows = []
+                for _h in [1, 3, 5, 10]:
+                    _surf_rows.append({
+                        "Horizon": f"{_h}y",
+                        "HY PD (%)": f"{_hy_surf.get(_h, float('nan')):.1f}" if _hy_surf.get(_h) is not None else "N/A",
+                        "IG PD (%)": f"{_ig_surf.get(_h, float('nan')):.1f}" if _ig_surf.get(_h) is not None else "N/A",
+                    })
+                st.dataframe(_pd_surf.DataFrame(_surf_rows).set_index("Horizon"), use_container_width=True)
+            _pd_hy_hist = _pd_res.get("pd_hy_history")
+            _pd_ig_hist = _pd_res.get("pd_ig_history")
+            if _pd_hy_hist is not None and len(_pd_hy_hist.dropna()) > 50:
+                _fig_pd = _go_pd.Figure()
+                _fig_pd.add_trace(_go_pd.Scatter(
+                    x=_pd_hy_hist.index, y=_pd_hy_hist.values,
+                    name="HY 5y Implied PD (%)", line=dict(color="#ef4444", width=1.5)
+                ))
+                if _pd_ig_hist is not None and len(_pd_ig_hist.dropna()) > 50:
+                    _fig_pd.add_trace(_go_pd.Scatter(
+                        x=_pd_ig_hist.index, y=_pd_ig_hist.values,
+                        name="IG 5y Implied PD (%)", line=dict(color="#60a5fa", width=1.2, dash="dot")
+                    ))
+                _fig_pd.add_hline(y=HY_HISTORICAL_AVG_PD * 5 * 0.8, line_dash="dot",
+                                  line_color="#f59e0b", annotation_text="Elevated vs history")
+                _fig_pd.update_layout(
+                    template="plotly_dark", height=320,
+                    title="CDS-Implied 5y Cumulative Default Probability (%)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="%"),
+                    legend=dict(orientation="h", y=1.05),
+                )
+                st.plotly_chart(_fig_pd, use_container_width=True)
+        else:
+            st.info("CDS-implied PD unavailable — requires hy_spread or ig_spread column.")
+    except Exception as _pd_e:
+        st.caption(f"CDS-implied PD unavailable: {_pd_e}")
 
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
