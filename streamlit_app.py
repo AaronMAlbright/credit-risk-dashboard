@@ -144,6 +144,12 @@ from src.sector_divergence import run_sector_divergence
 from src.put_call_sentiment import run_put_call_sentiment
 from src.credit_basis import run_credit_basis
 from src.drawdown_recovery import run_drawdown_recovery
+from src.signal_move_attribution import run_signal_move_attribution
+from src.risk_parity_allocation import run_risk_parity_allocation
+from src.tail_dependency import run_tail_dependency
+from src.fed_liquidity import run_fed_liquidity
+from src.g4_divergence import run_g4_divergence
+from src.portfolio_stress_test import run_portfolio_stress_test, DEFAULT_PORTFOLIO, ASSET_LABELS, SHOCK_SCENARIOS as PST_SCENARIOS
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -817,6 +823,36 @@ def load_credit_basis(_df):
 @st.cache_data
 def load_drawdown_recovery(_df):
     return run_drawdown_recovery(_df)
+
+
+@st.cache_data
+def load_signal_move_attribution(_df):
+    return run_signal_move_attribution(_df)
+
+
+@st.cache_data
+def load_risk_parity_allocation(_df):
+    return run_risk_parity_allocation(_df)
+
+
+@st.cache_data
+def load_tail_dependency(_df):
+    return run_tail_dependency(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_fed_liquidity(_df):
+    return run_fed_liquidity(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_g4_divergence(_df):
+    return run_g4_divergence(_df)
+
+
+@st.cache_data
+def load_portfolio_stress_test(_df):
+    return run_portfolio_stress_test(_df)
 
 
 @st.cache_data
@@ -2823,7 +2859,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 49 sub-tabs
+with tab5:  # Analytics — 55 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
@@ -2838,7 +2874,9 @@ with tab5:  # Analytics — 49 sub-tabs
      _analytics_sub38, _analytics_sub39, _analytics_sub40,
      _analytics_sub41, _analytics_sub42, _analytics_sub43,
      _analytics_sub44, _analytics_sub45, _analytics_sub46,
-     _analytics_sub47, _analytics_sub48, _analytics_sub49) = st.tabs([
+     _analytics_sub47, _analytics_sub48, _analytics_sub49,
+     _analytics_sub50, _analytics_sub51, _analytics_sub52,
+     _analytics_sub53, _analytics_sub54, _analytics_sub55) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2854,6 +2892,8 @@ with tab5:  # Analytics — 49 sub-tabs
         "Macro Surprise", "Loan Market", "Regime Age",
         "Deleveraging", "Inflation Regime", "Sector Stress",
         "Put/Call", "Credit Basis", "Drawdown",
+        "Signal Move", "Risk Parity", "Tail Dependency",
+        "Fed Liquidity", "G4 Divergence", "Port Stress",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -10134,6 +10174,460 @@ with _analytics_sub49:
             st.info("Drawdown recovery unavailable — requires HY spread or composite score data with ≥252 rows.")
     except Exception as _ddr_e:
         st.caption(f"Drawdown recovery unavailable: {_ddr_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 50: Signal Move Attribution
+# =============================================================================
+with _analytics_sub50:
+    import plotly.graph_objects as _go_sma
+    st.header("Signal Move Attribution")
+    st.markdown(
+        "**What drove the composite score change?** Brinson-style decomposition: "
+        "which sub-signal moved most over the past 1M / 3M / 6M, "
+        "and which market variable was the primary cause."
+    )
+    try:
+        _sma = load_signal_move_attribution(df)
+        if _sma.get("available"):
+            _sma_interp = _sma.get("interpretation", "")
+            _sma_comp = _sma.get("current_composite")
+            _sma_regime = _sma.get("current_regime", "—")
+
+            _sm1, _sm2 = st.columns(2)
+            _sm1.metric("Current Composite", f"{_sma_comp:.1f}" if _sma_comp is not None else "—")
+            _sm2.metric("Current Regime", _sma_regime)
+
+            if _sma_interp:
+                st.info(_sma_interp)
+
+            # Waterfall-style bar chart for 1M attribution
+            _sma_attrs = _sma.get("attributions", {})
+            _sma_1m = _sma_attrs.get("1M", {})
+            if _sma_1m.get("available"):
+                _sma_contribs = _sma_1m.get("sub_signal_contributions", [])
+                _sma_delta = _sma_1m.get("composite_delta", 0)
+
+                _sma_c1, _sma_c2, _sma_c3 = st.columns(3)
+                _sma_c1.metric("1M Composite Δ", f"{_sma_delta:+.1f}",
+                               delta_color="inverse" if _sma_delta > 0 else "normal")
+                _sma_c2.metric("Dominant Signal", _sma_1m.get("dominant_sub_signal", "—"))
+                _sma_c3.metric("Dominant Driver", _sma_1m.get("dominant_market_driver", "—"))
+
+                if _sma_contribs:
+                    _sma_fig = _go_sma.Figure()
+                    _sma_labels = [c["label"] for c in _sma_contribs]
+                    _sma_pcts = [c.get("contribution_pct", 0) for c in _sma_contribs]
+                    _sma_bar_colors = ["#e74c3c" if v > 0 else "#27ae60" for v in _sma_pcts]
+                    _sma_fig.add_trace(_go_sma.Bar(
+                        x=_sma_labels, y=_sma_pcts,
+                        marker_color=_sma_bar_colors,
+                        hovertemplate="%{x}<br>Contribution: %{y:+.1f}%<extra></extra>",
+                    ))
+                    _sma_fig.update_layout(
+                        height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                        title=dict(text="1M Contribution to Composite Move (%)", font=dict(size=12, color="#9aa0aa")),
+                        yaxis=dict(title="Contribution (%)", showgrid=True,
+                                   gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                    )
+                    st.plotly_chart(_sma_fig, use_container_width=True)
+
+            # Summary table across all windows
+            _sma_tbl = _sma.get("summary_table")
+            if _sma_tbl is not None and not _sma_tbl.empty:
+                with st.expander("Full attribution across 1M / 3M / 6M"):
+                    st.dataframe(_sma_tbl, use_container_width=True)
+        else:
+            st.info("Signal move attribution unavailable — requires composite score, ≥2 sub-signals, and ≥126 rows.")
+    except Exception as _sma_e:
+        st.caption(f"Signal move attribution unavailable: {_sma_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 51: Risk Parity Credit Allocation
+# =============================================================================
+with _analytics_sub51:
+    import plotly.graph_objects as _go_rpa
+    st.header("Risk Parity Credit Allocation")
+    st.markdown(
+        "**Equal Risk Contribution (ERC)** weights across IG / HY / Equities / Rates / USD. "
+        "Shows how much of each asset to hold so each contributes equally to portfolio volatility. "
+        "Regime-adjusted variant scales ERC weights for current market regime."
+    )
+    try:
+        _rpa = load_risk_parity_allocation(df)
+        if _rpa.get("available"):
+            _rpa_regime = _rpa.get("current_regime", "—")
+            _rpa_vol_erc = _rpa.get("portfolio_vol_erc")
+            _rpa_vol_eq = _rpa.get("portfolio_vol_equal")
+            _rpa_interp = _rpa.get("interpretation", "")
+            _rpa_assets = _rpa.get("assets_used", [])
+
+            _rp1, _rp2, _rp3 = st.columns(3)
+            _rp1.metric("Current Regime", _rpa_regime)
+            _rp2.metric("ERC Portfolio Vol", f"{_rpa_vol_erc:.1%}" if _rpa_vol_erc else "—",
+                        delta=f"{(_rpa_vol_erc - _rpa_vol_eq):+.1%} vs equal-weight" if _rpa_vol_erc and _rpa_vol_eq else None)
+            _rp3.metric("Assets Used", len(_rpa_assets))
+
+            if _rpa_interp:
+                st.info(_rpa_interp)
+
+            _rpa_tbl = _rpa.get("weights_table")
+            if _rpa_tbl is not None and not _rpa_tbl.empty:
+                st.dataframe(_rpa_tbl, use_container_width=True)
+
+            # ERC vs equal-weight bar chart
+            _rpa_erc_w = _rpa.get("erc_weights", {})
+            _rpa_eq_w = _rpa.get("equal_weights", {})
+            _rpa_reg_w = _rpa.get("regime_weights", {})
+            if _rpa_erc_w:
+                _rpa_fig = _go_rpa.Figure()
+                _rpa_keys = list(_rpa_erc_w.keys())
+                _rpa_fig.add_trace(_go_rpa.Bar(name="ERC", x=_rpa_keys,
+                    y=[_rpa_erc_w.get(k, 0) for k in _rpa_keys], marker_color="#3498db"))
+                _rpa_fig.add_trace(_go_rpa.Bar(name="Equal Weight", x=_rpa_keys,
+                    y=[_rpa_eq_w.get(k, 0) for k in _rpa_keys], marker_color="#9aa0aa"))
+                _rpa_fig.add_trace(_go_rpa.Bar(name=f"Regime-Adj ({_rpa_regime})", x=_rpa_keys,
+                    y=[_rpa_reg_w.get(k, 0) for k in _rpa_keys], marker_color="#e74c3c"))
+                _rpa_fig.update_layout(
+                    barmode="group", height=260,
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="Weight", tickformat=".0%", showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                )
+                st.plotly_chart(_rpa_fig, use_container_width=True)
+        else:
+            st.info("Risk parity allocation unavailable — requires ≥2 asset proxies and ≥252 rows.")
+    except Exception as _rpa_e:
+        st.caption(f"Risk parity allocation unavailable: {_rpa_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 52: Tail Dependency Matrix
+# =============================================================================
+with _analytics_sub52:
+    import plotly.graph_objects as _go_td
+    st.header("Tail Dependency Matrix")
+    st.markdown(
+        "Empirical joint tail probability for all asset pairs. "
+        "**Tail dependency coefficient > 1** = assets cluster together in stress (diversification fails). "
+        "**< 1** = assets actually diversify during extreme moves. Pure empirical — no copula assumptions."
+    )
+    try:
+        _td = load_tail_dependency(df)
+        if _td.get("available"):
+            _td_matrix = _td.get("matrix", {})
+            _td_warn = _td.get("warning")
+            _td_interp = _td.get("interpretation", "")
+            _td_findings = _td.get("key_findings", [])
+
+            _td_high = _td_matrix.get("highest_dependency")
+            _td_low = _td_matrix.get("lowest_dependency")
+
+            _tdc1, _tdc2, _tdc3 = st.columns(3)
+            if _td_high:
+                _tdc1.metric("Most Clustered Pair", f"{_td_high[0]} / {_td_high[1]}",
+                             delta=f"TDC = {_td_high[2]:.1f}x", delta_color="inverse")
+            if _td_low:
+                _tdc2.metric("Best Diversifier Pair", f"{_td_low[0]} / {_td_low[1]}",
+                             delta=f"TDC = {_td_low[2]:.1f}x", delta_color="normal")
+            _tdc3.metric("Assets Analyzed", _td_matrix.get("n_assets", 0))
+
+            if _td_warn:
+                st.warning(_td_warn)
+            if _td_interp:
+                st.info(_td_interp)
+
+            for _f in _td_findings:
+                st.caption(f"• {_f}")
+
+            # Tail dependency heatmap
+            _td_tbl = _td_matrix.get("tail_dep_matrix")
+            if _td_tbl is not None and not _td_tbl.empty:
+                _td_fig = _go_td.Figure(data=_go_td.Heatmap(
+                    z=_td_tbl.values.tolist(),
+                    x=list(_td_tbl.columns),
+                    y=list(_td_tbl.index),
+                    colorscale="RdYlGn_r",
+                    zmid=1.0,
+                    hovertemplate="%{y} | %{x}<br>TDC: %{z:.2f}x<extra></extra>",
+                    text=[[f"{v:.2f}x" for v in row] for row in _td_tbl.values],
+                    texttemplate="%{text}",
+                ))
+                _td_fig.update_layout(
+                    height=320, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    title=dict(text="Tail Dependency Coefficient (1.0 = independent)", font=dict(size=11, color="#9aa0aa")),
+                )
+                st.plotly_chart(_td_fig, use_container_width=True)
+                st.caption("Red = clusters in stress · Green = diversifies · 10th/90th percentile tails · Values > 1 = positive tail dependency")
+
+            # Stress vs unconditional correlation
+            _td_stress = _td_matrix.get("stress_corr_matrix")
+            _td_uncond = _td_matrix.get("unconditional_corr_matrix")
+            if _td_stress is not None and _td_uncond is not None:
+                with st.expander("Stress Correlation vs Unconditional Correlation"):
+                    _tc1, _tc2 = st.columns(2)
+                    _tc1.write("**Stress Correlation** (when either asset is in tail)")
+                    _tc1.dataframe(_td_stress.applymap(lambda x: f"{x:.2f}"), use_container_width=True)
+                    _tc2.write("**Unconditional Correlation**")
+                    _tc2.dataframe(_td_uncond.applymap(lambda x: f"{x:.2f}"), use_container_width=True)
+        else:
+            st.info("Tail dependency unavailable — requires ≥3 asset columns and ≥252 rows.")
+    except Exception as _td_e:
+        st.caption(f"Tail dependency unavailable: {_td_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 53: Fed Liquidity Plumbing Monitor
+# =============================================================================
+with _analytics_sub53:
+    import plotly.graph_objects as _go_fl
+    st.header("Fed Liquidity Plumbing Monitor")
+    st.markdown(
+        "Fed balance sheet total assets, RRP outstanding, SOFR, and bank reserves — "
+        "the **upstream liquidity variables** that lead credit spreads by ~6 weeks. "
+        "QT (balance sheet shrinkage) tightens credit conditions before spread moves are visible."
+    )
+    try:
+        _fl = load_fed_liquidity(df)
+        if _fl.get("available"):
+            _fl_metrics = _fl.get("metrics", {})
+            _fl_regime = _fl_metrics.get("fed_assets_regime", "—")
+            _fl_signal = _fl_metrics.get("liquidity_composite_signal", "—")
+            _fl_credit = _fl.get("credit_implication", "")
+            _fl_interp = _fl.get("interpretation", "")
+            _fl_lead = _fl.get("lead_weeks", 6)
+
+            _fl_signal_color = {
+                "Expanding": "#27ae60", "Neutral": "#f39c12", "Contracting": "#e74c3c"
+            }.get(_fl_signal, "#9aa0aa")
+
+            _fc1, _fc2, _fc3, _fc4 = st.columns(4)
+            _fc1.metric("Balance Sheet Regime", _fl_regime)
+            _fc2.metric("Liquidity Signal", _fl_signal)
+            _fc3.metric("Fed Assets", f"${_fl_metrics.get('fed_assets_latest', 0)/1000:.1f}T"
+                        if _fl_metrics.get('fed_assets_latest') else "—",
+                        delta=f"{_fl_metrics.get('fed_assets_13w_chg_pct', 0):+.1f}% (13w)" if _fl_metrics.get('fed_assets_13w_chg_pct') is not None else None,
+                        delta_color="normal")
+            _fc4.metric("Lead Time", f"~{_fl_lead} weeks")
+
+            if _fl_credit:
+                st.info(_fl_credit)
+
+            # Key metrics
+            _fl_rrp = _fl_metrics.get("rrp_latest")
+            _fl_res = _fl_metrics.get("reserves_latest")
+            _fl_sofr = _fl_metrics.get("sofr_latest")
+            _fl_net = _fl_metrics.get("net_liquidity")
+
+            if any(x is not None for x in [_fl_rrp, _fl_res, _fl_sofr]):
+                _fm1, _fm2, _fm3, _fm4 = st.columns(4)
+                _fm1.metric("RRP Outstanding", f"${_fl_rrp/1000:.1f}T" if _fl_rrp else "—",
+                            delta=f"{_fl_metrics.get('rrp_4w_chg', 0)/1000:+.1f}T (4w)" if _fl_metrics.get('rrp_4w_chg') else None)
+                _fm2.metric("Bank Reserves", f"${_fl_res/1000:.1f}T" if _fl_res else "—")
+                _fm3.metric("SOFR", f"{_fl_sofr:.2f}%" if _fl_sofr else "—")
+                _fm4.metric("Net Liquidity", f"${_fl_net/1000:.1f}T" if _fl_net else "—",
+                            help="Fed assets minus RRP minus reserves = deployed liquidity")
+
+            # Historical chart
+            _fl_hist = _fl.get("historical", {})
+            _fl_assets_hist = _fl_hist.get("fed_assets")
+            if _fl_assets_hist is not None and len(_fl_assets_hist) > 0:
+                _fl_fig = _go_fl.Figure()
+                _fl_fig.add_trace(_go_fl.Scatter(
+                    x=list(_fl_assets_hist.index), y=list(_fl_assets_hist.values / 1000),
+                    name="Fed Assets ($T)", mode="lines",
+                    line=dict(color="#3498db", width=2),
+                ))
+                _fl_rrp_hist = _fl_hist.get("rrp")
+                if _fl_rrp_hist is not None:
+                    _fl_fig.add_trace(_go_fl.Scatter(
+                        x=list(_fl_rrp_hist.index), y=list(_fl_rrp_hist.values / 1000),
+                        name="RRP ($T)", mode="lines",
+                        line=dict(color="#e74c3c", width=1.5, dash="dot"),
+                    ))
+                _fl_fig.update_layout(
+                    height=270, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="$ Trillion", showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                )
+                st.plotly_chart(_fl_fig, use_container_width=True)
+                st.caption(f"Source: {_fl.get('fed_data', {}).get('source', 'FRED')} · Data weekly · Lead time ~{_fl_lead} weeks ahead of credit spreads")
+        else:
+            st.info("Fed liquidity monitor unavailable — requires FRED API key or Fed balance sheet columns in data.")
+    except Exception as _fl_e:
+        st.caption(f"Fed liquidity unavailable: {_fl_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 54: G4 Central Bank Divergence
+# =============================================================================
+with _analytics_sub54:
+    import plotly.graph_objects as _go_g4
+    st.header("G4 Central Bank Divergence")
+    st.markdown(
+        "Fed vs ECB vs BOE vs BOJ policy rates and 10y yields. "
+        "Wide Fed-ECB spread = strong USD = EM credit headwind. "
+        "Wide Fed-BOJ spread = JPY carry trade active = leverage building in risk assets."
+    )
+    try:
+        _g4 = load_g4_divergence(df)
+        if _g4.get("available"):
+            _g4_rates = _g4.get("policy_rates", {})
+            _g4_live = _g4.get("live_rates", {})
+            _g4_metrics = _g4.get("metrics", {})
+            _g4_interp = _g4.get("interpretation", "")
+            _g4_source = _g4_rates.get("source", "—")
+
+            _g4c1, _g4c2, _g4c3, _g4c4 = st.columns(4)
+            _g4c1.metric("Fed", f"{_g4_rates.get('fed', 0):.2f}%")
+            _g4c2.metric("ECB", f"{_g4_rates.get('ecb', 0):.2f}%",
+                         delta=f"{_g4_metrics.get('fed_ecb_spread', 0):+.2f}% vs Fed")
+            _g4c3.metric("BOE", f"{_g4_rates.get('boe', 0):.2f}%",
+                         delta=f"{_g4_metrics.get('fed_boe_spread', 0):+.2f}% vs Fed")
+            _g4c4.metric("BOJ", f"{_g4_rates.get('boj', 0):.2f}%",
+                         delta=f"{_g4_metrics.get('fed_boj_spread', 0):+.2f}% vs Fed")
+
+            _g4m1, _g4m2, _g4m3 = st.columns(3)
+            _g4m1.metric("Divergence Regime", _g4_metrics.get("divergence_regime", "—"))
+            _g4m2.metric("JPY Carry Pressure", _g4_metrics.get("carry_pressure", "—"))
+            _g4m3.metric("EM Credit Signal", _g4_metrics.get("em_credit_signal", "—"))
+
+            if _g4_interp:
+                st.info(_g4_interp)
+
+            # Rate table
+            _g4_tbl = _g4.get("rate_table")
+            if _g4_tbl is not None and not _g4_tbl.empty:
+                st.dataframe(_g4_tbl, use_container_width=True, hide_index=True)
+                st.caption(f"Policy rate source: {_g4_source}")
+
+            # Live FX rates
+            if _g4_live.get("available"):
+                st.subheader("Live FX Rates")
+                _fx1, _fx2, _fx3 = st.columns(3)
+                _fx1.metric("EUR/USD", f"{_g4_live.get('eurusd', 0):.4f}" if _g4_live.get('eurusd') else "—")
+                _fx2.metric("GBP/USD", f"{_g4_live.get('gbpusd', 0):.4f}" if _g4_live.get('gbpusd') else "—")
+                _fx3.metric("USD/JPY", f"{_g4_live.get('usdjpy', 0):.2f}" if _g4_live.get('usdjpy') else "—")
+                st.caption(f"Live via yfinance · As of: {_g4_live.get('as_of', '—')}")
+
+            # Historical Fed rate from df
+            _g4_fed_hist = _g4.get("historical_fed_rate")
+            if _g4_fed_hist is not None and len(_g4_fed_hist) > 0:
+                with st.expander("Historical Fed Funds Rate"):
+                    _g4_fig = _go_g4.Figure()
+                    _g4_fig.add_trace(_go_g4.Scatter(
+                        x=list(_g4_fed_hist.index), y=list(_g4_fed_hist.values),
+                        name="Fed Funds Rate", mode="lines",
+                        line=dict(color="#3498db", width=2),
+                    ))
+                    _g4_fig.update_layout(
+                        height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                        yaxis=dict(title="Rate (%)", showgrid=True,
+                                   gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                    )
+                    st.plotly_chart(_g4_fig, use_container_width=True)
+        else:
+            st.info("G4 divergence unavailable.")
+    except Exception as _g4_e:
+        st.caption(f"G4 divergence unavailable: {_g4_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 55: Portfolio Stress Test
+# =============================================================================
+with _analytics_sub55:
+    import plotly.graph_objects as _go_pst
+    st.header("Portfolio Stress Test")
+    st.markdown(
+        "Define your portfolio allocation and apply the 5 market shock scenarios. "
+        "Shows dollar P&L per $100 invested, broken down by asset class. "
+        "Rates and spread durations are fixed assumptions — see captions for details."
+    )
+    try:
+        # Portfolio sliders
+        st.subheader("Portfolio Weights")
+        st.caption("Weights are normalized to sum to 100%")
+        _pst_c = st.columns(5)
+        _pst_weights_raw = {}
+        _pst_defaults = {"ig": 40, "hy": 30, "loans": 10, "em": 10, "cash": 10}
+        _pst_asset_labels = {"ig": "Inv. Grade", "hy": "High Yield", "loans": "Loans", "em": "EM Credit", "cash": "Cash"}
+        for _pi, (_pkey, _plabel) in enumerate(_pst_asset_labels.items()):
+            _pst_weights_raw[_pkey] = _pst_c[_pi].slider(
+                _plabel, 0, 100, _pst_defaults[_pkey], 5, key=f"pst_{_pkey}"
+            )
+
+        _pst_total = sum(_pst_weights_raw.values())
+        if _pst_total > 0:
+            _pst_weights = {k: v / _pst_total for k, v in _pst_weights_raw.items()}
+        else:
+            _pst_weights = {k: v / 100 for k, v in _pst_defaults.items()}
+
+        # Run stress test
+        try:
+            _pst = run_portfolio_stress_test(df, portfolio=_pst_weights)
+        except Exception:
+            _pst = load_portfolio_stress_test(df)
+
+        if _pst.get("available"):
+            _pst_worst = _pst.get("worst_scenario", "—")
+            _pst_worst_pl = _pst.get("worst_scenario_pl")
+            _pst_best = _pst.get("best_scenario", "—")
+            _pst_best_pl = _pst.get("best_scenario_pl")
+            _pst_regime = _pst.get("current_regime", "—")
+            _pst_ctx = _pst.get("regime_context", "")
+
+            _ps1, _ps2, _ps3 = st.columns(3)
+            _ps1.metric("Current Regime", _pst_regime)
+            _ps2.metric("Worst Scenario", _pst_worst,
+                        delta=f"{_pst_worst_pl:+.1f}% P&L" if _pst_worst_pl is not None else None,
+                        delta_color="inverse")
+            _ps3.metric("Best Scenario", _pst_best,
+                        delta=f"{_pst_best_pl:+.1f}% P&L" if _pst_best_pl is not None else None,
+                        delta_color="normal")
+
+            if _pst_ctx:
+                st.info(_pst_ctx)
+
+            # Summary table
+            _pst_tbl = _pst.get("summary_table")
+            if _pst_tbl is not None and not _pst_tbl.empty:
+                _pst_display = _pst_tbl.copy()
+                for _col in _pst_display.columns:
+                    _pst_display[_col] = _pst_display[_col].apply(
+                        lambda x: f"{x:+.1f}%" if isinstance(x, (int, float)) and not pd.isna(x) else str(x)
+                    )
+                st.dataframe(_pst_display, use_container_width=True)
+
+            # Bar chart of scenario P&Ls
+            _pst_scenarios = _pst.get("scenarios", {})
+            if _pst_scenarios:
+                _pst_names = list(_pst_scenarios.keys())
+                _pst_pls = [_pst_scenarios[n].get("portfolio_pl", 0) for n in _pst_names]
+                _pst_colors = ["#e74c3c" if p < 0 else "#27ae60" for p in _pst_pls]
+                _pst_fig = _go_pst.Figure()
+                _pst_fig.add_trace(_go_pst.Bar(
+                    x=_pst_names, y=_pst_pls, marker_color=_pst_colors,
+                    hovertemplate="%{x}<br>P&L: %{y:+.1f}%<extra></extra>",
+                ))
+                _pst_fig.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="Portfolio P&L (%)", showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                )
+                st.plotly_chart(_pst_fig, use_container_width=True)
+                st.caption("IG duration 7yr · HY duration 4yr · Loans 0.25yr (floating) · EM 5.5yr · Spread shocks in bps · Rate shocks in % · Equity as fraction")
+        else:
+            st.info("Portfolio stress test unavailable.")
+    except Exception as _pst_e:
+        st.caption(f"Portfolio stress test unavailable: {_pst_e}")
 
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
