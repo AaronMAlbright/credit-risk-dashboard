@@ -2971,44 +2971,49 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab_credit:  # Credit Markets — 16 sub-tabs
+with tab_credit:  # Credit Markets — 18 sub-tabs
     (_analytics_sub19, _analytics_sub20, _analytics_sub21,
      _analytics_sub24, _analytics_sub27, _analytics_sub28,
      _analytics_sub29, _analytics_sub30, _analytics_sub31,
      _analytics_sub40, _analytics_sub42, _analytics_sub48,
      _analytics_sub60, _analytics_sub61, _analytics_sub62,
-     _analytics_sub73) = st.tabs([
+     _analytics_sub73, _analytics_sub77, _analytics_sub78) = st.tabs([
         "Defaults", "Fwd Sim", "CDX Proxy",
         "Default Cycle", "Spread Vol", "Fallen Angel",
         "Global Credit", "Corp Leverage", "Seasonality",
         "Quality Migr", "Loan Market", "Credit Basis",
         "Issuance", "Distressed", "CLO", "CDS PD",
+        "EM Credit", "Carry BEven",
     ])
 
-with tab_macro:  # Rates & Macro — 14 sub-tabs
+with tab_macro:  # Rates & Macro — 16 sub-tabs
     (_analytics_sub23, _analytics_sub38, _analytics_sub41,
      _analytics_sub45, _analytics_sub53, _analytics_sub54,
      _analytics_sub57, _analytics_sub58, _analytics_sub63,
      _analytics_sub64, _analytics_sub68, _analytics_sub69,
-     _analytics_sub70, _analytics_sub72) = st.tabs([
+     _analytics_sub70, _analytics_sub72,
+     _analytics_sub74, _analytics_sub75) = st.tabs([
         "Regime Returns", "X-Asset Mom", "Macro Surprise",
         "Inflation Regime", "Fed Liquidity", "G4 Divergence",
         "Swap Spreads", "XCcy Basis", "FCI",
         "Credit Impulse", "Term Premium", "Curve Fly",
         "SLOOS", "Corp Profits",
+        "Recession Model", "Real Rates",
     ])
 
-with tab_risk:  # Risk Monitors — 15 sub-tabs
+with tab_risk:  # Risk Monitors — 17 sub-tabs
     (_analytics_sub6, _analytics_sub7, _analytics_sub12,
      _analytics_sub39, _analytics_sub44, _analytics_sub46,
      _analytics_sub47, _analytics_sub52, _analytics_sub55,
      _analytics_sub56, _analytics_sub59, _analytics_sub65,
-     _analytics_sub66, _analytics_sub67, _analytics_sub71) = st.tabs([
+     _analytics_sub66, _analytics_sub67, _analytics_sub71,
+     _analytics_sub76, _analytics_sub79) = st.tabs([
         "Tail Risk", "Stress", "Contagion",
         "Vol Regime", "Deleveraging", "Sector Stress",
         "Put/Call", "Tail Dependency", "Port Stress",
         "AT1/CoCo", "CRE Stress", "ETF Disloc",
         "Sovereign", "Consumer Credit", "ETF Flows",
+        "MOVE Index", "VIX Term",
     ])
 
 with tab_siglab:  # Signal Lab — 12 sub-tabs
@@ -11753,6 +11758,659 @@ with _analytics_sub73:
             st.info("CDS-implied PD unavailable — requires hy_spread or ig_spread column.")
     except Exception as _pd_e:
         st.caption(f"CDS-implied PD unavailable: {_pd_e}")
+
+# =============================================================================
+# BATCH 8 ANALYTICS: sub74–79
+# =============================================================================
+
+with _analytics_sub74:
+    import plotly.graph_objects as _go74
+    st.header("Recession Model (Estrella-Mishkin)")
+    st.markdown(
+        "The **Estrella-Mishkin (1998)** probit model estimates 12-month-ahead recession probability "
+        "from the 10y−3m yield curve spread. Calibrated on post-war US data; has signaled every "
+        "recession since 1969. **Threshold:** p > 25% = elevated concern; p > 40% = high probability. "
+        "Credit spreads typically widen 3–6 months after recession probability crosses 25%."
+    )
+    try:
+        _rec74 = load_recession(df)
+        if _rec74.get("available"):
+            _rc74 = _rec74["current"]
+            _r74a, _r74b, _r74c, _r74d = st.columns(4)
+            _r74a.metric("10y−3m Spread", f"{_rc74['spread_10y3m']:.2f}%",
+                         help="Negative = inverted yield curve")
+            _r74b.metric("10y−2y Spread", f"{_rc74['spread_10y2y']:.2f}%")
+            _r74c.metric("Recession Prob (12m)", f"{_rc74['recession_prob_12m']:.1%}",
+                         delta_color="inverse",
+                         delta=f"{_rc74['recession_prob_12m']:.1%}")
+            _r74d.metric("Signal", _rc74.get("signal", "—"))
+
+            if "df" in _rec74 and "recession_prob_12m" in _rec74["df"].columns:
+                _rec74_df = _rec74["df"].copy()
+                _rec74_df["date"] = pd.to_datetime(_rec74_df["date"])
+                _fig74a = _go74.Figure()
+                _fig74a.add_trace(_go74.Scatter(
+                    x=_rec74_df["date"], y=_rec74_df["recession_prob_12m"] * 100,
+                    name="Recession Prob (12m)", line=dict(color="#e67e22", width=2),
+                    fill="tozeroy", fillcolor="rgba(230,126,34,0.12)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Prob: %{y:.1f}%<extra></extra>",
+                ))
+                _fig74a.add_hline(y=25, line=dict(color="#e74c3c", dash="dash", width=1),
+                                  annotation_text="25% — Elevated",
+                                  annotation_font=dict(color="#e74c3c", size=10))
+                _fig74a.add_hline(y=40, line=dict(color="#9b59b6", dash="dot", width=1),
+                                  annotation_text="40% — High",
+                                  annotation_font=dict(color="#9b59b6", size=10))
+                _fig74a.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Probability (%)", range=[0, 100]),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig74a, use_container_width=True)
+
+            # Yield curve slope chart
+            if "df" in _rec74:
+                _rec74_df2 = _rec74["df"].copy()
+                _rec74_df2["date"] = pd.to_datetime(_rec74_df2["date"])
+                _fig74b = _go74.Figure()
+                if "spread_10y3m" in _rec74_df2.columns:
+                    _fig74b.add_trace(_go74.Scatter(
+                        x=_rec74_df2["date"], y=_rec74_df2["spread_10y3m"],
+                        name="10y−3m", line=dict(color="#4f8ef7", width=2),
+                        hovertemplate="%{x|%Y-%m-%d}<br>10y−3m: %{y:+.2f}%<extra></extra>",
+                    ))
+                if "spread_10y2y" in _rec74_df2.columns:
+                    _fig74b.add_trace(_go74.Scatter(
+                        x=_rec74_df2["date"], y=_rec74_df2["spread_10y2y"],
+                        name="10y−2y", line=dict(color="#27ae60", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>10y−2y: %{y:+.2f}%<extra></extra>",
+                    ))
+                _fig74b.add_hline(y=0, line_color="rgba(231,76,60,0.5)", line_width=1.5,
+                                  annotation_text="Inversion threshold",
+                                  annotation_font=dict(color="#e74c3c", size=10))
+                _fig74b.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="Yield Curve Slope", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Spread (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.12, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig74b, use_container_width=True)
+                st.caption("Every US recession since 1969 was preceded by a 10y−3m inversion.")
+
+            if _rec74.get("historical_inversions") is not None and not _rec74["historical_inversions"].empty:
+                with st.expander("Historical yield curve inversion episodes"):
+                    st.dataframe(_rec74["historical_inversions"], use_container_width=True, hide_index=True)
+
+            # Credit spread implication table by recession probability bucket
+            _prob_now = _rc74.get("recession_prob_12m", 0)
+            st.subheader("Credit Spread Implications")
+            _impl_rows = [
+                {"Recession Prob Range": "< 10%",  "HY Spread Direction": "Tightening / Neutral", "Typical HY OAS": "250–400 bps", "Posture": "Risk-on"},
+                {"Recession Prob Range": "10–25%", "HY Spread Direction": "Neutral / Watch",       "Typical HY OAS": "350–500 bps", "Posture": "Cautious"},
+                {"Recession Prob Range": "25–40%", "HY Spread Direction": "Widening risk",          "Typical HY OAS": "450–650 bps", "Posture": "Defensive"},
+                {"Recession Prob Range": "> 40%",  "HY Spread Direction": "Significant widening",  "Typical HY OAS": "600–900+ bps", "Posture": "Risk-off"},
+            ]
+            import pandas as _pd74
+            _impl_df = _pd74.DataFrame(_impl_rows)
+            st.dataframe(_impl_df, use_container_width=True, hide_index=True)
+            st.caption(f"Current recession probability: **{_prob_now:.1%}** — "
+                       f"{'elevated concern' if _prob_now > 0.25 else 'within normal range' if _prob_now < 0.10 else 'monitoring zone'}.")
+        else:
+            st.info("Recession model unavailable — requires 10y and 3m Treasury yields in dataset.")
+    except Exception as _e74:
+        st.caption(f"Recession model unavailable: {_e74}")
+
+
+with _analytics_sub75:
+    import plotly.graph_objects as _go75
+    st.header("Real Rates Monitor")
+    st.markdown(
+        "**Real rates** = nominal yield − inflation breakeven (TIPS-implied). "
+        "Rising real rates increase debt service costs for leveraged borrowers, compress credit multiples, "
+        "and historically precede HY spread widening. "
+        "**Financial repression** (real rates < −1%) supports credit by reducing refinancing pressure. "
+        "**Restrictive territory** (real rates > +1.5%) tightens credit conditions materially."
+    )
+    try:
+        _rr75 = load_real_rates(df)
+        if _rr75.get("available"):
+            _rc75 = _rr75["current"]
+            _rr75a, _rr75b, _rr75c, _rr75d = st.columns(4)
+            _rr75a.metric("10y Real Rate", f"{_rc75.get('real_rate_10y', float('nan')):.2f}%",
+                          delta=f"{_rc75.get('real_rate_change_1m', 0):+.2f}pp 1M",
+                          delta_color="inverse",
+                          help="10y nominal yield minus 10y breakeven inflation")
+            _rr75b.metric("10y Breakeven Inflation", f"{_rc75.get('breakeven_10y', float('nan')):.2f}%",
+                          help="Market-implied 10y avg inflation from TIPS")
+            _rr75c.metric("10y Nominal Yield", f"{_rc75.get('yield_10y', float('nan')):.2f}%")
+            _rr75d.metric("Real Rate Regime", _rc75.get("real_rate_regime", "—"))
+
+            if _rr75.get("rising_flag"):
+                st.warning("Real rates rising rapidly (+0.5pp/month) — refinancing pressure building for leveraged credit.")
+            if _rr75.get("interpretation"):
+                st.info(_rr75["interpretation"])
+
+            # Real rate + breakeven decomposition chart
+            _hist75 = _rr75.get("historical")
+            if _hist75 is not None and not _hist75.empty:
+                _hist75 = _hist75.copy()
+                _hist75.index = pd.to_datetime(_hist75.index)
+                _fig75 = _go75.Figure()
+                if "real_rate_10y" in _hist75.columns:
+                    _fig75.add_trace(_go75.Scatter(
+                        x=_hist75.index, y=_hist75["real_rate_10y"],
+                        name="10y Real Rate", line=dict(color="#f59e0b", width=2),
+                        hovertemplate="%{x|%Y-%m-%d}<br>Real: %{y:.2f}%<extra></extra>",
+                    ))
+                if "breakeven_10y" in _hist75.columns:
+                    _fig75.add_trace(_go75.Scatter(
+                        x=_hist75.index, y=_hist75["breakeven_10y"],
+                        name="10y Breakeven Inflation", line=dict(color="#e74c3c", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>BE: %{y:.2f}%<extra></extra>",
+                    ))
+                if "yield_10y" in _hist75.columns:
+                    _fig75.add_trace(_go75.Scatter(
+                        x=_hist75.index, y=_hist75["yield_10y"],
+                        name="10y Nominal Yield", line=dict(color="#4f8ef7", width=1.5, dash="dash"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>Nominal: %{y:.2f}%<extra></extra>",
+                    ))
+                _fig75.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _fig75.add_hrect(y0=1.5, y1=6, fillcolor="rgba(231,76,60,0.05)", line_width=0,
+                                 annotation_text="Restrictive", annotation_position="top right",
+                                 annotation_font=dict(color="#e74c3c", size=9))
+                _fig75.add_hrect(y0=-6, y1=-1, fillcolor="rgba(39,174,96,0.05)", line_width=0,
+                                 annotation_text="Financial repression", annotation_position="bottom right",
+                                 annotation_font=dict(color="#27ae60", size=9))
+                _fig75.update_layout(
+                    height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Rate (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig75, use_container_width=True)
+
+            # Real rate vs HY spread scatter (if HY data available)
+            st.subheader("Real Rate → Credit Spread Linkage")
+            _rr75_df = _rr75.get("df")
+            if _rr75_df is not None and "real_rate_10y" in _rr75_df.columns and "hy_spread" in _rr75_df.columns:
+                _scat75 = _rr75_df[["real_rate_10y", "hy_spread"]].dropna().tail(504)
+                _fig75b = _go75.Figure()
+                _fig75b.add_trace(_go75.Scatter(
+                    x=_scat75["real_rate_10y"], y=_scat75["hy_spread"],
+                    mode="markers",
+                    marker=dict(size=4, color="#4f8ef7", opacity=0.5),
+                    hovertemplate="Real Rate: %{x:.2f}%<br>HY OAS: %{y:.2f}%<extra></extra>",
+                ))
+                _fig75b.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="10y Real Rate vs HY Spread (2yr rolling window)",
+                               font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="10y Real Rate (%)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="HY OAS (%)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig75b, use_container_width=True)
+                _corr75 = float(_scat75["real_rate_10y"].corr(_scat75["hy_spread"]))
+                st.caption(f"Correlation (2yr): {_corr75:+.2f}. "
+                           f"{'Positive correlation: rising real rates associated with wider spreads.' if _corr75 > 0.2 else 'Negative correlation: real rate regime not currently driving spreads.' if _corr75 < -0.2 else 'Low correlation in current window.'}")
+            else:
+                st.info("Scatter unavailable — requires both real_rate_10y and hy_spread columns.")
+
+            # Regime summary table
+            st.subheader("Regime Implications")
+            _regime_tbl75 = [
+                {"Real Rate Regime": "Financial Repression (< −1%)", "Credit Implication": "Spread compression supported; carry trade attractive", "Posture": "Risk-on"},
+                {"Real Rate Regime": "Neutral (−1% to +1.5%)",        "Credit Implication": "Credit conditions broadly normal",                   "Posture": "Neutral"},
+                {"Real Rate Regime": "Restrictive (> +1.5%)",         "Credit Implication": "Refinancing pressure; HY risk elevated",             "Posture": "Defensive"},
+                {"Real Rate Regime": "Highly Restrictive (> +3%)",    "Credit Implication": "Significant default risk uplift in levered credit",  "Posture": "Risk-off"},
+            ]
+            import pandas as _pd75
+            st.dataframe(_pd75.DataFrame(_regime_tbl75), use_container_width=True, hide_index=True)
+        else:
+            _miss75 = _rr75.get("missing_columns", [])
+            st.info(f"Real rates unavailable — missing columns: {', '.join(_miss75) if _miss75 else 'yield_10y and/or breakeven_10y'}.")
+    except Exception as _e75:
+        st.caption(f"Real rates unavailable: {_e75}")
+
+
+with _analytics_sub76:
+    import plotly.graph_objects as _go76
+    st.header("MOVE Index — Bond Market Volatility")
+    st.markdown(
+        "The **MOVE Index** (ICE BofA MOVE) measures implied volatility of 1-month US Treasury options "
+        "across maturities — the bond market's equivalent of VIX. "
+        "MOVE spikes typically **precede** HY spread widening by days to weeks, as rates markets price "
+        "uncertainty before credit does. "
+        "Normal: < 80 · Elevated: 80–120 · Stress: 120–150 · Crisis: > 150."
+    )
+    try:
+        _mv76 = load_move(df)
+        if _mv76.get("available"):
+            _mvc = _mv76.get("current", {})
+            _mv76a, _mv76b, _mv76c, _mv76d = st.columns(4)
+            _move_lvl = _mvc.get("move_level", float("nan"))
+            _mv76a.metric("MOVE Level", f"{_move_lvl:.1f}" if not pd.isna(_move_lvl) else "—",
+                          help="ICE BofA MOVE Index. Normal < 80.")
+            _mv76b.metric("MOVE Regime", _mvc.get("move_regime", "—"))
+            _mv76c.metric("MOVE Z-Score (1y)", f"{_mvc.get('move_zscore_1y', float('nan')):.2f}"
+                          if not pd.isna(_mvc.get("move_zscore_1y", float("nan"))) else "—")
+            _mv76d.metric("MOVE Signal", f"{_mvc.get('move_signal', 0):.0f}/100",
+                          help="Higher = more rates-vol stress")
+            if _mv76.get("warning"):
+                st.warning(_mv76["warning"])
+            if _mv76.get("interpretation"):
+                st.info(_mv76["interpretation"])
+
+            # MOVE level time series
+            _mv76_hist = _mv76.get("historical")
+            if _mv76_hist is not None and not _mv76_hist.empty:
+                _mv76_hist = _mv76_hist.copy()
+                _mv76_hist.index = pd.to_datetime(_mv76_hist.index)
+                _fig76a = _go76.Figure()
+                if "move_level" in _mv76_hist.columns:
+                    _fig76a.add_trace(_go76.Scatter(
+                        x=_mv76_hist.index, y=_mv76_hist["move_level"],
+                        name="MOVE Level", line=dict(color="#8b5cf6", width=2),
+                        fill="tozeroy", fillcolor="rgba(139,92,246,0.08)",
+                        hovertemplate="%{x|%Y-%m-%d}<br>MOVE: %{y:.1f}<extra></extra>",
+                    ))
+                _fig76a.add_hline(y=80,  line=dict(color="#f59e0b", dash="dash", width=1),
+                                  annotation_text="Elevated (80)", annotation_font=dict(color="#f59e0b", size=9))
+                _fig76a.add_hline(y=120, line=dict(color="#ef4444", dash="dash", width=1),
+                                  annotation_text="Stress (120)",  annotation_font=dict(color="#ef4444", size=9))
+                _fig76a.add_hline(y=150, line=dict(color="#9b59b6", dash="dot", width=1),
+                                  annotation_text="Crisis (150)",  annotation_font=dict(color="#9b59b6", size=9))
+                _fig76a.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="MOVE Level"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig76a, use_container_width=True)
+
+                # MOVE vs HY spread overlay
+                if "hy_spread" in df.columns and "move_level" in _mv76_hist.columns:
+                    _mv76_merged = _mv76_hist[["move_level"]].join(
+                        df[["hy_spread"]].rename(columns={"hy_spread": "hy_spread"}), how="inner"
+                    ).dropna().tail(504)
+                    if not _mv76_merged.empty:
+                        _fig76b = _go76.Figure()
+                        _fig76b.add_trace(_go76.Scatter(
+                            x=_mv76_merged.index, y=_mv76_merged["move_level"],
+                            name="MOVE", line=dict(color="#8b5cf6", width=1.5),
+                            yaxis="y1",
+                            hovertemplate="%{x|%Y-%m-%d}<br>MOVE: %{y:.1f}<extra></extra>",
+                        ))
+                        _fig76b.add_trace(_go76.Scatter(
+                            x=_mv76_merged.index, y=_mv76_merged["hy_spread"],
+                            name="HY OAS (%)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                            yaxis="y2",
+                            hovertemplate="%{x|%Y-%m-%d}<br>HY OAS: %{y:.2f}%<extra></extra>",
+                        ))
+                        _fig76b.update_layout(
+                            height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(color="#9aa0aa", size=11),
+                            margin=dict(l=8, r=8, t=24, b=8),
+                            title=dict(text="MOVE vs HY Spread", font=dict(size=12, color="#9aa0aa")),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                       color="#8b5cf6", title="MOVE"),
+                            yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                        title="HY OAS (%)", showgrid=False),
+                            xaxis=dict(showgrid=False, color="#6b7280"),
+                            legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                        )
+                        st.plotly_chart(_fig76b, use_container_width=True)
+                        _mv_corr = float(_mv76_merged["move_level"].corr(_mv76_merged["hy_spread"]))
+                        st.caption(f"MOVE vs HY spread correlation (2yr): {_mv_corr:+.2f}. "
+                                   f"High MOVE + lag of ~2 weeks historically precedes HY widening.")
+
+            if _mv76.get("regime_table") is not None:
+                with st.expander("MOVE regime statistics"):
+                    st.dataframe(_mv76["regime_table"], use_container_width=True)
+        else:
+            st.info("MOVE Index unavailable — requires `move_index` column or live yfinance fetch (^MOVE).")
+    except Exception as _e76:
+        st.caption(f"MOVE Index unavailable: {_e76}")
+
+
+with _analytics_sub77:
+    import plotly.graph_objects as _go77
+    st.header("EM Credit — Emerging Market vs DM HY")
+    st.markdown(
+        "Tracks **EM vs DM credit performance** using the EMB/HYG ETF ratio as a real-time proxy for "
+        "relative stress. EM credit underperformance vs DM HY — driven by DXY strength, EM capital "
+        "outflows, or idiosyncratic EM stress — historically **leads DM HY widening by 4–6 weeks**, "
+        "making this a useful early warning indicator."
+    )
+    try:
+        _em77 = load_em_credit(df)
+        if _em77.get("available"):
+            _emc = _em77.get("current", {})
+            _snap77 = _em77.get("snapshot", {})
+            _em77a, _em77b, _em77c, _em77d = st.columns(4)
+            _em77a.metric("EMB/HYG Ratio", f"{_emc.get('em_hyg_ratio', float('nan')):.4f}"
+                          if not pd.isna(_emc.get("em_hyg_ratio", float("nan"))) else "—")
+            _em77b.metric("30d Change", f"{(_emc.get('em_hyg_ratio_30d_chg') or 0)*100:+.1f}%",
+                          delta_color="normal")
+            _em77c.metric("EM vs DM Signal", f"{_emc.get('em_vs_dm_signal', 0):.0f}/100",
+                          help="Higher = more EM stress relative to DM")
+            _em77d.metric("EM Stress Regime", _snap77.get("em_stress_regime", "—"))
+
+            if _em77.get("lead_signal"):
+                st.warning(_em77["lead_signal"])
+            if _em77.get("interpretation"):
+                st.info(_em77["interpretation"])
+
+            # EMB/HYG ratio time series
+            _em77_df = _em77.get("df")
+            if _em77_df is not None and "em_hyg_ratio" in _em77_df.columns:
+                _em77_plot = _em77_df[["em_hyg_ratio"]].dropna().tail(504).copy()
+                _em77_plot.index = pd.to_datetime(_em77_plot.index)
+                _fig77a = _go77.Figure()
+                _fig77a.add_trace(_go77.Scatter(
+                    x=_em77_plot.index, y=_em77_plot["em_hyg_ratio"],
+                    name="EMB/HYG Ratio", line=dict(color="#10b981", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>EMB/HYG: %{y:.4f}<extra></extra>",
+                ))
+                _fig77a.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="EMB/HYG Ratio (Rising = EM outperforming DM HY)",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Ratio"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig77a, use_container_width=True)
+                st.caption("Falling ratio = EM underperforming DM HY — watch for DM spread widening follow-through.")
+
+            # EM vs DM signal vs HY spread
+            if _em77_df is not None and "em_vs_dm_signal" in _em77_df.columns and "hy_spread" in df.columns:
+                _em77_sig = _em77_df[["em_vs_dm_signal"]].dropna().tail(504)
+                _em77_hy = df[["hy_spread"]].dropna().tail(504)
+                _em77_combo = _em77_sig.join(_em77_hy, how="inner").dropna()
+                if not _em77_combo.empty:
+                    _fig77b = _go77.Figure()
+                    _fig77b.add_trace(_go77.Scatter(
+                        x=_em77_combo.index, y=_em77_combo["em_vs_dm_signal"],
+                        name="EM Stress Signal", line=dict(color="#10b981", width=1.5),
+                        yaxis="y1",
+                        hovertemplate="%{x|%Y-%m-%d}<br>EM Signal: %{y:.0f}<extra></extra>",
+                    ))
+                    _fig77b.add_trace(_go77.Scatter(
+                        x=_em77_combo.index, y=_em77_combo["hy_spread"],
+                        name="HY OAS (%)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                        yaxis="y2",
+                        hovertemplate="%{x|%Y-%m-%d}<br>HY OAS: %{y:.2f}%<extra></extra>",
+                    ))
+                    _fig77b.add_hline(y=65, line=dict(color="#f59e0b", dash="dash", width=1),
+                                      annotation_text="Lead signal threshold (65)",
+                                      annotation_font=dict(color="#f59e0b", size=9), yref="y")
+                    _fig77b.update_layout(
+                        height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11),
+                        margin=dict(l=8, r=8, t=24, b=8),
+                        title=dict(text="EM Stress Signal vs DM HY Spread",
+                                   font=dict(size=12, color="#9aa0aa")),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                   color="#10b981", title="EM Signal (0–100)"),
+                        yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                    title="HY OAS (%)", showgrid=False),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                        hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    )
+                    st.plotly_chart(_fig77b, use_container_width=True)
+
+            # DXY snapshot
+            _dxy77 = _emc.get("dxy", float("nan"))
+            _dxy_z77 = _emc.get("em_dxy_zscore", float("nan"))
+            if not pd.isna(_dxy77):
+                st.subheader("Dollar (DXY) Transmission")
+                _d77a, _d77b = st.columns(2)
+                _d77a.metric("DXY Level", f"{_dxy77:.2f}",
+                             help="DXY strength = headwind for EM borrowers with USD debt")
+                _d77b.metric("DXY Z-Score (1y)", f"{_dxy_z77:.2f}"
+                             if not pd.isna(_dxy_z77) else "—")
+                st.caption("DXY > +1σ (z-score) = USD strength amplifying EM credit stress via debt service costs.")
+        else:
+            st.info("EM credit unavailable — requires EMB/HYG ETF data (via yfinance) or em_hyg_ratio column.")
+    except Exception as _e77:
+        st.caption(f"EM credit unavailable: {_e77}")
+
+
+with _analytics_sub78:
+    import plotly.graph_objects as _go78
+    st.header("Carry Breakeven Analysis")
+    st.markdown(
+        "**Carry breakeven** answers the core credit portfolio question: "
+        "_how much can spreads widen before carry income is erased?_ "
+        "Formula: **Breakeven Widening (bps/yr) = All-in Yield (%) ÷ Duration (yrs) × 100**. "
+        "High carry + short duration (HY) provides a large widening buffer. "
+        "Low carry + long duration (IG) is vulnerable to even modest spread widening."
+    )
+    try:
+        _be78 = load_breakeven(df)
+        if _be78.get("available"):
+            _bec = _be78.get("current", {})
+            _be78a, _be78b, _be78c, _be78d = st.columns(4)
+            _hy_be = _bec.get("hy_breakeven_annual_bps")
+            _ig_be = _bec.get("ig_breakeven_annual_bps")
+            _bbb_be = _bec.get("bbb_breakeven_annual_bps")
+            _hy_mo = _bec.get("hy_breakeven_monthly_bps")
+            _be78a.metric("HY Breakeven (ann)", f"{_hy_be:.0f} bps/yr" if _hy_be else "—",
+                          help="HY spreads can widen this much before carry is consumed (annual)")
+            _be78b.metric("IG Breakeven (ann)", f"{_ig_be:.0f} bps/yr" if _ig_be else "—")
+            _be78c.metric("BBB Breakeven (ann)", f"{_bbb_be:.0f} bps/yr" if _bbb_be else "—")
+            _be78d.metric("HY Monthly Buffer", f"{_hy_mo:.1f} bps/mo" if _hy_mo else "—",
+                          help="How much HY spreads can widen per month before carry is lost")
+
+            if _be78.get("interpretation"):
+                st.info(_be78["interpretation"])
+
+            # Breakeven history chart
+            _be78_df = _be78.get("df")
+            if _be78_df is not None and "hy_breakeven_annual_bps" in _be78_df.columns:
+                _be78_plot = _be78_df[["hy_breakeven_annual_bps"]].copy()
+                if "ig_breakeven_annual_bps" in _be78_df.columns:
+                    _be78_plot["ig_breakeven_annual_bps"] = _be78_df["ig_breakeven_annual_bps"]
+                _be78_plot = _be78_plot.dropna(how="all").tail(504)
+                _be78_plot.index = pd.to_datetime(_be78_plot.index)
+                _fig78a = _go78.Figure()
+                _fig78a.add_trace(_go78.Scatter(
+                    x=_be78_plot.index, y=_be78_plot["hy_breakeven_annual_bps"],
+                    name="HY Breakeven (bps/yr)", line=dict(color="#ef4444", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY BE: %{y:.0f} bps/yr<extra></extra>",
+                ))
+                if "ig_breakeven_annual_bps" in _be78_plot.columns:
+                    _fig78a.add_trace(_go78.Scatter(
+                        x=_be78_plot.index, y=_be78_plot["ig_breakeven_annual_bps"],
+                        name="IG Breakeven (bps/yr)", line=dict(color="#3b82f6", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>IG BE: %{y:.0f} bps/yr<extra></extra>",
+                    ))
+                _fig78a.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Breakeven Widening (bps/yr)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig78a, use_container_width=True)
+
+            # Shock scenario table
+            st.subheader("Spread Shock Scenarios — HY Carry Buffer")
+            _shock_rows = _be78.get("shock_scenarios")
+            if _shock_rows:
+                import pandas as _pd78
+                _shock_df = _pd78.DataFrame(_shock_rows)
+                st.dataframe(_shock_df, use_container_width=True, hide_index=True)
+            elif _hy_be:
+                import pandas as _pd78b
+                _shock_rows_fallback = []
+                for _shock in [25, 50, 100, 150, 200, 300]:
+                    _months = (_hy_be / _shock * 12) if _shock > 0 else float("inf")
+                    _verdict = "Safe" if _months > 12 else "Caution" if _months > 6 else "Risky"
+                    _shock_rows_fallback.append({
+                        "Shock (bps)": _shock,
+                        "Months of Carry Remaining": f"{_months:.1f}",
+                        "Annual Carry Consumed (%)": f"{min(_shock / _hy_be * 100, 100):.0f}%",
+                        "Verdict": _verdict,
+                    })
+                st.dataframe(_pd78b.DataFrame(_shock_rows_fallback), use_container_width=True, hide_index=True)
+                st.caption(f"Based on HY breakeven of {_hy_be:.0f} bps/yr. "
+                           f"Months > 12 = carry covers a full year even at that shock level.")
+            else:
+                st.info("Shock scenario table unavailable — requires hy_yield or hy_spread + yield_10y.")
+
+            # BBB vs HY carry comparison
+            if _bbb_be and _ig_be and _hy_be:
+                st.subheader("Carry Breakeven Comparison")
+                _carr_compare = {
+                    "IG (~7yr dur)":  f"{_ig_be:.0f} bps/yr",
+                    "BBB (~6yr dur)": f"{_bbb_be:.0f} bps/yr",
+                    "HY (~4yr dur)":  f"{_hy_be:.0f} bps/yr",
+                }
+                _comp_cols = st.columns(3)
+                for _ci, (_lbl, _val) in enumerate(zip(
+                    ["IG (~7yr dur)", "BBB (~6yr dur)", "HY (~4yr dur)"],
+                    [_ig_be, _bbb_be, _hy_be],
+                )):
+                    _comp_cols[_ci].metric(_lbl, f"{_val:.0f} bps/yr",
+                                           help="Annual spread widening this segment can absorb before carry is exhausted")
+                st.caption("Higher breakeven = larger cushion. HY typically has the highest carry but also the most spread vol.")
+        else:
+            st.info("Carry breakeven unavailable — requires hy_yield or ig_yield columns (or hy_spread + yield_10y).")
+    except Exception as _e78:
+        st.caption(f"Carry breakeven unavailable: {_e78}")
+
+
+with _analytics_sub79:
+    import plotly.graph_objects as _go79
+    st.header("VIX Term Structure")
+    st.markdown(
+        "The VIX term structure measures the slope between near-term (VIX) and medium-term (VIX3M) "
+        "implied volatility. **Backwardation** (VIX > VIX3M, slope < 0) signals acute near-term fear — "
+        "historically associated with credit spread widening within 2–4 weeks. "
+        "**Contango** (normal upward slope) indicates market pricing in reversion to calm."
+    )
+    try:
+        _vt79 = load_vix_term(df)
+        if _vt79.get("available"):
+            _vtc = _vt79.get("current", {})
+            _vt79a, _vt79b, _vt79c, _vt79d = st.columns(4)
+            _vt79a.metric("VIX (1m IV)", f"{_vtc.get('vix', float('nan')):.1f}"
+                          if not pd.isna(_vtc.get("vix", float("nan"))) else "—")
+            _vt79b.metric("VIX3M (3m IV)", f"{_vtc.get('vix3m', float('nan')):.1f}"
+                          if not pd.isna(_vtc.get("vix3m", float("nan"))) else "—")
+            _vt79c.metric("Term Slope (VIX3M−VIX)", f"{_vtc.get('vix_term_slope', float('nan')):+.2f}"
+                          if not pd.isna(_vtc.get("vix_term_slope", float("nan"))) else "—",
+                          help="Negative = backwardation = fear spike")
+            _vt79d.metric("Structure", _vtc.get("vix_term_structure", "—"))
+
+            if _vtc.get("vix_term_structure") == "Backwardation":
+                st.warning("VIX backwardation detected — near-term fear premium elevated. "
+                           "Historically precedes HY spread widening by 2–4 weeks.")
+            elif _vtc.get("interpretation"):
+                st.info(_vtc["interpretation"])
+
+            # VIX / VIX3M slope history
+            _vt79_hist = _vt79.get("historical")
+            if _vt79_hist is not None and not _vt79_hist.empty:
+                _vt79_plot = _vt79_hist.copy()
+                _vt79_plot.index = pd.to_datetime(_vt79_plot.index)
+                _fig79a = _go79.Figure()
+                if "vix_term_slope" in _vt79_plot.columns:
+                    _slope_vals = _vt79_plot["vix_term_slope"].fillna(0)
+                    _slope_colors = ["#ef4444" if v < 0 else "#27ae60" for v in _slope_vals]
+                    _fig79a.add_trace(_go79.Bar(
+                        x=_vt79_plot.index, y=_slope_vals,
+                        marker_color=_slope_colors, name="VIX Term Slope",
+                        hovertemplate="%{x|%Y-%m-%d}<br>Slope: %{y:+.2f}<extra></extra>",
+                    ))
+                _fig79a.add_hline(y=0, line_color="rgba(255,255,255,0.3)", line_width=1.5)
+                _fig79a.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="VIX Term Slope (VIX3M − VIX): Red = Backwardation",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Slope"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig79a, use_container_width=True)
+
+                # VIX vs HY spread dual-axis
+                if "hy_spread" in df.columns:
+                    _vt79_hy = _vt79_plot[["vix"]].dropna().join(
+                        df[["hy_spread"]].dropna(), how="inner"
+                    ).tail(504)
+                    if not _vt79_hy.empty:
+                        _fig79b = _go79.Figure()
+                        _fig79b.add_trace(_go79.Scatter(
+                            x=_vt79_hy.index, y=_vt79_hy["vix"],
+                            name="VIX", line=dict(color="#f59e0b", width=1.5),
+                            yaxis="y1",
+                            hovertemplate="%{x|%Y-%m-%d}<br>VIX: %{y:.1f}<extra></extra>",
+                        ))
+                        _fig79b.add_trace(_go79.Scatter(
+                            x=_vt79_hy.index, y=_vt79_hy["hy_spread"],
+                            name="HY OAS (%)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                            yaxis="y2",
+                            hovertemplate="%{x|%Y-%m-%d}<br>HY OAS: %{y:.2f}%<extra></extra>",
+                        ))
+                        _fig79b.update_layout(
+                            height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(color="#9aa0aa", size=11),
+                            margin=dict(l=8, r=8, t=24, b=8),
+                            title=dict(text="VIX vs HY Spread", font=dict(size=12, color="#9aa0aa")),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                       color="#f59e0b", title="VIX"),
+                            yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                        title="HY OAS (%)", showgrid=False),
+                            xaxis=dict(showgrid=False, color="#6b7280"),
+                            legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                        )
+                        st.plotly_chart(_fig79b, use_container_width=True)
+                        _vt_corr = float(_vt79_hy["vix"].corr(_vt79_hy["hy_spread"]))
+                        st.caption(f"VIX vs HY correlation (2yr): {_vt_corr:+.2f}.")
+
+            # Regime implication table
+            st.subheader("VIX Term Structure Regimes")
+            import pandas as _pd79
+            _vt_regime_tbl = _pd79.DataFrame([
+                {"Structure": "Steep contango (slope > +3)",  "Interpretation": "Market calm; low near-term fear",     "Credit Signal": "Risk-on"},
+                {"Structure": "Flat contango (0 to +3)",      "Interpretation": "Normal; modest upward slope",         "Credit Signal": "Neutral"},
+                {"Structure": "Flat/slight backwardation",    "Interpretation": "Near-term uncertainty; watch",        "Credit Signal": "Cautious"},
+                {"Structure": "Backwardation (slope < 0)",    "Interpretation": "Acute fear spike; near-term stress",  "Credit Signal": "Defensive"},
+                {"Structure": "Deep backwardation (< −3)",    "Interpretation": "Crisis-level fear; panic conditions", "Credit Signal": "Risk-off"},
+            ])
+            st.dataframe(_vt_regime_tbl, use_container_width=True, hide_index=True)
+        else:
+            st.info("VIX term structure unavailable — requires VIX and VIX3M columns (or yfinance fetch).")
+    except Exception as _e79:
+        st.caption(f"VIX term structure unavailable: {_e79}")
+
 
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
