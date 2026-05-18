@@ -2995,7 +2995,7 @@ with tab_credit:  # Credit Markets — 20 sub-tabs
         "Credit Momentum", "Quality Curve",
     ])
 
-with tab_macro:  # Rates & Macro — 20 sub-tabs
+with tab_macro:  # Rates & Macro — 22 sub-tabs
     (_analytics_sub23, _analytics_sub38, _analytics_sub41,
      _analytics_sub45, _analytics_sub53, _analytics_sub54,
      _analytics_sub57, _analytics_sub58, _analytics_sub63,
@@ -3003,7 +3003,7 @@ with tab_macro:  # Rates & Macro — 20 sub-tabs
      _analytics_sub70, _analytics_sub72,
      _analytics_sub74, _analytics_sub75,
      _analytics_sub81, _analytics_sub84, _analytics_sub85,
-     _analytics_sub90) = st.tabs([
+     _analytics_sub90, _analytics_sub92, _analytics_sub93) = st.tabs([
         "Regime Returns", "X-Asset Mom", "Macro Surprise",
         "Inflation Regime", "Fed Liquidity", "G4 Divergence",
         "Swap Spreads", "XCcy Basis", "FCI",
@@ -3012,9 +3012,10 @@ with tab_macro:  # Rates & Macro — 20 sub-tabs
         "Recession Model", "Real Rates",
         "Fed Sentiment", "Taylor Rule", "Macro Nowcast",
         "Term Structure",
+        "NFCI", "Sahm Rule",
     ])
 
-with tab_risk:  # Risk Monitors — 22 sub-tabs
+with tab_risk:  # Risk Monitors — 25 sub-tabs
     (_analytics_sub6, _analytics_sub7, _analytics_sub12,
      _analytics_sub39, _analytics_sub44, _analytics_sub46,
      _analytics_sub47, _analytics_sub52, _analytics_sub55,
@@ -3022,7 +3023,8 @@ with tab_risk:  # Risk Monitors — 22 sub-tabs
      _analytics_sub66, _analytics_sub67, _analytics_sub71,
      _analytics_sub76, _analytics_sub79,
      _analytics_sub80, _analytics_sub82, _analytics_sub83,
-     _analytics_sub86, _analytics_sub88) = st.tabs([
+     _analytics_sub86, _analytics_sub88,
+     _analytics_sub95, _analytics_sub96, _analytics_sub97) = st.tabs([
         "Tail Risk", "Stress", "Contagion",
         "Vol Regime", "Deleveraging", "Sector Stress",
         "Put/Call", "Tail Dependency", "Port Stress",
@@ -3031,19 +3033,20 @@ with tab_risk:  # Risk Monitors — 22 sub-tabs
         "MOVE Index", "VIX Term",
         "Options Skew", "DV01", "CVaR",
         "VRP", "Funding Stress",
+        "Mkt Internals", "Vol-Credit", "Drawdown",
     ])
 
-with tab_siglab:  # Signal Lab — 13 sub-tabs
+with tab_siglab:  # Signal Lab — 14 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3,
      _analytics_sub4, _analytics_sub5, _analytics_sub9,
      _analytics_sub18, _analytics_sub22, _analytics_sub26,
      _analytics_sub35, _analytics_sub37, _analytics_sub50,
-     _analytics_sub91) = st.tabs([
+     _analytics_sub91, _analytics_sub94) = st.tabs([
         "Validation", "Attribution", "Timeline",
         "Sig Decay", "Ortho", "Factors",
         "Granger", "EQ-Credit Corr", "Corr Heatmap",
         "PCA", "Composite", "Signal Move",
-        "Data Diagnostics",
+        "Data Diagnostics", "Score Decomp",
     ])
 
 with tab_regime:  # Regime — 12 sub-tabs
@@ -13630,6 +13633,718 @@ with _analytics_sub91:
             st.caption("No lookahead leakage detected in forward-return columns.")
     except Exception as _e91:
         st.caption(f"Data diagnostics unavailable: {_e91}")
+
+
+# =============================================================================
+# BATCH 11 ANALYTICS: sub92–97
+# =============================================================================
+
+with _analytics_sub92:
+    import plotly.graph_objects as _go92
+    st.header("NFCI — National Financial Conditions Index")
+    st.markdown(
+        "The **Chicago Fed NFCI** is a weekly index of US financial conditions across "
+        "money markets, debt and equity markets, and the traditional and shadow banking systems. "
+        "**Positive values** = tighter-than-average financial conditions (stress). "
+        "**Negative values** = looser-than-average (accommodative). "
+        "NFCI > 0.5 historically precedes HY spread widening; NFCI > 1.0 = significant tightening."
+    )
+    try:
+        if "nfci" in df.columns and df["nfci"].notna().sum() > 20:
+            _nfci_df = df[["nfci"]].copy()
+            if "nfci_90d_avg" in df.columns:
+                _nfci_df["nfci_90d_avg"] = df["nfci_90d_avg"]
+            if "nfci_change_90d" in df.columns:
+                _nfci_df["nfci_change_90d"] = df["nfci_change_90d"]
+            _nfci_df.index = pd.to_datetime(_nfci_df.index)
+            _nfci_latest = float(_nfci_df["nfci"].dropna().iloc[-1])
+            _nfci_90d_latest = float(_nfci_df["nfci_90d_avg"].dropna().iloc[-1]) if "nfci_90d_avg" in _nfci_df.columns else float("nan")
+            _nfci_chg = float(_nfci_df["nfci_change_90d"].dropna().iloc[-1]) if "nfci_change_90d" in _nfci_df.columns else float("nan")
+
+            _nfci_regime = (
+                "Tightening (Stress)" if _nfci_latest > 0.5
+                else "Elevated" if _nfci_latest > 0.0
+                else "Neutral" if _nfci_latest > -0.5
+                else "Loose (Accommodative)"
+            )
+
+            _n92a, _n92b, _n92c, _n92d = st.columns(4)
+            _n92a.metric("NFCI (latest)", f"{_nfci_latest:.3f}",
+                         help="Positive = tighter than average. Normal range: −1 to +1.")
+            _n92b.metric("90d Average", f"{_nfci_90d_latest:.3f}" if not pd.isna(_nfci_90d_latest) else "—")
+            _n92c.metric("90d Change", f"{_nfci_chg:+.3f}" if not pd.isna(_nfci_chg) else "—",
+                         delta_color="inverse")
+            _n92d.metric("Regime", _nfci_regime)
+
+            if _nfci_latest > 0.5:
+                st.warning(f"NFCI above 0.5 ({_nfci_latest:.3f}) — financial conditions tightening materially. "
+                           "Historically associated with HY spread widening within 4–8 weeks.")
+            elif _nfci_latest < -0.5:
+                st.success(f"NFCI below −0.5 ({_nfci_latest:.3f}) — accommodative conditions. "
+                           "Favorable for credit carry strategies.")
+
+            # NFCI time series with regime bands
+            _nfci_plot = _nfci_df.tail(756)
+            _fig92a = _go92.Figure()
+            _fig92a.add_trace(_go92.Scatter(
+                x=_nfci_plot.index, y=_nfci_plot["nfci"],
+                name="NFCI", line=dict(color="#06b6d4", width=2),
+                fill="tozeroy", fillcolor="rgba(6,182,212,0.10)",
+                hovertemplate="%{x|%Y-%m-%d}<br>NFCI: %{y:.3f}<extra></extra>",
+            ))
+            if "nfci_90d_avg" in _nfci_plot.columns:
+                _fig92a.add_trace(_go92.Scatter(
+                    x=_nfci_plot.index, y=_nfci_plot["nfci_90d_avg"],
+                    name="90d Average", line=dict(color="#f59e0b", width=1.5, dash="dot"),
+                    hovertemplate="%{x|%Y-%m-%d}<br>90d Avg: %{y:.3f}<extra></extra>",
+                ))
+            _fig92a.add_hline(y=0,   line=dict(color="rgba(255,255,255,0.3)", width=1))
+            _fig92a.add_hline(y=0.5, line=dict(color="#ef4444", dash="dash", width=1),
+                              annotation_text="Tightening (0.5)",
+                              annotation_font=dict(color="#ef4444", size=9))
+            _fig92a.add_hline(y=1.0, line=dict(color="#9b59b6", dash="dot", width=1),
+                              annotation_text="Stress (1.0)",
+                              annotation_font=dict(color="#9b59b6", size=9))
+            _fig92a.update_layout(
+                height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="NFCI"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig92a, use_container_width=True)
+            st.caption("Above 0 = tighter than average · Below 0 = looser than average · "
+                       "Weekly frequency (Chicago Fed release).")
+
+            # NFCI vs HY spread
+            if "hy_spread" in df.columns:
+                _nfci_hy = _nfci_df[["nfci"]].join(df[["hy_spread"]].dropna(), how="inner").dropna().tail(504)
+                if not _nfci_hy.empty:
+                    _fig92b = _go92.Figure()
+                    _fig92b.add_trace(_go92.Scatter(
+                        x=_nfci_hy.index, y=_nfci_hy["nfci"],
+                        name="NFCI", line=dict(color="#06b6d4", width=1.5),
+                        yaxis="y1",
+                        hovertemplate="%{x|%Y-%m-%d}<br>NFCI: %{y:.3f}<extra></extra>",
+                    ))
+                    _fig92b.add_trace(_go92.Scatter(
+                        x=_nfci_hy.index, y=_nfci_hy["hy_spread"],
+                        name="HY OAS (%)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                        yaxis="y2",
+                        hovertemplate="%{x|%Y-%m-%d}<br>HY OAS: %{y:.2f}%<extra></extra>",
+                    ))
+                    _fig92b.update_layout(
+                        height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11),
+                        margin=dict(l=8, r=8, t=24, b=8),
+                        title=dict(text="NFCI vs HY Spread", font=dict(size=12, color="#9aa0aa")),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                   color="#06b6d4", title="NFCI"),
+                        yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                    title="HY OAS (%)", showgrid=False),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                        hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    )
+                    st.plotly_chart(_fig92b, use_container_width=True)
+                    _nfci_corr = float(_nfci_hy["nfci"].corr(_nfci_hy["hy_spread"]))
+                    st.caption(f"NFCI vs HY spread correlation (2yr): {_nfci_corr:+.2f}.")
+
+            # Implication table
+            import pandas as _pd92
+            st.subheader("NFCI → Credit Implication")
+            st.dataframe(_pd92.DataFrame([
+                {"NFCI Range": "< −0.5",        "Financial Conditions": "Loose/accommodative",  "Credit Impact": "Spread compression", "Posture": "Risk-on"},
+                {"NFCI Range": "−0.5 to 0",     "Financial Conditions": "Slightly easy",        "Credit Impact": "Neutral/stable",     "Posture": "Neutral"},
+                {"NFCI Range": "0 to +0.5",     "Financial Conditions": "Slightly tight",       "Credit Impact": "Watch for widening", "Posture": "Cautious"},
+                {"NFCI Range": "+0.5 to +1.0",  "Financial Conditions": "Tightening",           "Credit Impact": "Widening likely",    "Posture": "Defensive"},
+                {"NFCI Range": "> +1.0",         "Financial Conditions": "Significant stress",  "Credit Impact": "Material widening",  "Posture": "Risk-off"},
+            ]), use_container_width=True, hide_index=True)
+        else:
+            st.info("NFCI unavailable — requires `nfci` column in dataset (FRED series NFCI).")
+    except Exception as _e92:
+        st.caption(f"NFCI unavailable: {_e92}")
+
+
+with _analytics_sub93:
+    import plotly.graph_objects as _go93
+    st.header("Sahm Rule — Labor Market Early Warning")
+    st.markdown(
+        "The **Sahm Rule** (Claudia Sahm, 2019) triggers when the 3-month average unemployment "
+        "rate rises ≥ 0.5pp above its 12-month low — a real-time recession signal with near-perfect "
+        "historical accuracy. "
+        "For credit: rising unemployment → rising default rates with a 2–4 quarter lag. "
+        "The `sahm_like` indicator here uses the daily dataset's unemployment interpolation "
+        "as a proxy for the monthly Sahm calculation."
+    )
+    try:
+        _sahm_avail = "sahm_like" in df.columns and df["sahm_like"].notna().sum() > 10
+        _unemp_avail = "unemployment" in df.columns and df["unemployment"].notna().sum() > 10
+        if _sahm_avail or _unemp_avail:
+            _s93_df = df[[]].copy()
+            if _sahm_avail:
+                _s93_df["sahm_like"] = df["sahm_like"]
+            if _unemp_avail:
+                _s93_df["unemployment"] = df["unemployment"]
+            if "unemployment_change_90d" in df.columns:
+                _s93_df["unemployment_change_90d"] = df["unemployment_change_90d"]
+            if "labor_warning" in df.columns:
+                _s93_df["labor_warning"] = df["labor_warning"]
+            _s93_df.index = pd.to_datetime(_s93_df.index)
+
+            _sahm_now = float(_s93_df["sahm_like"].dropna().iloc[-1]) if _sahm_avail else float("nan")
+            _unemp_now = float(_s93_df["unemployment"].dropna().iloc[-1]) if _unemp_avail else float("nan")
+            _unemp_chg = float(_s93_df["unemployment_change_90d"].dropna().iloc[-1]) if "unemployment_change_90d" in _s93_df.columns else float("nan")
+            _labor_warn = str(_s93_df["labor_warning"].dropna().iloc[-1]) if "labor_warning" in _s93_df.columns else "—"
+
+            _s93a, _s93b, _s93c, _s93d = st.columns(4)
+            _s93a.metric("Sahm-Like Indicator", f"{_sahm_now:.2f}pp" if not pd.isna(_sahm_now) else "—",
+                         delta_color="inverse",
+                         help="Unemployment minus 12m rolling min. ≥ 0.5pp = Sahm Rule triggered.")
+            _s93b.metric("Unemployment Rate", f"{_unemp_now:.1f}%" if not pd.isna(_unemp_now) else "—")
+            _s93c.metric("Unemp 90d Change", f"{_unemp_chg:+.2f}pp" if not pd.isna(_unemp_chg) else "—",
+                         delta_color="inverse")
+            _s93d.metric("Labor Warning", _labor_warn)
+
+            _sahm_triggered = not pd.isna(_sahm_now) and _sahm_now >= 0.5
+            if _sahm_triggered:
+                st.error(f"Sahm Rule TRIGGERED: indicator at {_sahm_now:.2f}pp (threshold: 0.5pp). "
+                         "Historical recession signal with near-perfect accuracy. "
+                         "Default rates typically rise 2–4 quarters after trigger.")
+            elif not pd.isna(_sahm_now) and _sahm_now >= 0.3:
+                st.warning(f"Sahm indicator approaching threshold ({_sahm_now:.2f}pp / 0.5pp threshold). "
+                           "Monitor unemployment trend closely.")
+
+            # Sahm-like history chart
+            if _sahm_avail:
+                _s93_plot = _s93_df[["sahm_like"]].dropna().tail(756)
+                _fig93a = _go93.Figure()
+                _s93_colors = ["#ef4444" if v >= 0.5 else "#f59e0b" if v >= 0.3 else "#27ae60"
+                               for v in _s93_plot["sahm_like"].fillna(0)]
+                _fig93a.add_trace(_go93.Bar(
+                    x=_s93_plot.index, y=_s93_plot["sahm_like"],
+                    marker_color=_s93_colors, name="Sahm-Like",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Sahm: %{y:.2f}pp<extra></extra>",
+                ))
+                _fig93a.add_hline(y=0.5, line=dict(color="#ef4444", dash="dash", width=1.5),
+                                  annotation_text="Recession signal (0.5pp)",
+                                  annotation_font=dict(color="#ef4444", size=10))
+                _fig93a.add_hline(y=0.3, line=dict(color="#f59e0b", dash="dot", width=1),
+                                  annotation_text="Watch zone (0.3pp)",
+                                  annotation_font=dict(color="#f59e0b", size=9))
+                _fig93a.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Unemployment Rise from 12M Low (pp)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig93a, use_container_width=True)
+
+            # Unemployment level + HY spread lead-lag
+            if _unemp_avail and "hy_spread" in df.columns:
+                _s93_hy = _s93_df[["unemployment"]].join(df[["hy_spread"]].dropna(), how="inner").dropna().tail(756)
+                if not _s93_hy.empty:
+                    _fig93b = _go93.Figure()
+                    _fig93b.add_trace(_go93.Scatter(
+                        x=_s93_hy.index, y=_s93_hy["unemployment"],
+                        name="Unemployment (%)", line=dict(color="#e67e22", width=2),
+                        yaxis="y1",
+                        hovertemplate="%{x|%Y-%m-%d}<br>Unemp: %{y:.1f}%<extra></extra>",
+                    ))
+                    _fig93b.add_trace(_go93.Scatter(
+                        x=_s93_hy.index, y=_s93_hy["hy_spread"],
+                        name="HY OAS (%)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                        yaxis="y2",
+                        hovertemplate="%{x|%Y-%m-%d}<br>HY OAS: %{y:.2f}%<extra></extra>",
+                    ))
+                    _fig93b.update_layout(
+                        height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11),
+                        margin=dict(l=8, r=8, t=24, b=8),
+                        title=dict(text="Unemployment vs HY Spread (unemployment lags credit by ~2 qtrs)",
+                                   font=dict(size=12, color="#9aa0aa")),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                   color="#e67e22", title="Unemployment (%)"),
+                        yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                    title="HY OAS (%)", showgrid=False),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                        hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    )
+                    st.plotly_chart(_fig93b, use_container_width=True)
+                    st.caption("HY spreads lead unemployment by ~2 quarters: spreads widen first, "
+                               "then defaults rise, then unemployment increases.")
+
+            # Labor warning implication table
+            import pandas as _pd93
+            st.subheader("Labor Warning → Credit Cycle Implication")
+            st.dataframe(_pd93.DataFrame([
+                {"Sahm Level": "< 0.2pp",    "Labor Signal": "Strong labor market",   "Default Outlook": "Low",       "Credit Posture": "Risk-on"},
+                {"Sahm Level": "0.2–0.3pp",  "Labor Signal": "Softening",             "Default Outlook": "Rising",    "Credit Posture": "Neutral"},
+                {"Sahm Level": "0.3–0.5pp",  "Labor Signal": "Deteriorating",         "Default Outlook": "Elevated",  "Credit Posture": "Defensive"},
+                {"Sahm Level": "≥ 0.5pp",    "Labor Signal": "Recession signal",      "Default Outlook": "High",      "Credit Posture": "Risk-off"},
+            ]), use_container_width=True, hide_index=True)
+            st.caption(f"Current: Sahm-like = **{_sahm_now:.2f}pp** · Unemployment = **{_unemp_now:.1f}%** · "
+                       f"Labor warning: **{_labor_warn}**")
+        else:
+            st.info("Sahm Rule unavailable — requires `unemployment` or `sahm_like` columns in dataset.")
+    except Exception as _e93:
+        st.caption(f"Sahm Rule unavailable: {_e93}")
+
+
+with _analytics_sub94:
+    import plotly.graph_objects as _go94
+    st.header("Score Decomposition")
+    st.markdown(
+        "The composite risk signal is built from **7 weighted sub-scores**, each measuring a "
+        "different dimension of systemic credit risk. This tab shows the current contribution "
+        "of each component, their history, and which sub-scores are driving the signal today. "
+        "Understanding decomposition helps identify *what* is causing elevated readings "
+        "and which signals may be lagging."
+    )
+    try:
+        # Collect current sub-score values
+        _sd94_components = []
+        for _key94, _col94 in SCORE_COLS.items():
+            _w94 = COMPOSITE_WEIGHTS.get(_key94, 0)
+            _lbl94 = DISPLAY_NAMES.get(_key94, _key94)
+            _val94 = float(latest.get(_col94, float("nan"))) if _col94 in df.columns else float("nan")
+            _contribution94 = _val94 * _w94 if not pd.isna(_val94) and _w94 > 0 else float("nan")
+            _sd94_components.append({
+                "key": _key94, "label": _lbl94, "weight": _w94,
+                "score": _val94, "contribution": _contribution94, "col": _col94,
+            })
+        _sd94_valid = [c for c in _sd94_components if not pd.isna(c["score"]) and c["weight"] > 0]
+
+        if _sd94_valid:
+            # KPI row — composite vs sub-score breakdown
+            _comp_now = float(latest.get("composite_risk_score_smooth", float("nan")))
+            _sd94a, _sd94b, _sd94c = st.columns(3)
+            _sd94a.metric("Composite Score", f"{_comp_now:.1f}/100" if not pd.isna(_comp_now) else "—")
+            _top_driver = max(_sd94_valid, key=lambda c: c.get("contribution", 0))
+            _sd94b.metric("Top Driver", _top_driver["label"],
+                          help="Sub-score with highest weighted contribution today")
+            _sd94c.metric("Top Driver Score", f"{_top_driver['score']:.1f}",
+                          delta=f"{_top_driver['weight']:.0%} weight")
+
+            # Radar chart of sub-scores
+            _radar_labels = [c["label"] for c in _sd94_valid] + [_sd94_valid[0]["label"]]
+            _radar_vals   = [c["score"] for c in _sd94_valid] + [_sd94_valid[0]["score"]]
+            _fig94a = _go94.Figure()
+            _fig94a.add_trace(_go94.Scatterpolar(
+                r=_radar_vals, theta=_radar_labels, fill="toself",
+                fillcolor="rgba(239,68,68,0.15)",
+                line=dict(color="#ef4444", width=2),
+                name="Current",
+                hovertemplate="%{theta}: %{r:.1f}<extra></extra>",
+            ))
+            _fig94a.add_trace(_go94.Scatterpolar(
+                r=[50] * len(_radar_labels), theta=_radar_labels, fill=None,
+                line=dict(color="rgba(255,255,255,0.2)", width=1, dash="dot"),
+                name="Neutral (50)",
+            ))
+            _fig94a.update_layout(
+                polar=dict(
+                    radialaxis=dict(range=[0, 100], showticklabels=True, tickfont=dict(size=9, color="#6b7280"),
+                                    gridcolor="rgba(255,255,255,0.08)"),
+                    angularaxis=dict(tickfont=dict(size=10, color="#9aa0aa")),
+                    bgcolor="rgba(0,0,0,0)",
+                ),
+                height=360, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=40, r=40, t=40, b=40),
+                legend=dict(orientation="h", y=1.08, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig94a, use_container_width=True)
+
+            # Waterfall: weighted contributions
+            _wf94_labels = [c["label"] for c in _sd94_valid]
+            _wf94_contribs = [c["contribution"] for c in _sd94_valid]
+            _wf94_colors = ["#ef4444" if v > 15 else "#f59e0b" if v > 8 else "#27ae60"
+                            for v in _wf94_contribs]
+            _fig94b = _go94.Figure()
+            _fig94b.add_trace(_go94.Bar(
+                x=_wf94_labels, y=_wf94_contribs,
+                marker_color=_wf94_colors,
+                text=[f"{v:.1f}" for v in _wf94_contribs],
+                textposition="outside",
+                hovertemplate="%{x}<br>Contribution: %{y:.1f} pts<extra></extra>",
+            ))
+            if not pd.isna(_comp_now):
+                _fig94b.add_hline(y=_comp_now / len(_sd94_valid),
+                                  line=dict(color="rgba(255,255,255,0.3)", dash="dot", width=1),
+                                  annotation_text="Equal-split baseline",
+                                  annotation_font=dict(color="#9aa0aa", size=9))
+            _fig94b.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                title=dict(text="Weighted Score Contribution (score × weight)",
+                           font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Contribution (pts)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig94b, use_container_width=True)
+
+            # Sub-score history stacked area
+            _hist_cols94 = [c["col"] for c in _sd94_valid if c["col"] in df.columns]
+            if _hist_cols94:
+                _hist94 = df[_hist_cols94].tail(504).copy()
+                _hist94.index = pd.to_datetime(_hist94.index)
+                _fig94c = _go94.Figure()
+                _palette94 = ["#ef4444", "#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#06b6d4", "#ec4899"]
+                for _i94, _c94 in enumerate(_sd94_valid):
+                    if _c94["col"] in _hist94.columns:
+                        _fig94c.add_trace(_go94.Scatter(
+                            x=_hist94.index, y=_hist94[_c94["col"]],
+                            name=_c94["label"],
+                            line=dict(color=_palette94[_i94 % len(_palette94)], width=1.5),
+                            hovertemplate=f"%{{x|%Y-%m-%d}}<br>{_c94['label']}: %{{y:.1f}}<extra></extra>",
+                        ))
+                _fig94c.add_hline(y=50, line=dict(color="rgba(255,255,255,0.2)", dash="dash", width=1))
+                _fig94c.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="Sub-Score History (0–100)", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Score (0–100)", range=[0, 100]),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.15, bgcolor="rgba(0,0,0,0)", font=dict(size=9)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig94c, use_container_width=True)
+
+            # Summary table
+            import pandas as _pd94
+            _sd94_tbl = _pd94.DataFrame([{
+                "Component": c["label"],
+                "Weight": f"{c['weight']:.0%}",
+                "Current Score": f"{c['score']:.1f}" if not pd.isna(c["score"]) else "—",
+                "Contribution": f"{c['contribution']:.1f} pts" if not pd.isna(c.get("contribution", float("nan"))) else "—",
+                "Column": c["col"],
+            } for c in _sd94_components if c["weight"] > 0])
+            with st.expander("Component detail table"):
+                st.dataframe(_sd94_tbl, use_container_width=True, hide_index=True)
+        else:
+            st.info("Score decomposition unavailable — sub-score columns not found in dataset.")
+    except Exception as _e94:
+        st.caption(f"Score decomposition unavailable: {_e94}")
+
+
+with _analytics_sub95:
+    import plotly.graph_objects as _go95
+    st.header("Market Internals & Cross-Asset Divergence")
+    st.markdown(
+        "Two composite signals from the risk engine: "
+        "**Market Internals** (0–100) aggregates SP500 return momentum, drawdown, and VIX "
+        "into a breadth-style health score — high = equity market stressed. "
+        "**Cross-Asset Divergence** measures when equity, credit, and volatility markets are "
+        "sending conflicting signals — elevated divergence historically precedes mean reversion and "
+        "volatility spikes in the lagging market."
+    )
+    try:
+        _mi95_cols = [c for c in ["market_internals_score_smooth", "market_internals_score",
+                                   "cross_asset_divergence_score_smooth", "cross_asset_divergence_score"]
+                      if c in df.columns]
+        if _mi95_cols:
+            _mi95_df = df[_mi95_cols].copy()
+            _mi95_df.index = pd.to_datetime(_mi95_df.index)
+
+            _mi_col = next((c for c in ["market_internals_score_smooth", "market_internals_score"]
+                            if c in _mi95_df.columns), None)
+            _ca_col = next((c for c in ["cross_asset_divergence_score_smooth", "cross_asset_divergence_score"]
+                            if c in _mi95_df.columns), None)
+
+            _mi_now = float(_mi95_df[_mi_col].dropna().iloc[-1]) if _mi_col else float("nan")
+            _ca_now = float(_mi95_df[_ca_col].dropna().iloc[-1]) if _ca_col else float("nan")
+
+            _m95a, _m95b, _m95c, _m95d = st.columns(4)
+            _m95a.metric("Market Internals", f"{_mi_now:.1f}/100" if not pd.isna(_mi_now) else "—",
+                         help="0 = healthy, 100 = severely stressed equities")
+            _m95b.metric("Internals Regime",
+                         "Stressed" if _mi_now > 65 else "Elevated" if _mi_now > 40 else "Normal"
+                         if not pd.isna(_mi_now) else "—")
+            _m95c.metric("Cross-Asset Divergence", f"{_ca_now:.1f}/100" if not pd.isna(_ca_now) else "—",
+                         help="High = equity/credit/vol sending conflicting signals")
+            _m95d.metric("Divergence Regime",
+                         "High" if _ca_now > 65 else "Moderate" if _ca_now > 40 else "Low"
+                         if not pd.isna(_ca_now) else "—")
+
+            if _mi_now > 65:
+                st.warning("Market internals score elevated — equity market breadth and momentum deteriorating.")
+            if _ca_now > 65:
+                st.warning("Cross-asset divergence high — asset classes sending conflicting signals. "
+                           "Mean reversion event likely within 2–4 weeks.")
+
+            # Dual time series
+            _mi95_plot = _mi95_df.tail(504)
+            _fig95 = _go95.Figure()
+            if _mi_col:
+                _fig95.add_trace(_go95.Scatter(
+                    x=_mi95_plot.index, y=_mi95_plot[_mi_col],
+                    name="Market Internals", line=dict(color="#f59e0b", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Internals: %{y:.1f}<extra></extra>",
+                ))
+            if _ca_col:
+                _fig95.add_trace(_go95.Scatter(
+                    x=_mi95_plot.index, y=_mi95_plot[_ca_col],
+                    name="Cross-Asset Divergence", line=dict(color="#8b5cf6", width=1.5, dash="dot"),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Divergence: %{y:.1f}<extra></extra>",
+                ))
+            _fig95.add_hline(y=65, line=dict(color="#ef4444", dash="dash", width=1),
+                             annotation_text="Stress threshold (65)",
+                             annotation_font=dict(color="#ef4444", size=9))
+            _fig95.add_hline(y=40, line=dict(color="#f59e0b", dash="dot", width=1),
+                             annotation_text="Elevated (40)",
+                             annotation_font=dict(color="#f59e0b", size=9))
+            _fig95.update_layout(
+                height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Score (0–100)", range=[0, 100]),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig95, use_container_width=True)
+            st.caption("Market Internals above 65 = equity market under sustained pressure. "
+                       "Cross-Asset Divergence above 65 = look for catch-up moves in the lagging market.")
+        else:
+            st.info("Market internals unavailable — requires market_internals_score or "
+                    "cross_asset_divergence_score columns.")
+    except Exception as _e95:
+        st.caption(f"Market internals unavailable: {_e95}")
+
+
+with _analytics_sub96:
+    import plotly.graph_objects as _go96
+    st.header("Vol-Credit Mismatch")
+    st.markdown(
+        "**Vol-Credit Mismatch** fires when VIX and credit spreads are sending contradictory signals: "
+        "e.g. VIX elevated but HY spreads complacent, or spreads wide but vol suppressed. "
+        "These mismatches are unstable equilibria — one market will catch up. "
+        "Historically: when HY is *tight* but VIX is *high*, spreads tend to widen within 3–6 weeks; "
+        "when HY is *wide* but VIX is *low*, vol tends to spike."
+    )
+    try:
+        _mismatch_avail = "vol_credit_mismatch" in df.columns and df["vol_credit_mismatch"].notna().sum() > 10
+        if _mismatch_avail or ("vix" in df.columns and "hy_spread" in df.columns):
+            _vc96_df = df[[]].copy()
+            if _mismatch_avail:
+                _vc96_df["vol_credit_mismatch"] = df["vol_credit_mismatch"]
+            if "vix" in df.columns:
+                _vc96_df["vix"] = df["vix"]
+            if "hy_spread" in df.columns:
+                _vc96_df["hy_spread"] = df["hy_spread"]
+            _vc96_df.index = pd.to_datetime(_vc96_df.index)
+
+            _mismatch_now = str(_vc96_df["vol_credit_mismatch"].dropna().iloc[-1]) if _mismatch_avail else "—"
+            _vix_now = float(_vc96_df["vix"].dropna().iloc[-1]) if "vix" in _vc96_df.columns else float("nan")
+            _hy_now = float(_vc96_df["hy_spread"].dropna().iloc[-1]) if "hy_spread" in _vc96_df.columns else float("nan")
+
+            _v96a, _v96b, _v96c, _v96d = st.columns(4)
+            _v96a.metric("VIX", f"{_vix_now:.1f}" if not pd.isna(_vix_now) else "—")
+            _v96b.metric("HY OAS", f"{_hy_now:.2f}%" if not pd.isna(_hy_now) else "—")
+            _v96c.metric("Mismatch Signal", _mismatch_now)
+
+            # Derive VIX z-score and HY z-score for mismatch visualization
+            _vix_252 = _vc96_df["vix"].tail(252) if "vix" in _vc96_df.columns else None
+            _hy_252 = _vc96_df["hy_spread"].tail(252) if "hy_spread" in _vc96_df.columns else None
+            _vix_z = float((_vix_now - _vix_252.mean()) / (_vix_252.std() + 1e-9)) if _vix_252 is not None and len(_vix_252) > 10 else float("nan")
+            _hy_z = float((_hy_now - _hy_252.mean()) / (_hy_252.std() + 1e-9)) if _hy_252 is not None and len(_hy_252) > 10 else float("nan")
+            _mismatch_score = abs(_vix_z - _hy_z) if not (pd.isna(_vix_z) or pd.isna(_hy_z)) else float("nan")
+            _v96d.metric("Divergence |z|", f"{_mismatch_score:.2f}" if not pd.isna(_mismatch_score) else "—",
+                         help="Absolute difference between VIX z-score and HY z-score (1yr window)")
+
+            if not pd.isna(_mismatch_score) and _mismatch_score > 1.5:
+                st.warning(f"Large VIX vs HY divergence detected (|z| = {_mismatch_score:.2f}). "
+                           "Mismatch historically resolves within 3–6 weeks.")
+
+            # VIX z-score vs HY z-score over time
+            if "vix" in _vc96_df.columns and "hy_spread" in _vc96_df.columns:
+                _vc96_plot = _vc96_df[["vix", "hy_spread"]].dropna().tail(504)
+                _vix_z_series = (_vc96_plot["vix"] - _vc96_plot["vix"].rolling(252, min_periods=60).mean()) / \
+                                (_vc96_plot["vix"].rolling(252, min_periods=60).std() + 1e-9)
+                _hy_z_series  = (_vc96_plot["hy_spread"] - _vc96_plot["hy_spread"].rolling(252, min_periods=60).mean()) / \
+                                (_vc96_plot["hy_spread"].rolling(252, min_periods=60).std() + 1e-9)
+                _div_series = (_vix_z_series - _hy_z_series).abs()
+
+                _fig96a = _go96.Figure()
+                _fig96a.add_trace(_go96.Scatter(
+                    x=_vc96_plot.index, y=_vix_z_series,
+                    name="VIX z-score (1yr)", line=dict(color="#f59e0b", width=1.5),
+                    hovertemplate="%{x|%Y-%m-%d}<br>VIX z: %{y:.2f}<extra></extra>",
+                ))
+                _fig96a.add_trace(_go96.Scatter(
+                    x=_vc96_plot.index, y=_hy_z_series,
+                    name="HY Spread z-score (1yr)", line=dict(color="#ef4444", width=1.5),
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY z: %{y:.2f}<extra></extra>",
+                ))
+                _fig96a.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _fig96a.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="VIX vs HY Z-Scores (1yr rolling) — Divergence = Mismatch",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Z-Score"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig96a, use_container_width=True)
+
+                # Divergence magnitude chart
+                _fig96b = _go96.Figure()
+                _div_colors = ["#ef4444" if v > 1.5 else "#f59e0b" if v > 0.8 else "#27ae60"
+                               for v in _div_series.fillna(0)]
+                _fig96b.add_trace(_go96.Bar(
+                    x=_vc96_plot.index, y=_div_series,
+                    marker_color=_div_colors, name="|VIX z − HY z|",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Divergence: %{y:.2f}<extra></extra>",
+                ))
+                _fig96b.add_hline(y=1.5, line=dict(color="#ef4444", dash="dash", width=1),
+                                  annotation_text="High mismatch (1.5σ)",
+                                  annotation_font=dict(color="#ef4444", size=9))
+                _fig96b.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="Vol-Credit Divergence Magnitude |VIX z − HY z|",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="|Divergence|"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig96b, use_container_width=True)
+        else:
+            st.info("Vol-Credit mismatch unavailable — requires vix and hy_spread columns.")
+    except Exception as _e96:
+        st.caption(f"Vol-Credit mismatch unavailable: {_e96}")
+
+
+with _analytics_sub97:
+    import plotly.graph_objects as _go97
+    st.header("Equity Drawdown vs Credit Spreads")
+    st.markdown(
+        "**SP500 drawdown from peak** is a leading indicator of credit stress: "
+        "equity dislocations transfer to credit through leveraged balance sheets, "
+        "collateral calls, and risk-off sentiment. "
+        "A drawdown > −10% has historically been associated with meaningful HY spread widening "
+        "within 4–8 weeks. Understanding the drawdown-to-spread transmission helps size "
+        "credit hedges and set reentry levels."
+    )
+    try:
+        _dd97_avail = "sp500_drawdown" in df.columns and df["sp500_drawdown"].notna().sum() > 20
+        _hy97_avail = "hy_spread" in df.columns and df["hy_spread"].notna().sum() > 20
+        if _dd97_avail or ("sp500" in df.columns and df["sp500"].notna().sum() > 20):
+            _dd97_df = df[[]].copy()
+            if _dd97_avail:
+                _dd97_df["sp500_drawdown"] = df["sp500_drawdown"]
+            elif "sp500" in df.columns:
+                _sp97 = df["sp500"].dropna()
+                _dd97_df["sp500_drawdown"] = (_sp97 / _sp97.cummax() - 1).reindex(df.index)
+            if _hy97_avail:
+                _dd97_df["hy_spread"] = df["hy_spread"]
+            if "sp500" in df.columns:
+                _dd97_df["sp500"] = df["sp500"]
+            _dd97_df.index = pd.to_datetime(_dd97_df.index)
+
+            _dd_now = float(_dd97_df["sp500_drawdown"].dropna().iloc[-1])
+            _hy_now97 = float(_dd97_df["hy_spread"].dropna().iloc[-1]) if _hy97_avail else float("nan")
+            _sp_now = float(_dd97_df["sp500"].dropna().iloc[-1]) if "sp500" in _dd97_df.columns else float("nan")
+
+            _d97a, _d97b, _d97c, _d97d = st.columns(4)
+            _d97a.metric("Current Drawdown", f"{_dd_now:.1%}",
+                         delta_color="inverse",
+                         help="SP500 distance from all-time high")
+            _d97b.metric("Drawdown Regime",
+                         "Crisis" if _dd_now < -0.20 else "Stress" if _dd_now < -0.10
+                         else "Elevated" if _dd_now < -0.05 else "Normal")
+            _d97c.metric("SP500 Level", f"{_sp_now:,.0f}" if not pd.isna(_sp_now) else "—")
+            _d97d.metric("HY OAS", f"{_hy_now97:.2f}%" if not pd.isna(_hy_now97) else "—")
+
+            if _dd_now < -0.15:
+                st.error(f"Drawdown at {_dd_now:.1%} — crisis zone. HY spread widening likely if not already reflected.")
+            elif _dd_now < -0.08:
+                st.warning(f"Drawdown at {_dd_now:.1%} — elevated stress zone. Monitor HY spread follow-through.")
+
+            # Drawdown time series
+            _dd97_plot = _dd97_df.tail(756)
+            _fig97a = _go97.Figure()
+            _fig97a.add_trace(_go97.Scatter(
+                x=_dd97_plot.index, y=_dd97_plot["sp500_drawdown"] * 100,
+                name="SP500 Drawdown (%)", line=dict(color="#ef4444", width=1.5),
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.12)",
+                hovertemplate="%{x|%Y-%m-%d}<br>Drawdown: %{y:.1f}%<extra></extra>",
+            ))
+            _fig97a.add_hline(y=-5,  line=dict(color="#f59e0b", dash="dash", width=1),
+                              annotation_text="−5% Elevated", annotation_font=dict(color="#f59e0b", size=9))
+            _fig97a.add_hline(y=-10, line=dict(color="#ef4444", dash="dash", width=1),
+                              annotation_text="−10% Stress", annotation_font=dict(color="#ef4444", size=9))
+            _fig97a.add_hline(y=-20, line=dict(color="#9b59b6", dash="dot", width=1),
+                              annotation_text="−20% Crisis", annotation_font=dict(color="#9b59b6", size=9))
+            _fig97a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Drawdown from Peak (%)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig97a, use_container_width=True)
+
+            # Drawdown vs HY spread scatter
+            if _hy97_avail:
+                _scat97 = _dd97_df[["sp500_drawdown", "hy_spread"]].dropna().tail(504)
+                _fig97b = _go97.Figure()
+                _scat97_colors = [
+                    "#ef4444" if dd < -0.10 else "#f59e0b" if dd < -0.05 else "#27ae60"
+                    for dd in _scat97["sp500_drawdown"]
+                ]
+                _fig97b.add_trace(_go97.Scatter(
+                    x=_scat97["sp500_drawdown"] * 100,
+                    y=_scat97["hy_spread"],
+                    mode="markers",
+                    marker=dict(size=4, color=_scat97_colors, opacity=0.6),
+                    hovertemplate="Drawdown: %{x:.1f}%<br>HY OAS: %{y:.2f}%<extra></extra>",
+                ))
+                _fig97b.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="SP500 Drawdown vs HY Spread (2yr window)",
+                               font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="SP500 Drawdown (%)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="HY OAS (%)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig97b, use_container_width=True)
+                _dd_corr97 = float(_scat97["sp500_drawdown"].corr(_scat97["hy_spread"]))
+                st.caption(f"Drawdown vs HY correlation (2yr): {_dd_corr97:+.2f}. "
+                           f"{'Negative correlation: deeper drawdowns → wider spreads.' if _dd_corr97 < -0.2 else ''}")
+
+            # Drawdown bucket analysis
+            import pandas as _pd97
+            st.subheader("Drawdown Regime → Credit Spread Tendency")
+            st.dataframe(_pd97.DataFrame([
+                {"Drawdown":  "0 to −5%",     "Regime": "Normal",   "HY OAS Tendency": "Stable / tightening",     "Posture": "Risk-on"},
+                {"Drawdown": "−5 to −10%",    "Regime": "Elevated", "HY OAS Tendency": "Watch / minor widening",  "Posture": "Neutral"},
+                {"Drawdown": "−10 to −20%",   "Regime": "Stress",   "HY OAS Tendency": "Significant widening",    "Posture": "Defensive"},
+                {"Drawdown": "> −20%",         "Regime": "Crisis",   "HY OAS Tendency": "Major dislocation risk",  "Posture": "Risk-off"},
+            ]), use_container_width=True, hide_index=True)
+            st.caption(f"Current: drawdown **{_dd_now:.1%}** from SP500 peak.")
+        else:
+            st.info("Drawdown analysis unavailable — requires sp500_drawdown or sp500 column.")
+    except Exception as _e97:
+        st.caption(f"Drawdown analysis unavailable: {_e97}")
 
 
 # =============================================================================
