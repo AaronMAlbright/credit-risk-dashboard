@@ -126,6 +126,12 @@ from src.funding_stress import run_funding_stress_analysis
 from src.global_credit import run_global_credit_analysis
 from src.corporate_leverage import run_corporate_leverage_analysis
 from src.seasonality import run_seasonality_analysis
+from src.signal_traffic_light import run_traffic_light_analysis
+from src.shock_simulator import run_shock_analysis, get_default_shocks
+from src.alert_backtest import run_alert_backtest
+from src.pca_decomposition import run_pca_analysis
+from src.regime_forecast import run_regime_forecast
+from src.custom_composite import run_custom_composite_analysis, SUB_SIGNALS as CUSTOM_COMPOSITE_SIGNALS
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -709,6 +715,36 @@ def load_corporate_leverage(_df):
 def load_seasonality(_df):
     """Compute historical credit spread seasonality."""
     return run_seasonality_analysis(_df)
+
+
+@st.cache_data
+def load_traffic_light(_df):
+    return run_traffic_light_analysis(_df)
+
+
+@st.cache_data
+def load_shock_analysis(_df):
+    return run_shock_analysis(_df)
+
+
+@st.cache_data
+def load_alert_backtest(_df):
+    return run_alert_backtest(_df)
+
+
+@st.cache_data
+def load_pca_analysis(_df):
+    return run_pca_analysis(_df)
+
+
+@st.cache_data
+def load_regime_forecast(_df):
+    return run_regime_forecast(_df)
+
+
+@st.cache_data
+def load_custom_composite(_df):
+    return run_custom_composite_analysis(_df)
 
 
 @st.cache_data
@@ -2715,7 +2751,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 31 sub-tabs
+with tab5:  # Analytics — 37 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
@@ -2724,7 +2760,9 @@ with tab5:  # Analytics — 31 sub-tabs
      _analytics_sub19, _analytics_sub20, _analytics_sub21, _analytics_sub22,
      _analytics_sub23, _analytics_sub24, _analytics_sub25,
      _analytics_sub26, _analytics_sub27, _analytics_sub28,
-     _analytics_sub29, _analytics_sub30, _analytics_sub31) = st.tabs([
+     _analytics_sub29, _analytics_sub30, _analytics_sub31,
+     _analytics_sub32, _analytics_sub33, _analytics_sub34,
+     _analytics_sub35, _analytics_sub36, _analytics_sub37) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2734,6 +2772,8 @@ with tab5:  # Analytics — 31 sub-tabs
         "Regime Returns", "Default Cycle", "Compare Dates",
         "Corr Heatmap", "Spread Vol", "Fallen Angel",
         "Global Credit", "Corp Leverage", "Seasonality",
+        "Traffic Light", "Shock Sim", "Alert BT",
+        "PCA", "Regime Fcast", "Composite",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -8645,6 +8685,512 @@ with _analytics_sub31:
             st.info("Seasonality analysis unavailable — requires HY spread data with ≥3 years of history.")
     except Exception as _sea_e:
         st.caption(f"Seasonality unavailable: {_sea_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 32: Signal Traffic Light
+# =============================================================================
+with _analytics_sub32:
+    import plotly.graph_objects as _go_tl
+    st.header("Signal Traffic Light")
+    st.markdown(
+        "All signals classified **Green / Yellow / Orange / Red** based on historical percentile rank. "
+        "Green = bottom 30th percentile (low stress). Red = top 20th percentile (extreme stress). "
+        "Arrows show 21-day direction."
+    )
+    try:
+        _tl = load_traffic_light(df)
+        if _tl.get("available"):
+            _tl_signals = _tl.get("signals")
+            _tl_summary = _tl.get("summary", {})
+            _tl_overall = _tl.get("overall_color", "Yellow")
+            _tl_updated = _tl.get("last_updated", "—")
+
+            _tl_color_map = {"Green": "#27ae60", "Yellow": "#f39c12", "Orange": "#e67e22", "Red": "#e74c3c"}
+            _tl_overall_color = _tl_color_map.get(_tl_overall, "#9aa0aa")
+
+            _tl_c1, _tl_c2, _tl_c3, _tl_c4, _tl_c5 = st.columns(5)
+            _tl_c1.metric("Overall", _tl_overall)
+            _tl_c2.metric("Green", _tl_summary.get("green", 0))
+            _tl_c3.metric("Yellow", _tl_summary.get("yellow", 0))
+            _tl_c4.metric("Orange", _tl_summary.get("orange", 0))
+            _tl_c5.metric("Red", _tl_summary.get("red", 0))
+
+            if _tl_signals is not None and not _tl_signals.empty:
+                _tl_avail = _tl_signals[_tl_signals["available"] == True].copy()
+                if not _tl_avail.empty:
+                    _tl_fig = _go_tl.Figure()
+                    for _, _row in _tl_avail.iterrows():
+                        _c = _tl_color_map.get(_row["color"], "#9aa0aa")
+                        _label = f"{_row['direction']} {_row['label']}"
+                        _tl_fig.add_trace(_go_tl.Indicator(
+                            mode="number+delta",
+                            value=_row["current_val"],
+                            title={"text": _label, "font": {"size": 11, "color": "#9aa0aa"}},
+                            number={"font": {"size": 18, "color": _c}, "suffix": ""},
+                            delta={"reference": _row["current_val"] - 0.001, "relative": False,
+                                   "valueformat": ".0f"},
+                            domain={"row": 0, "column": 0},
+                        ))
+
+                    # Display as styled dataframe instead (cleaner)
+                    _tl_display = _tl_avail[["label", "color", "current_val", "percentile", "direction"]].copy()
+                    _tl_display.columns = ["Signal", "Status", "Current", "Percentile", "Trend"]
+                    _tl_display["Current"] = _tl_display["Current"].apply(lambda x: f"{x:.1f}" if x is not None else "—")
+                    _tl_display["Percentile"] = _tl_display["Percentile"].apply(lambda x: f"{x:.0f}th" if x is not None else "—")
+
+                    def _tl_color_cell(val):
+                        colors = {"Green": "color: #27ae60", "Yellow": "color: #f39c12",
+                                  "Orange": "color: #e67e22", "Red": "color: #e74c3c"}
+                        return colors.get(val, "")
+
+                    st.dataframe(
+                        _tl_display.style.applymap(_tl_color_cell, subset=["Status"]),
+                        use_container_width=True, hide_index=True,
+                    )
+                    st.caption(f"Last updated: {_tl_updated} · Percentile vs full history · Lower risk signals prefer bottom percentiles")
+        else:
+            st.info("Traffic light unavailable — insufficient signal data.")
+    except Exception as _tl_e:
+        st.caption(f"Traffic light unavailable: {_tl_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 33: Interactive Shock Simulator
+# =============================================================================
+with _analytics_sub33:
+    import plotly.graph_objects as _go_shk
+    st.header("Interactive Shock Simulator")
+    st.markdown(
+        "Apply hypothetical market shocks and see how each sub-signal and the composite risk score would respond, "
+        "based on OLS sensitivities estimated from the past 252 trading days."
+    )
+    try:
+        _shk = load_shock_analysis(df)
+        if _shk.get("available"):
+            _shk_current = _shk.get("current_values", {})
+            _shk_baseline = _shk.get("baseline_composite")
+            _shk_regime = _shk.get("baseline_regime", "—")
+
+            st.markdown(f"**Baseline:** Composite = `{_shk_baseline:.1f}` · Regime = **{_shk_regime}**")
+            st.divider()
+
+            # Pre-built scenarios
+            st.subheader("Pre-Built Scenarios")
+            _shk_scenarios = _shk.get("default_scenarios", {})
+            _shk_cols = st.columns(min(len(_shk_scenarios), 5))
+            for _si, (_sname, _sresult) in enumerate(_shk_scenarios.items()):
+                if _sresult.get("available"):
+                    _shocked_comp = _sresult.get("shocked", {}).get("composite", 0)
+                    _baseline_comp = _sresult.get("baseline", {}).get("composite", 0)
+                    _delta_comp = _sresult.get("deltas", {}).get("composite", 0)
+                    _new_regime = _sresult.get("regime_shocked", "—")
+                    _regime_changed = _sresult.get("regime_baseline") != _new_regime
+                    _shk_cols[_si % 5].metric(
+                        _sname,
+                        f"{_shocked_comp:.1f}",
+                        delta=f"{_delta_comp:+.1f}",
+                        delta_color="inverse",
+                        help=f"New regime: {_new_regime}" + (" ⚠ REGIME CHANGE" if _regime_changed else ""),
+                    )
+
+            # Sub-signal impact for the worst scenario
+            if _shk_scenarios:
+                _worst_name = max(_shk_scenarios, key=lambda k: (
+                    _shk_scenarios[k].get("deltas", {}).get("composite", 0)
+                    if _shk_scenarios[k].get("available") else -999
+                ))
+                _worst = _shk_scenarios[_worst_name]
+                if _worst.get("available"):
+                    st.subheader(f"Signal Impact: {_worst_name}")
+                    _w_baseline = _worst.get("baseline", {}).get("sub_signals", {})
+                    _w_shocked = _worst.get("shocked", {}).get("sub_signals", {})
+                    _w_deltas = _worst.get("deltas", {}).get("sub_signals", {})
+                    if _w_deltas:
+                        _shk_rows = [
+                            {"Signal": k.replace("_score_smooth", "").replace("_", " ").title(),
+                             "Baseline": f"{v:.1f}",
+                             "Shocked": f"{_w_shocked.get(k, 0):.1f}",
+                             "Delta": f"{v:+.1f}"}
+                            for k, v in _w_deltas.items()
+                        ]
+                        st.dataframe(pd.DataFrame(_shk_rows), use_container_width=True, hide_index=True)
+
+            # Sensitivities expander
+            _shk_sens = _shk.get("sensitivities", {})
+            if _shk_sens:
+                with st.expander("OLS Sensitivity Coefficients"):
+                    _sens_rows = []
+                    for _sig, _betas in _shk_sens.items():
+                        if _betas:
+                            _row = {"Signal": _sig.replace("_score_smooth", "").replace("_", " ").title()}
+                            _row.update({k: f"{v:.3f}" for k, v in _betas.items() if k != "r2"})
+                            _row["R²"] = f"{_betas.get('r2', 0):.2f}"
+                            _sens_rows.append(_row)
+                    if _sens_rows:
+                        st.dataframe(pd.DataFrame(_sens_rows), use_container_width=True, hide_index=True)
+                        st.caption("Betas: how much each sub-signal moves per unit change in the market variable")
+        else:
+            st.info("Shock simulator unavailable — requires composite score and market data.")
+    except Exception as _shk_e:
+        st.caption(f"Shock simulator unavailable: {_shk_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 34: Alert Precision/Recall Backtest
+# =============================================================================
+with _analytics_sub34:
+    import plotly.graph_objects as _go_abt
+    st.header("Alert Precision / Recall Backtest")
+    st.markdown(
+        "For each alert threshold on the composite risk score, how often did it fire historically, "
+        "and what happened to HY spreads / SP500 over the next 30 days? "
+        "An alert 'fires' when the score crosses **above** a threshold. "
+        "A 'true positive' = alert followed by HY widening >25bps or SP500 drop >3%."
+    )
+    try:
+        _abt = load_alert_backtest(df)
+        if _abt.get("available"):
+            _abt_best = _abt.get("best_threshold")
+            _abt_f1 = _abt.get("best_f1")
+            _abt_score = _abt.get("current_score")
+            _abt_alert = _abt.get("current_alert_level", "No Alert")
+            _abt_interp = _abt.get("interpretation", "")
+
+            _ab1, _ab2, _ab3 = st.columns(3)
+            _ab1.metric("Current Score", f"{_abt_score:.1f}" if _abt_score else "—")
+            _ab2.metric("Current Alert Level", _abt_alert)
+            _ab3.metric("Best Threshold (F1)", f"{_abt_best}" if _abt_best else "—",
+                        help=f"F1 = {_abt_f1:.2f}" if _abt_f1 else None)
+
+            if _abt_interp:
+                st.info(_abt_interp)
+
+            _abt_df = _abt.get("results_df")
+            if _abt_df is not None and not _abt_df.empty:
+                _abt_display = _abt_df.copy()
+                for _col in ["precision", "recall", "f1", "false_alarm_rate"]:
+                    if _col in _abt_display.columns:
+                        _abt_display[_col] = _abt_display[_col].apply(
+                            lambda x: f"{x:.1%}" if x is not None and not pd.isna(x) else "—"
+                        )
+                for _col in ["avg_hy_change_30d", "avg_sp500_change_30d"]:
+                    if _col in _abt_display.columns:
+                        _abt_display[_col] = _abt_display[_col].apply(
+                            lambda x: f"{x:+.1f}" if x is not None and not pd.isna(x) else "—"
+                        )
+                st.dataframe(_abt_display, use_container_width=True, hide_index=True)
+
+                # F1 vs threshold chart
+                _valid_f1 = [(r["threshold"], r["f1"]) for r in _abt.get("results", [])
+                             if r.get("f1") is not None and not pd.isna(r["f1"])]
+                if _valid_f1:
+                    _f1_thresholds, _f1_vals = zip(*_valid_f1)
+                    _f1_fig = _go_abt.Figure()
+                    _f1_fig.add_trace(_go_abt.Bar(
+                        x=list(_f1_thresholds), y=list(_f1_vals),
+                        name="F1 Score",
+                        marker_color=["#27ae60" if t == _abt_best else "#3498db" for t in _f1_thresholds],
+                        hovertemplate="Threshold: %{x}<br>F1: %{y:.2f}<extra></extra>",
+                    ))
+                    _f1_fig.update_layout(
+                        height=250, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                        xaxis=dict(title="Alert Threshold", color="#6b7280"),
+                        yaxis=dict(title="F1 Score", color="#6b7280",
+                                   showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+                    )
+                    st.plotly_chart(_f1_fig, use_container_width=True)
+        else:
+            st.info("Alert backtest unavailable — requires composite score, spread/SP500 data, and ≥504 rows.")
+    except Exception as _abt_e:
+        st.caption(f"Alert backtest unavailable: {_abt_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 35: PCA Signal Decomposition
+# =============================================================================
+with _analytics_sub35:
+    import plotly.graph_objects as _go_pca
+    st.header("PCA Signal Decomposition")
+    st.markdown(
+        "Principal Component Analysis on the 7 composite sub-scores. "
+        "Shows how much of today's composite risk level is driven by each latent factor "
+        "(rates-driven, credit-driven, macro-driven). "
+        "Implemented from scratch using numpy eigendecomposition — no sklearn."
+    )
+    try:
+        _pca = load_pca_analysis(df)
+        if _pca.get("available"):
+            _pca_result = _pca.get("pca", {})
+            _pca_current = _pca.get("current", {})
+            _pca_rolling = _pca.get("rolling_factor_scores")
+
+            _pca_names = _pca_result.get("component_names", [])
+            _pca_evr = _pca_result.get("explained_variance_ratio", [])
+            _pca_cum = _pca_result.get("cumulative_variance", 0)
+
+            # Variance explained
+            _pca_c1, _pca_c2, _pca_c3, _pca_c4 = st.columns(4)
+            for _pi, (_pn, _pe) in enumerate(zip(_pca_names, _pca_evr)):
+                [_pca_c1, _pca_c2, _pca_c3][_pi].metric(_pn, f"{_pe:.1%}")
+            _pca_c4.metric("Cumulative Variance", f"{_pca_cum:.1%}")
+
+            # Current decomposition
+            _pca_dom = _pca_current.get("dominant_factor", "—")
+            _pca_interp = _pca_current.get("interpretation", "")
+            if _pca_interp:
+                st.info(_pca_interp)
+
+            _pca_contribs = _pca_current.get("factor_contributions", [])
+            if _pca_contribs:
+                _pca_contrib_df = pd.DataFrame(_pca_contribs)
+                if "pct_contribution" in _pca_contrib_df.columns:
+                    _pca_contrib_df["pct_contribution"] = _pca_contrib_df["pct_contribution"].apply(
+                        lambda x: f"{x:.1f}%" if x is not None else "—"
+                    )
+                if "score" in _pca_contrib_df.columns:
+                    _pca_contrib_df["score"] = _pca_contrib_df["score"].apply(
+                        lambda x: f"{x:.2f}" if x is not None else "—"
+                    )
+                st.dataframe(_pca_contrib_df, use_container_width=True, hide_index=True)
+
+            # Loadings heatmap
+            _pca_loadings = _pca_result.get("loadings")
+            if _pca_loadings is not None and not _pca_loadings.empty:
+                with st.expander("Factor Loadings Heatmap"):
+                    _load_fig = _go_pca.Figure(data=_go_pca.Heatmap(
+                        z=_pca_loadings.values.tolist(),
+                        x=list(_pca_loadings.columns),
+                        y=[r.replace("_score_smooth", "").replace("_", " ").title()
+                           for r in _pca_loadings.index],
+                        colorscale="RdBu", zmid=0,
+                        hovertemplate="%{y}<br>%{x}: %{z:.3f}<extra></extra>",
+                    ))
+                    _load_fig.update_layout(
+                        height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    )
+                    st.plotly_chart(_load_fig, use_container_width=True)
+
+            # Rolling factor scores
+            if _pca_rolling is not None and not _pca_rolling.empty:
+                with st.expander("Rolling Factor Scores (2yr)"):
+                    _roll_fig = _go_pca.Figure()
+                    _pca_colors = ["#3498db", "#e74c3c", "#27ae60"]
+                    for _ci, _col in enumerate(_pca_rolling.columns):
+                        _roll_fig.add_trace(_go_pca.Scatter(
+                            x=_pca_rolling.index, y=_pca_rolling[_col],
+                            name=_col, mode="lines",
+                            line=dict(color=_pca_colors[_ci % 3], width=1.5),
+                            hovertemplate=f"{_col}: %{{y:.2f}}<extra></extra>",
+                        ))
+                    _roll_fig.update_layout(
+                        height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    )
+                    st.plotly_chart(_roll_fig, use_container_width=True)
+        else:
+            st.info("PCA unavailable — requires ≥3 sub-score columns and ≥252 rows of data.")
+    except Exception as _pca_e:
+        st.caption(f"PCA decomposition unavailable: {_pca_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 36: Regime Transition Forecast
+# =============================================================================
+with _analytics_sub36:
+    import plotly.graph_objects as _go_rf
+    st.header("Regime Transition Forecast")
+    st.markdown(
+        "Uses a Markov chain transition matrix estimated from weekly regime observations to project "
+        "regime probabilities 1, 4, 8, and 12 weeks forward. "
+        "The cone shows the most probable regime path and uncertainty."
+    )
+    try:
+        _rf = load_regime_forecast(df)
+        if _rf.get("available"):
+            _rf_regime = _rf.get("current_regime", "—")
+            _rf_stability = _rf.get("regime_stability", 0)
+            _rf_change = _rf.get("expected_regime_change", False)
+            _rf_ntrans = _rf.get("n_transitions_observed", 0)
+            _rf_interp = _rf.get("interpretation", "")
+
+            _rf_c1, _rf_c2, _rf_c3, _rf_c4 = st.columns(4)
+            _rf_c1.metric("Current Regime", _rf_regime)
+            _rf_c2.metric("Stay Probability", f"{_rf_stability:.0%}",
+                          help="P(remain in current regime next week)")
+            _rf_c3.metric("Regime Change Expected?", "Yes" if _rf_change else "No",
+                          delta="4-week horizon")
+            _rf_c4.metric("Transitions Observed", _rf_ntrans)
+
+            if _rf_interp:
+                st.info(_rf_interp)
+
+            # Forecast probability table
+            _rf_forecast = _rf.get("forecast")
+            if _rf_forecast is not None and not _rf_forecast.empty:
+                _rf_display = _rf_forecast.copy()
+                for _col in _rf_display.columns:
+                    _rf_display[_col] = _rf_display[_col].apply(lambda x: f"{x:.0%}")
+                _rf_display.index.name = "Week"
+                st.dataframe(_rf_display, use_container_width=True)
+
+                # Stacked area chart
+                _rf_raw = _rf.get("forecast")
+                if _rf_raw is not None:
+                    _rf_fig = _go_rf.Figure()
+                    _rf_regime_colors = {
+                        "Risk-On": "#27ae60", "Neutral": "#3498db",
+                        "Caution": "#f39c12", "Risk-Off": "#e74c3c",
+                    }
+                    for _rc in _rf_raw.columns:
+                        _rf_fig.add_trace(_go_rf.Scatter(
+                            x=list(_rf_raw.index), y=list(_rf_raw[_rc]),
+                            name=_rc, mode="lines+markers", stackgroup="one",
+                            line=dict(color=_rf_regime_colors.get(_rc, "#9aa0aa"), width=2),
+                            hovertemplate=f"{_rc}: %{{y:.0%}}<extra></extra>",
+                        ))
+                    _rf_fig.update_layout(
+                        height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                        xaxis=dict(title="Weeks Forward", color="#6b7280", showgrid=False),
+                        yaxis=dict(title="Probability", color="#6b7280", tickformat=".0%",
+                                   showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+                        legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    )
+                    st.plotly_chart(_rf_fig, use_container_width=True)
+
+            # Transition matrix
+            _rf_tmat = _rf.get("transition_matrix")
+            if _rf_tmat is not None:
+                with st.expander("Transition Matrix"):
+                    _tmat_display = _rf_tmat.copy()
+                    for _col in _tmat_display.columns:
+                        _tmat_display[_col] = _tmat_display[_col].apply(lambda x: f"{x:.0%}")
+                    st.dataframe(_tmat_display, use_container_width=True)
+                    st.caption("Row = current regime · Column = next week's regime · Sampled weekly (every 5 trading days)")
+
+            _rf_path = _rf.get("most_likely_path", [])
+            if _rf_path:
+                st.caption(f"Most likely path: {' → '.join(_rf_path)}")
+        else:
+            st.info("Regime forecast unavailable — requires ≥100 rows with regime labels and ≥3 regimes observed.")
+    except Exception as _rf_e:
+        st.caption(f"Regime forecast unavailable: {_rf_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 37: Custom Composite Builder
+# =============================================================================
+with _analytics_sub37:
+    import plotly.graph_objects as _go_cc
+    st.header("Custom Composite Builder")
+    st.markdown(
+        "Adjust the weight of each sub-signal and see how the custom composite score compares "
+        "to the default equal-weight composite, including backtest Sharpe ratio."
+    )
+    try:
+        _cc_default = load_custom_composite(df)
+        if _cc_default.get("available"):
+            _cc_labels = _cc_default.get("signal_labels", [])
+            _cc_default_weights = _cc_default.get("weights_used", {})
+
+            st.subheader("Adjust Signal Weights")
+            st.caption("Weights are automatically normalized to sum to 1.0")
+            _cc_weight_cols = st.columns(min(len(_cc_labels), 4))
+            _cc_user_weights = {}
+            for _ci, _sig in enumerate(_cc_labels):
+                _col_key = _sig["col"]
+                _default_w = _sig.get("default_weight", 1/7)
+                _user_w = _cc_weight_cols[_ci % 4].slider(
+                    _sig["label"],
+                    min_value=0.0, max_value=1.0,
+                    value=float(_default_w),
+                    step=0.05,
+                    key=f"cc_weight_{_col_key}",
+                )
+                _cc_user_weights[_col_key] = _user_w
+
+            # Normalize
+            _cc_total = sum(_cc_user_weights.values())
+            if _cc_total > 0:
+                _cc_normed = {k: v / _cc_total for k, v in _cc_user_weights.items()}
+            else:
+                _cc_normed = _cc_default_weights
+
+            # Recompute with custom weights (not cached — responds to sliders)
+            try:
+                _cc_custom = run_custom_composite_analysis(df, weights=_cc_normed)
+            except Exception:
+                _cc_custom = _cc_default
+
+            if _cc_custom.get("available"):
+                _cc_comp = _cc_custom.get("comparison", {})
+                _cc_cust_curr = _cc_comp.get("custom_current")
+                _cc_def_curr = _cc_comp.get("default_current")
+                _cc_cust_regime = _cc_comp.get("custom_regime", "—")
+                _cc_def_regime = _cc_comp.get("default_regime", "—")
+                _cc_cust_bt = _cc_comp.get("custom_backtest", {})
+                _cc_def_bt = _cc_comp.get("default_backtest", {})
+                _cc_corr = _cc_comp.get("correlation")
+                _cc_sharpe_imp = _cc_comp.get("sharpe_improvement")
+
+                _ccc1, _ccc2, _ccc3, _ccc4 = st.columns(4)
+                _ccc1.metric("Custom Score", f"{_cc_cust_curr:.1f}" if _cc_cust_curr else "—",
+                             delta=f"{_cc_cust_curr - _cc_def_curr:+.1f} vs default" if _cc_cust_curr and _cc_def_curr else None)
+                _ccc2.metric("Custom Regime", _cc_cust_regime)
+                _ccc3.metric("Sharpe Improvement",
+                             f"{_cc_sharpe_imp:+.2f}" if _cc_sharpe_imp is not None else "—",
+                             help="Custom Sharpe minus default Sharpe")
+                _ccc4.metric("Correlation vs Default",
+                             f"{_cc_corr:.2f}" if _cc_corr is not None else "—")
+
+                # Comparison table
+                _cc_bt_rows = [
+                    {"Metric": "Sharpe Ratio",
+                     "Custom": f"{_cc_cust_bt.get('sharpe', 0):.2f}" if _cc_cust_bt.get('sharpe') is not None else "—",
+                     "Default": f"{_cc_def_bt.get('sharpe', 0):.2f}" if _cc_def_bt.get('sharpe') is not None else "—"},
+                    {"Metric": "Hit Rate",
+                     "Custom": f"{_cc_cust_bt.get('hit_rate', 0):.1%}" if _cc_cust_bt.get('hit_rate') is not None else "—",
+                     "Default": f"{_cc_def_bt.get('hit_rate', 0):.1%}" if _cc_def_bt.get('hit_rate') is not None else "—"},
+                    {"Metric": "Total Return",
+                     "Custom": f"{_cc_cust_bt.get('total_return', 0):.1%}" if _cc_cust_bt.get('total_return') is not None else "—",
+                     "Default": f"{_cc_def_bt.get('total_return', 0):.1%}" if _cc_def_bt.get('total_return') is not None else "—"},
+                    {"Metric": "Periods",
+                     "Custom": str(_cc_cust_bt.get('n_periods', 0)),
+                     "Default": str(_cc_def_bt.get('n_periods', 0))},
+                ]
+                st.dataframe(pd.DataFrame(_cc_bt_rows), use_container_width=True, hide_index=True)
+
+                # Time series comparison
+                _cc_cust_series = _cc_comp.get("custom_composite")
+                _cc_def_series = _cc_comp.get("default_composite")
+                if _cc_cust_series is not None and _cc_def_series is not None:
+                    _cc_fig = _go_cc.Figure()
+                    _cc_fig.add_trace(_go_cc.Scatter(
+                        x=_cc_cust_series.index, y=_cc_cust_series.values,
+                        name="Custom Composite", mode="lines",
+                        line=dict(color="#3498db", width=2),
+                        hovertemplate="Custom: %{y:.1f}<extra></extra>",
+                    ))
+                    _cc_fig.add_trace(_go_cc.Scatter(
+                        x=_cc_def_series.index, y=_cc_def_series.values,
+                        name="Default (equal-weight)", mode="lines",
+                        line=dict(color="#9aa0aa", width=1.5, dash="dot"),
+                        hovertemplate="Default: %{y:.1f}<extra></extra>",
+                    ))
+                    _cc_fig.update_layout(
+                        height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                        yaxis=dict(title="Composite Score (0–100)", showgrid=True,
+                                   gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    )
+                    st.plotly_chart(_cc_fig, use_container_width=True)
+                    st.caption("Last 504 trading days (2 years) · Backtest uses HY spread direction as signal target")
+        else:
+            st.info("Custom composite unavailable — requires ≥3 sub-signal columns and ≥252 rows.")
+    except Exception as _cc_e:
+        st.caption(f"Custom composite unavailable: {_cc_e}")
 
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
