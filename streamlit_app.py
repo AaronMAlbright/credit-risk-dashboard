@@ -2978,7 +2978,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab_credit:  # Credit Markets — 24 sub-tabs
+with tab_credit:  # Credit Markets — 25 sub-tabs
     (_analytics_sub19, _analytics_sub20, _analytics_sub21,
      _analytics_sub24, _analytics_sub27, _analytics_sub28,
      _analytics_sub29, _analytics_sub30, _analytics_sub31,
@@ -2987,7 +2987,8 @@ with tab_credit:  # Credit Markets — 24 sub-tabs
      _analytics_sub73, _analytics_sub77, _analytics_sub78,
      _analytics_sub87, _analytics_sub89,
      _analytics_sub100, _analytics_sub102,
-     _analytics_sub105, _analytics_sub110) = st.tabs([
+     _analytics_sub105, _analytics_sub110,
+     _analytics_sub117) = st.tabs([
         "Defaults", "Fwd Sim", "CDX Proxy",
         "Default Cycle", "Spread Vol", "Fallen Angel",
         "Global Credit", "Corp Leverage", "Seasonality",
@@ -2997,9 +2998,10 @@ with tab_credit:  # Credit Markets — 24 sub-tabs
         "Credit Momentum", "Quality Curve",
         "Spread Pctile", "Credit Cycle",
         "HY Momentum", "Credit Regime",
+        "Credit Risk Score",
     ])
 
-with tab_macro:  # Rates & Macro — 28 sub-tabs
+with tab_macro:  # Rates & Macro — 30 sub-tabs
     (_analytics_sub23, _analytics_sub38, _analytics_sub41,
      _analytics_sub45, _analytics_sub53, _analytics_sub54,
      _analytics_sub57, _analytics_sub58, _analytics_sub63,
@@ -3010,7 +3012,8 @@ with tab_macro:  # Rates & Macro — 28 sub-tabs
      _analytics_sub90, _analytics_sub92, _analytics_sub93,
      _analytics_sub103,
      _analytics_sub104, _analytics_sub106, _analytics_sub109,
-     _analytics_sub111, _analytics_sub114) = st.tabs([
+     _analytics_sub111, _analytics_sub114,
+     _analytics_sub118, _analytics_sub121) = st.tabs([
         "Regime Returns", "X-Asset Mom", "Macro Surprise",
         "Inflation Regime", "Fed Liquidity", "G4 Divergence",
         "Swap Spreads", "XCcy Basis", "FCI",
@@ -3023,9 +3026,10 @@ with tab_macro:  # Rates & Macro — 28 sub-tabs
         "Curve Velocity",
         "Curve Regime", "Real Yield Z", "Unemp Momentum",
         "NFCI Trend", "Labor Warning",
+        "Treasury Score", "Spread Changes",
     ])
 
-with tab_risk:  # Risk Monitors — 30 sub-tabs
+with tab_risk:  # Risk Monitors — 31 sub-tabs
     (_analytics_sub6, _analytics_sub7, _analytics_sub12,
      _analytics_sub39, _analytics_sub44, _analytics_sub46,
      _analytics_sub47, _analytics_sub52, _analytics_sub55,
@@ -3036,7 +3040,8 @@ with tab_risk:  # Risk Monitors — 30 sub-tabs
      _analytics_sub86, _analytics_sub88,
      _analytics_sub95, _analytics_sub96, _analytics_sub97,
      _analytics_sub98, _analytics_sub99,
-     _analytics_sub107, _analytics_sub112, _analytics_sub113) = st.tabs([
+     _analytics_sub107, _analytics_sub112, _analytics_sub113,
+     _analytics_sub119) = st.tabs([
         "Tail Risk", "Stress", "Contagion",
         "Vol Regime", "Deleveraging", "Sector Stress",
         "Put/Call", "Tail Dependency", "Port Stress",
@@ -3048,23 +3053,26 @@ with tab_risk:  # Risk Monitors — 30 sub-tabs
         "Mkt Internals", "Vol-Credit", "Drawdown",
         "EQ-Credit Div", "Shock Monitor",
         "Liquidity Score", "VIX Momentum", "FX/Commodity",
+        "Enh Funding",
     ])
 
-with tab_siglab:  # Signal Lab — 17 sub-tabs
+with tab_siglab:  # Signal Lab — 20 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3,
      _analytics_sub4, _analytics_sub5, _analytics_sub9,
      _analytics_sub18, _analytics_sub22, _analytics_sub26,
      _analytics_sub35, _analytics_sub37, _analytics_sub50,
      _analytics_sub91, _analytics_sub94,
      _analytics_sub101, _analytics_sub108,
-     _analytics_sub115) = st.tabs([
+     _analytics_sub115, _analytics_sub116,
+     _analytics_sub120) = st.tabs([
         "Validation", "Attribution", "Timeline",
         "Sig Decay", "Ortho", "Factors",
         "Granger", "EQ-Credit Corr", "Corr Heatmap",
         "PCA", "Composite", "Signal Move",
         "Data Diagnostics", "Score Decomp",
         "Score Velocity", "X-Asset Div",
-        "Complacency",
+        "Complacency", "Macro Risk Score",
+        "Mean Reversion",
     ])
 
 with tab_regime:  # Regime — 12 sub-tabs
@@ -16768,3 +16776,689 @@ with _analytics_sub115:
             st.info("Complacency score not found — run the full scoring pipeline.")
     except Exception as _e115:
         st.caption(f"Complacency score: {_e115}")
+
+# =============================================================================
+# BATCH 15 ANALYTICS — sub116–121
+# sub116  Macro Risk Sub-Score            → tab_siglab
+# sub117  Credit Market Risk Sub-Score    → tab_credit
+# sub118  Treasury Stress Sub-Score       → tab_macro
+# sub119  Enhanced Funding Sub-Score      → tab_risk
+# sub120  Mean Reversion Sub-Score        → tab_siglab
+# sub121  Spread Change Deep Dive         → tab_macro
+# =============================================================================
+
+with _analytics_sub116:
+    import plotly.graph_objects as _go116
+    from src.regime_attribution import COMPOSITE_WEIGHTS as _CW116, DISPLAY_NAMES as _DN116
+    st.header("Macro Risk Sub-Score")
+    st.markdown(
+        "The **macro risk sub-score** (15% weight) is the broadest recession-risk component in the composite. "
+        "It synthesises: the **yield curve spread** (flattening = restrictive policy), **unemployment level** "
+        "and **90d change**, the **NFCI** level and trend, and the **Sahm-like** trigger. "
+        "It is primarily a *coincident-to-lagging* signal — it confirms deterioration already visible in "
+        "credit and treasury scores — but its 15% weight means it can push the composite through key "
+        "thresholds when the other signals are borderline."
+    )
+    try:
+        _mr116_col = "macro_risk_score_smooth"
+        _mr116_raw = "macro_risk_score"
+        _mr_col = _mr116_col if _mr116_col in df.columns else (_mr116_raw if _mr116_raw in df.columns else None)
+        if _mr_col:
+            _mr116 = df[[_mr_col]].copy()
+            for _c in ["hy_spread", "composite_risk_score_smooth", "nfci", "unemployment"]:
+                if _c in df.columns:
+                    _mr116[_c] = df[_c]
+            _mr116.index = pd.to_datetime(_mr116.index)
+            _cur_mr = float(latest.get(_mr_col, float("nan")))
+            _mr_pctile = (df[_mr_col].dropna() < _cur_mr).mean() * 100 if pd.notna(_cur_mr) else float("nan")
+            _mr_vel = float(df[_mr_col].diff(21).iloc[-1]) if df[_mr_col].notna().any() else float("nan")
+            _mr_contrib = _cur_mr * _CW116.get("macro_risk", 0.15) if pd.notna(_cur_mr) else float("nan")
+
+            _ma116, _mb116, _mc116, _md116 = st.columns(4)
+            _ma116.metric("Macro Risk Score", f"{_cur_mr:.0f}/100" if pd.notna(_cur_mr) else "—")
+            _mb116.metric("Composite Contrib", f"{_mr_contrib:.1f}pts" if pd.notna(_mr_contrib) else "—",
+                          help=f"Score × {_CW116.get('macro_risk', 0.15):.0%} weight")
+            _mc116.metric("Historical Pctile", f"{_mr_pctile:.0f}th" if pd.notna(_mr_pctile) else "—")
+            _md116.metric("21d Velocity", f"{_mr_vel:+.1f}pts" if pd.notna(_mr_vel) else "—",
+                          delta_color="inverse")
+
+            if pd.notna(_cur_mr) and _cur_mr >= 65:
+                st.error("Macro risk score elevated — recession indicators active across multiple inputs. "
+                         "This score's 15% weight is now materially pushing the composite toward High Risk territory.")
+
+            # Score time series with driver input overlay
+            _mr_tail = _mr116.tail(756)
+            _fig116a = _go116.Figure()
+            _fig116a.add_hrect(y0=65, y1=105, fillcolor="rgba(239,68,68,0.07)", line_width=0)
+            _fig116a.add_hrect(y0=45, y1=65, fillcolor="rgba(245,158,11,0.05)", line_width=0)
+            _fig116a.add_trace(_go116.Scatter(
+                x=_mr_tail.index, y=_mr_tail[_mr_col],
+                fill="tozeroy", fillcolor="rgba(79,142,247,0.1)",
+                line=dict(color="#4f8ef7", width=2), name="Macro Risk Score",
+                hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.0f}<extra></extra>",
+            ))
+            if "composite_risk_score_smooth" in _mr_tail.columns:
+                _fig116a.add_trace(_go116.Scatter(
+                    x=_mr_tail.index, y=_mr_tail["composite_risk_score_smooth"],
+                    line=dict(color="#e2e8f0", width=1, dash="dot"), name="Composite",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Composite: %{y:.0f}<extra></extra>",
+                ))
+            _fig116a.add_hline(y=45, line=dict(color="rgba(245,158,11,0.4)", dash="dot", width=1))
+            _fig116a.add_hline(y=65, line=dict(color="rgba(239,68,68,0.4)", dash="dot", width=1))
+            _fig116a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Macro Risk Sub-Score vs Composite (3Y)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Score (0–100)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig116a, use_container_width=True)
+
+            # NFCI + Unemployment dual-axis (the two primary drivers)
+            if "nfci" in _mr_tail.columns and "unemployment" in _mr_tail.columns:
+                _fig116b = _go116.Figure()
+                _fig116b.add_trace(_go116.Scatter(
+                    x=_mr_tail.index, y=_mr_tail["nfci"],
+                    name="NFCI", line=dict(color="#f59e0b", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>NFCI: %{y:.3f}<extra></extra>",
+                ))
+                _fig116b.add_trace(_go116.Scatter(
+                    x=_mr_tail.index, y=_mr_tail["unemployment"],
+                    name="Unemployment (%)", line=dict(color="#a78bfa", width=1.5, dash="dot"),
+                    yaxis="y2",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Unemp: %{y:.1f}%<extra></extra>",
+                ))
+                _fig116b.add_hline(y=0, line=dict(color="rgba(255,255,255,0.2)", width=1))
+                _fig116b.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=50),
+                    title=dict(text="Key Macro Risk Drivers", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#f59e0b", title="NFCI"),
+                    yaxis2=dict(overlaying="y", side="right", color="#a78bfa", title="Unemp (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+                                orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig116b, use_container_width=True)
+
+            st.markdown("**Macro Risk Score — Driver Breakdown**")
+            st.table(pd.DataFrame([
+                {"Input": "2s10s Spread", "Weight in Score": "Up to 30pts", "Signal Direction": "Low/negative spread → higher score"},
+                {"Input": "Unemployment Level", "Weight in Score": "Up to 30pts", "Signal Direction": ">6% → 30pts; 5–6% → 15pts"},
+                {"Input": "Unemployment Δ90d", "Weight in Score": "Up to 25pts", "Signal Direction": "Rising → proportional addition"},
+                {"Input": "Sahm-Like", "Weight in Score": "Up to 30pts", "Signal Direction": ">0.5pp → 30pts; >0.3pp → 15pts"},
+                {"Input": "NFCI Level", "Weight in Score": "Up to 35pts", "Signal Direction": "Positive NFCI → proportional"},
+                {"Input": "NFCI Δ90d", "Weight in Score": "Up to 20pts", "Signal Direction": "Trend tightening → add pts"},
+            ]))
+        else:
+            st.info("Macro risk score not found — run the full scoring pipeline.")
+    except Exception as _e116:
+        st.caption(f"Macro risk score: {_e116}")
+
+with _analytics_sub117:
+    import plotly.graph_objects as _go117
+    from src.regime_attribution import COMPOSITE_WEIGHTS as _CW117, DISPLAY_NAMES as _DN117
+    st.header("Credit Market Risk Sub-Score")
+    st.markdown(
+        "The **credit market risk sub-score** (20% weight — largest single weight) is the most *directly* "
+        "credit-native component of the composite. Its drivers are: **HY spread level and 30d/90d change**, "
+        "**credit impulse** (second derivative of spread change), **VIX level and 30d change**, "
+        "**credit-equity divergence**, and **vol-credit mismatch**. Because it incorporates both level and "
+        "momentum, it can be elevated even when absolute spreads are moderate if they are rising rapidly. "
+        "When this score leads the composite higher, it signals a *credit-specific* deterioration "
+        "rather than broad macro stress."
+    )
+    try:
+        _cmr117_col = "credit_market_risk_score_smooth"
+        _cmr117_raw = "credit_market_risk_score"
+        _cmr_col = _cmr117_col if _cmr117_col in df.columns else (_cmr117_raw if _cmr117_raw in df.columns else None)
+        if _cmr_col:
+            _cmr117 = df[[_cmr_col]].copy()
+            for _c in ["hy_spread", "composite_risk_score_smooth", "hy_change_30d", "vix"]:
+                if _c in df.columns:
+                    _cmr117[_c] = df[_c]
+            _cmr117.index = pd.to_datetime(_cmr117.index)
+            _cur_cmr = float(latest.get(_cmr_col, float("nan")))
+            _cmr_pctile = (df[_cmr_col].dropna() < _cur_cmr).mean() * 100 if pd.notna(_cur_cmr) else float("nan")
+            _cmr_vel = float(df[_cmr_col].diff(21).iloc[-1]) if df[_cmr_col].notna().any() else float("nan")
+            _cmr_contrib = _cur_cmr * _CW117.get("credit_risk", 0.20) if pd.notna(_cur_cmr) else float("nan")
+
+            _ca117, _cb117, _cc117, _cd117 = st.columns(4)
+            _ca117.metric("Credit Risk Score", f"{_cur_cmr:.0f}/100" if pd.notna(_cur_cmr) else "—")
+            _cb117.metric("Composite Contrib", f"{_cmr_contrib:.1f}pts" if pd.notna(_cmr_contrib) else "—",
+                          help=f"Score × {_CW117.get('credit_risk', 0.20):.0%} weight — highest single weight")
+            _cc117.metric("Historical Pctile", f"{_cmr_pctile:.0f}th" if pd.notna(_cmr_pctile) else "—")
+            _cd117.metric("21d Velocity", f"{_cmr_vel:+.1f}pts" if pd.notna(_cmr_vel) else "—",
+                          delta_color="inverse")
+
+            if pd.notna(_cur_cmr) and _cur_cmr >= 65:
+                st.error("Credit market risk score at high levels — this is the highest-weight sub-score; "
+                         "composite is likely in elevated or high risk territory.")
+
+            _cmr_tail = _cmr117.tail(756)
+            _fig117a = _go117.Figure()
+            _fig117a.add_hrect(y0=65, y1=105, fillcolor="rgba(239,68,68,0.07)", line_width=0)
+            _fig117a.add_hrect(y0=45, y1=65, fillcolor="rgba(245,158,11,0.05)", line_width=0)
+            _fig117a.add_trace(_go117.Scatter(
+                x=_cmr_tail.index, y=_cmr_tail[_cmr_col],
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.1)",
+                line=dict(color="#ef4444", width=2), name="Credit Risk Score",
+                hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.0f}<extra></extra>",
+            ))
+            if "composite_risk_score_smooth" in _cmr_tail.columns:
+                _fig117a.add_trace(_go117.Scatter(
+                    x=_cmr_tail.index, y=_cmr_tail["composite_risk_score_smooth"],
+                    line=dict(color="#e2e8f0", width=1, dash="dot"), name="Composite",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Composite: %{y:.0f}<extra></extra>",
+                ))
+            _fig117a.add_hline(y=45, line=dict(color="rgba(245,158,11,0.4)", dash="dot", width=1))
+            _fig117a.add_hline(y=65, line=dict(color="rgba(239,68,68,0.4)", dash="dot", width=1))
+            _fig117a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Credit Market Risk Sub-Score vs Composite (3Y)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Score (0–100)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig117a, use_container_width=True)
+
+            # HY spread + VIX dual-axis (primary drivers)
+            if "hy_spread" in _cmr_tail.columns and "vix" in _cmr_tail.columns:
+                _fig117b = _go117.Figure()
+                _fig117b.add_trace(_go117.Scatter(
+                    x=_cmr_tail.index, y=_cmr_tail["hy_spread"],
+                    name="HY Spread (bps)", line=dict(color="#f59e0b", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY: %{y:.0f}bps<extra></extra>",
+                ))
+                _fig117b.add_trace(_go117.Scatter(
+                    x=_cmr_tail.index, y=_cmr_tail["vix"],
+                    name="VIX", line=dict(color="#a78bfa", width=1.5, dash="dot"),
+                    yaxis="y2",
+                    hovertemplate="%{x|%Y-%m-%d}<br>VIX: %{y:.1f}<extra></extra>",
+                ))
+                _fig117b.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=50),
+                    title=dict(text="Primary Drivers: HY Spread + VIX", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#f59e0b", title="HY (bps)"),
+                    yaxis2=dict(overlaying="y", side="right", color="#a78bfa", title="VIX"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+                                orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig117b, use_container_width=True)
+
+            st.markdown("**Credit Market Risk Score — Driver Breakdown**")
+            st.table(pd.DataFrame([
+                {"Input": "HY Spread Level", "Pts": "Up to 35", "Trigger": ">600bps → 35pts; 400–600 → 22pts; 350–400 → 12pts"},
+                {"Input": "HY Spread Δ30d", "Pts": "Up to 30", "Trigger": ">50bps → 30pts; 25–50bps → 20pts"},
+                {"Input": "HY Spread Δ90d", "Pts": "Up to 25", "Trigger": "Sustained widening adds points"},
+                {"Input": "Credit Impulse", "Pts": "Up to 15", "Trigger": "Acceleration in widening rate"},
+                {"Input": "VIX + VIX Δ30d", "Pts": "Up to 20", "Trigger": "VIX>25 or rapid VIX rise"},
+                {"Input": "Credit-Equity Div / Vol Mismatch", "Pts": "Up to 10", "Trigger": "Divergence/mismatch detected"},
+            ]))
+        else:
+            st.info("Credit market risk score not found — run the full scoring pipeline.")
+    except Exception as _e117:
+        st.caption(f"Credit market risk score: {_e117}")
+
+with _analytics_sub118:
+    import plotly.graph_objects as _go118
+    from src.regime_attribution import COMPOSITE_WEIGHTS as _CW118
+    st.header("Treasury Stress Sub-Score")
+    st.markdown(
+        "The **treasury stress sub-score** (20% weight — equal to the largest) captures rate-driven credit "
+        "risk: how hard the risk-free rate is pressing on credit valuations. Its three inputs are the "
+        "**real yield z-score** (are real rates sharply above their own recent average?), the "
+        "**90d change in real yields** (velocity of rate shock), and the **curve steepening velocity** "
+        "(bear steepening = long rates rising fast = duration compression). It is the strongest *leading* "
+        "sub-score in the composite, with historical lead times of 6–12 weeks ahead of spread widening."
+    )
+    try:
+        _ts118_col = "treasury_stress_score_smooth"
+        _ts118_raw = "treasury_stress_score"
+        _ts_col = _ts118_col if _ts118_col in df.columns else (_ts118_raw if _ts118_raw in df.columns else None)
+        if _ts_col:
+            _ts118 = df[[_ts_col]].copy()
+            for _c in ["real_yield_proxy", "real_yield_z", "curve_steepening_velocity_90d",
+                        "composite_risk_score_smooth", "hy_spread"]:
+                if _c in df.columns:
+                    _ts118[_c] = df[_c]
+            _ts118.index = pd.to_datetime(_ts118.index)
+            _cur_ts = float(latest.get(_ts_col, float("nan")))
+            _ts_pctile = (df[_ts_col].dropna() < _cur_ts).mean() * 100 if pd.notna(_cur_ts) else float("nan")
+            _ts_vel = float(df[_ts_col].diff(21).iloc[-1]) if df[_ts_col].notna().any() else float("nan")
+            _ts_contrib = _cur_ts * _CW118.get("treasury", 0.20) if pd.notna(_cur_ts) else float("nan")
+
+            _ta118, _tb118, _tc118, _td118 = st.columns(4)
+            _ta118.metric("Treasury Stress Score", f"{_cur_ts:.0f}/100" if pd.notna(_cur_ts) else "—")
+            _tb118.metric("Composite Contrib", f"{_ts_contrib:.1f}pts" if pd.notna(_ts_contrib) else "—",
+                          help="Score × 20% weight — strongest leading signal")
+            _tc118.metric("Historical Pctile", f"{_ts_pctile:.0f}th" if pd.notna(_ts_pctile) else "—")
+            _td118.metric("21d Velocity", f"{_ts_vel:+.1f}pts" if pd.notna(_ts_vel) else "—",
+                          delta_color="inverse")
+
+            if pd.notna(_cur_ts) and _cur_ts >= 55:
+                st.warning("Treasury stress score elevated — real yields sharply above recent average "
+                           "and/or curve velocity accelerating. Historically leads HY spread widening by 6–12 weeks.")
+
+            _ts_tail = _ts118.tail(756)
+            _fig118a = _go118.Figure()
+            _fig118a.add_hrect(y0=55, y1=105, fillcolor="rgba(239,68,68,0.07)", line_width=0)
+            _fig118a.add_trace(_go118.Scatter(
+                x=_ts_tail.index, y=_ts_tail[_ts_col],
+                fill="tozeroy", fillcolor="rgba(245,158,11,0.1)",
+                line=dict(color="#f59e0b", width=2), name="Treasury Stress Score",
+                hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.0f}<extra></extra>",
+            ))
+            if "composite_risk_score_smooth" in _ts_tail.columns:
+                _fig118a.add_trace(_go118.Scatter(
+                    x=_ts_tail.index, y=_ts_tail["composite_risk_score_smooth"],
+                    line=dict(color="#e2e8f0", width=1, dash="dot"), name="Composite",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Composite: %{y:.0f}<extra></extra>",
+                ))
+            _fig118a.add_hline(y=55, line=dict(color="rgba(239,68,68,0.4)", dash="dot", width=1))
+            _fig118a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Treasury Stress Sub-Score vs Composite (3Y)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Score (0–100)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig118a, use_container_width=True)
+
+            # Real yield z + curve velocity dual-axis
+            if "real_yield_z" in _ts_tail.columns and "curve_steepening_velocity_90d" in _ts_tail.columns:
+                _fig118b = _go118.Figure()
+                _fig118b.add_trace(_go118.Scatter(
+                    x=_ts_tail.index, y=_ts_tail["real_yield_z"],
+                    name="Real Yield Z-Score", line=dict(color="#4f8ef7", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Z: %{y:+.2f}<extra></extra>",
+                ))
+                _fig118b.add_trace(_go118.Scatter(
+                    x=_ts_tail.index, y=_ts_tail["curve_steepening_velocity_90d"] * 100,
+                    name="Curve Velocity (×100)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                    yaxis="y2",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Velocity: %{y:+.0f}bps<extra></extra>",
+                ))
+                _fig118b.add_hline(y=1.5, line=dict(color="rgba(239,68,68,0.35)", dash="dot", width=1))
+                _fig118b.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                _fig118b.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=50),
+                    title=dict(text="Real Yield Z-Score and Curve Velocity", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#4f8ef7",
+                               title="Real Yield Z"),
+                    yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                title="Curve Velocity (bps)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+                                orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig118b, use_container_width=True)
+
+            st.markdown("**Treasury Stress Score — Driver Breakdown**")
+            st.table(pd.DataFrame([
+                {"Input": "Real Yield Z-Score", "Pts": "Up to 35",
+                 "Trigger": ">+1.5σ → 35pts; >+1.0σ → 20pts"},
+                {"Input": "Real Yield Δ90d", "Pts": "Up to 30",
+                 "Trigger": ">+0.5pp/qtr → 30pts; >+0.25pp → 15pts"},
+                {"Input": "Curve Steepening Velocity", "Pts": "Up to 20",
+                 "Trigger": "Bear steepening >50bps/qtr → 20pts"},
+            ]))
+        else:
+            st.info("Treasury stress score not found — run the full scoring pipeline.")
+    except Exception as _e118:
+        st.caption(f"Treasury stress score: {_e118}")
+
+with _analytics_sub119:
+    import plotly.graph_objects as _go119
+    from src.regime_attribution import COMPOSITE_WEIGHTS as _CW119
+    st.header("Enhanced Funding Stress Sub-Score")
+    st.markdown(
+        "The **enhanced funding stress sub-score** (10% weight) extends beyond the basic TED spread proxy "
+        "by combining the **NFCI**, **Adjusted NFCI (ANFCI)**, the **St. Louis FSI**, and "
+        "**initial jobless claims z-score**. ANFCI is particularly important: it strips out the contribution "
+        "of expected macro deterioration, so a high ANFCI signals *pure financial plumbing stress* — "
+        "banks and counterparties tightening credit beyond what fundamentals justify. "
+        "This score has historically led broad HY spread widening by 3–5 weeks."
+    )
+    try:
+        _ef119_col = "enhanced_funding_stress_score_smooth"
+        _ef119_raw = "enhanced_funding_stress_score"
+        _ef_col = _ef119_col if _ef119_col in df.columns else (_ef119_raw if _ef119_raw in df.columns else None)
+        if _ef_col:
+            _ef119 = df[[_ef_col]].copy()
+            for _c in ["hy_spread", "composite_risk_score_smooth", "nfci",
+                        "liquidity_regime_score_smooth"]:
+                if _c in df.columns:
+                    _ef119[_c] = df[_c]
+            _ef119.index = pd.to_datetime(_ef119.index)
+            _cur_ef = float(latest.get(_ef_col, float("nan")))
+            _ef_pctile = (df[_ef_col].dropna() < _cur_ef).mean() * 100 if pd.notna(_cur_ef) else float("nan")
+            _ef_vel = float(df[_ef_col].diff(21).iloc[-1]) if df[_ef_col].notna().any() else float("nan")
+            _ef_contrib = _cur_ef * _CW119.get("enhanced_funding", 0.10) if pd.notna(_cur_ef) else float("nan")
+
+            _ea119, _eb119, _ec119, _ed119 = st.columns(4)
+            _ea119.metric("Enh Funding Score", f"{_cur_ef:.0f}/100" if pd.notna(_cur_ef) else "—")
+            _eb119.metric("Composite Contrib", f"{_ef_contrib:.1f}pts" if pd.notna(_ef_contrib) else "—",
+                          help="Score × 10% weight — medium-horizon leading signal")
+            _ec119.metric("Historical Pctile", f"{_ef_pctile:.0f}th" if pd.notna(_ef_pctile) else "—")
+            _ed119.metric("21d Velocity", f"{_ef_vel:+.1f}pts" if pd.notna(_ef_vel) else "—",
+                          delta_color="inverse")
+
+            if pd.notna(_cur_ef) and _cur_ef >= 65:
+                st.error("Enhanced funding stress elevated — interbank and financial conditions tightening "
+                         "beyond fundamentals. This score leads credit spread widening by 3–5 weeks.")
+
+            _ef_tail = _ef119.tail(756)
+            _fig119a = _go119.Figure()
+            _fig119a.add_hrect(y0=65, y1=105, fillcolor="rgba(239,68,68,0.07)", line_width=0)
+            _fig119a.add_hrect(y0=45, y1=65, fillcolor="rgba(245,158,11,0.05)", line_width=0)
+            _fig119a.add_trace(_go119.Scatter(
+                x=_ef_tail.index, y=_ef_tail[_ef_col],
+                fill="tozeroy", fillcolor="rgba(16,185,129,0.08)",
+                line=dict(color="#10b981", width=2), name="Enh Funding Score",
+                hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.0f}<extra></extra>",
+            ))
+            if "composite_risk_score_smooth" in _ef_tail.columns:
+                _fig119a.add_trace(_go119.Scatter(
+                    x=_ef_tail.index, y=_ef_tail["composite_risk_score_smooth"],
+                    line=dict(color="#e2e8f0", width=1, dash="dot"), name="Composite",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Composite: %{y:.0f}<extra></extra>",
+                ))
+            _fig119a.add_hline(y=45, line=dict(color="rgba(245,158,11,0.4)", dash="dot", width=1))
+            _fig119a.add_hline(y=65, line=dict(color="rgba(239,68,68,0.4)", dash="dot", width=1))
+            _fig119a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Enhanced Funding Stress Sub-Score (3Y)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Score (0–100)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig119a, use_container_width=True)
+
+            # vs Liquidity score overlay (both measure plumbing stress)
+            if "liquidity_regime_score_smooth" in _ef_tail.columns:
+                _fig119b = _go119.Figure()
+                _fig119b.add_trace(_go119.Scatter(
+                    x=_ef_tail.index, y=_ef_tail[_ef_col],
+                    name="Enh Funding (10%)", line=dict(color="#10b981", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Enh Funding: %{y:.0f}<extra></extra>",
+                ))
+                _fig119b.add_trace(_go119.Scatter(
+                    x=_ef_tail.index, y=_ef_tail["liquidity_regime_score_smooth"],
+                    name="Liquidity Score (10%)", line=dict(color="#4f8ef7", width=1.5, dash="dot"),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Liquidity: %{y:.0f}<extra></extra>",
+                ))
+                _fig119b.add_hline(y=50, line=dict(color="rgba(255,255,255,0.15)", dash="dot", width=1))
+                _fig119b.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Enh Funding vs Liquidity Score — plumbing stress pair", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Score"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig119b, use_container_width=True)
+                st.caption("Both elevated simultaneously = compound plumbing stress — highest short-horizon credit risk")
+
+            st.markdown("**Enhanced Funding Score — Driver Breakdown**")
+            st.table(pd.DataFrame([
+                {"Input": "NFCI Level", "Pts": "Up to 30", "Signal": ">0.5 → 30pts; 0.2–0.5 → 20pts; 0–0.2 → 10pts"},
+                {"Input": "ANFCI (adjusted)", "Pts": "Up to 35", "Signal": "Pure financial stress beyond macro; >0.5 → 35pts"},
+                {"Input": "St. Louis FSI (STLFSI)", "Pts": "Up to 20", "Signal": ">1σ → 20pts; 0.5–1σ → 10pts"},
+                {"Input": "Initial Claims Z-Score", "Pts": "Up to 15", "Signal": "Claims spike z > 2 → 15pts; 1–2 → 8pts"},
+            ]))
+        else:
+            st.info("Enhanced funding stress score not found — run the full scoring pipeline.")
+    except Exception as _e119:
+        st.caption(f"Enhanced funding score: {_e119}")
+
+with _analytics_sub120:
+    import plotly.graph_objects as _go120
+    st.header("Mean Reversion Sub-Score (Supplemental)")
+    st.markdown(
+        "The **mean reversion score** is a supplemental signal that was assessed for the composite but "
+        "excluded because it fires *after* stress has already peaked — useful for identifying when "
+        "conditions are ripe for a spread compression bounce, not for warning of deterioration. "
+        "It combines: overall stress level (are macro or credit risk scores elevated?), "
+        "HY spread level (is HY cheap relative to history?), and short-term momentum. "
+        "When elevated, it signals that a mean-reversion trade in credit may be setting up — "
+        "spreads have widened far enough that dip-buyers historically emerge."
+    )
+    try:
+        _mv120_col = "mean_reversion_score_smooth"
+        _mv120_raw = "mean_reversion_score"
+        _mv_col = _mv120_col if _mv120_col in df.columns else (_mv120_raw if _mv120_raw in df.columns else None)
+        if _mv_col:
+            _mv120 = df[[_mv_col]].copy()
+            for _c in ["hy_spread", "composite_risk_score_smooth", "credit_market_risk_score_smooth"]:
+                if _c in df.columns:
+                    _mv120[_c] = df[_c]
+            _mv120.index = pd.to_datetime(_mv120.index)
+            _cur_mv = float(latest.get(_mv_col, float("nan")))
+            _mv_pctile = (df[_mv_col].dropna() < _cur_mv).mean() * 100 if pd.notna(_cur_mv) else float("nan")
+            _mv_vel = float(df[_mv_col].diff(21).iloc[-1]) if df[_mv_col].notna().any() else float("nan")
+
+            _ma120, _mb120, _mc120, _md120 = st.columns(4)
+            _ma120.metric("Mean Rev Score", f"{_cur_mv:.0f}/100" if pd.notna(_cur_mv) else "—",
+                          help="High = conditions ripe for spread compression / bounce")
+            _mb120.metric("Historical Pctile", f"{_mv_pctile:.0f}th" if pd.notna(_mv_pctile) else "—")
+            _mc120.metric("21d Velocity", f"{_mv_vel:+.1f}pts" if pd.notna(_mv_vel) else "—")
+            _md120.metric("Status", "Supplemental only — not in composite")
+
+            if pd.notna(_cur_mv) and _cur_mv >= 60:
+                st.info("Mean reversion score elevated — spreads may have overshot fundamentals. "
+                        "This signal historically precedes short-term credit compression as dip-buyers enter. "
+                        "Not a primary risk signal; useful for timing credit re-entry after selloffs.")
+
+            _mv_tail = _mv120.tail(756)
+            _fig120a = _go120.Figure()
+            _fig120a.add_hrect(y0=60, y1=105, fillcolor="rgba(39,174,96,0.07)", line_width=0)
+            _fig120a.add_trace(_go120.Scatter(
+                x=_mv_tail.index, y=_mv_tail[_mv_col],
+                fill="tozeroy", fillcolor="rgba(39,174,96,0.08)",
+                line=dict(color="#27ae60", width=2), name="Mean Reversion Score",
+                hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.0f}<extra></extra>",
+            ))
+            if "composite_risk_score_smooth" in _mv_tail.columns:
+                _fig120a.add_trace(_go120.Scatter(
+                    x=_mv_tail.index, y=_mv_tail["composite_risk_score_smooth"],
+                    line=dict(color="#ef4444", width=1.5, dash="dot"), name="Composite (risk)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Composite: %{y:.0f}<extra></extra>",
+                ))
+            _fig120a.add_hline(y=60, line=dict(color="rgba(39,174,96,0.4)", dash="dot", width=1))
+            _fig120a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Mean Reversion Score vs Composite Risk (3Y)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Score (0–100)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig120a, use_container_width=True)
+            st.caption("Green band = mean reversion opportunity zone (>60). "
+                       "Note: score is high *because* risk is elevated — it signals dip-buy opportunity, not safety.")
+
+            # Mean reversion vs HY spread — the timing relationship
+            if "hy_spread" in _mv_tail.columns:
+                _fig120b = _go120.Figure()
+                _fig120b.add_trace(_go120.Scatter(
+                    x=_mv_tail.index, y=_mv_tail[_mv_col],
+                    name="Mean Rev Score", line=dict(color="#27ae60", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>MR Score: %{y:.0f}<extra></extra>",
+                ))
+                _fig120b.add_trace(_go120.Scatter(
+                    x=_mv_tail.index, y=_mv_tail["hy_spread"],
+                    name="HY Spread (bps)", line=dict(color="#f59e0b", width=1.5, dash="dot"),
+                    yaxis="y2",
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY: %{y:.0f}bps<extra></extra>",
+                ))
+                _fig120b.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=50),
+                    title=dict(text="Mean Reversion Score vs HY Spread — timing alignment", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#27ae60",
+                               title="MR Score"),
+                    yaxis2=dict(overlaying="y", side="right", color="#f59e0b", title="HY (bps)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+                                orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig120b, use_container_width=True)
+                st.caption("MR Score peaks near HY spread peaks — confirms the lagging nature of this signal")
+
+            st.info("**Why excluded from composite:** Mean reversion score showed correct *contrarian* signals "
+                    "at 2–4 week horizons (good for timing) but at 6–12 month horizons it was noise. "
+                    "Including it reduced composite Sharpe ratio by dampening high-risk warnings. "
+                    "Kept as supplemental for short-horizon tactical use only.")
+        else:
+            st.info("Mean reversion score not found — run the full scoring pipeline.")
+    except Exception as _e120:
+        st.caption(f"Mean reversion score: {_e120}")
+
+with _analytics_sub121:
+    import plotly.graph_objects as _go121
+    st.header("Yield Curve Spread Changes — Multi-Horizon")
+    st.markdown(
+        "Rates of change in the **2s10s yield spread** across 5-day and 90-day windows. "
+        "The 90-day change captures the slow-moving structural steepening or flattening; "
+        "the 5-day change catches acute near-term disruptions (Fed meetings, macro data). "
+        "When both are negative (5d and 90d flattening simultaneously), the curve is in "
+        "sustained compression — the most historically credit-negative configuration. "
+        "When the 5d reverses positive while 90d remains negative, it may signal "
+        "a temporary bear-steepening counter-move inside a longer flattening trend."
+    )
+    try:
+        _sc121_cols = ["spread_change_90d", "spread_change_5d", "spread", "yield_10y", "yield_2y"]
+        if all(c in df.columns for c in ["spread_change_90d", "spread_change_5d", "spread"]):
+            _sc121 = df[[c for c in _sc121_cols if c in df.columns]].copy()
+            _sc121.index = pd.to_datetime(_sc121.index)
+            _cur_sc90 = float(latest.get("spread_change_90d", float("nan")))
+            _cur_sc5 = float(latest.get("spread_change_5d", float("nan")))
+            _cur_sp = float(latest.get("spread", float("nan")))
+
+            def _spread_chg_signal(sc5, sc90):
+                if pd.isna(sc5) or pd.isna(sc90):
+                    return "Unknown"
+                if sc5 < 0 and sc90 < 0:
+                    return "Sustained Flattening"
+                if sc5 > 0 and sc90 > 0:
+                    return "Sustained Steepening"
+                if sc5 > 0 and sc90 < 0:
+                    return "Bear Steepen / Flattening Pause"
+                return "Short Flatten / Steepen Pullback"
+
+            _chg_signal = _spread_chg_signal(_cur_sc5, _cur_sc90)
+            _chg_colors = {
+                "Sustained Flattening": "#ef4444",
+                "Sustained Steepening": "#27ae60",
+                "Bear Steepen / Flattening Pause": "#f59e0b",
+                "Short Flatten / Steepen Pullback": "#4f8ef7",
+                "Unknown": "#6b7280",
+            }
+
+            _sca, _scb, _scc, _scd = st.columns(4)
+            _sca.metric("2s10s Spread", f"{_cur_sp:.2f}pp" if pd.notna(_cur_sp) else "—")
+            _scb.metric("Δ5d", f"{_cur_sc5:+.2f}pp" if pd.notna(_cur_sc5) else "—",
+                        delta_color="normal" if pd.notna(_cur_sc5) and _cur_sc5 > 0 else "inverse")
+            _scc.metric("Δ90d", f"{_cur_sc90:+.2f}pp" if pd.notna(_cur_sc90) else "—",
+                        delta_color="normal" if pd.notna(_cur_sc90) and _cur_sc90 > 0 else "inverse")
+            _scd.metric("Signal", _chg_signal)
+
+            if _chg_signal == "Sustained Flattening":
+                st.warning("Both 5d and 90d curve spread changes are negative — sustained flattening/inversion "
+                           "pressure. Historically the most negative credit configuration from the curve.")
+
+            # 90d spread change with regime coloring
+            _sc_tail = _sc121.tail(756)
+            _c90_colors = ["#ef4444" if v < -0.05 else "#27ae60" if v > 0.05 else "#4f8ef7"
+                           for v in _sc_tail["spread_change_90d"].fillna(0)]
+            _fig121a = _go121.Figure()
+            _fig121a.add_trace(_go121.Bar(
+                x=_sc_tail.index, y=_sc_tail["spread_change_90d"],
+                marker_color=_c90_colors, name="Δ90d",
+                hovertemplate="%{x|%Y-%m-%d}<br>Δ90d: %{y:+.2f}pp<extra></extra>",
+            ))
+            _fig121a.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+            _fig121a.update_layout(
+                height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="2s10s Spread 90-Day Change (pp)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig121a, use_container_width=True)
+
+            # 5d change for short-horizon moves
+            _c5_colors = ["#ef4444" if v < 0 else "#27ae60"
+                          for v in _sc_tail["spread_change_5d"].fillna(0)]
+            _fig121b = _go121.Figure()
+            _fig121b.add_trace(_go121.Bar(
+                x=_sc_tail.index, y=_sc_tail["spread_change_5d"],
+                marker_color=_c5_colors, name="Δ5d", opacity=0.7,
+                hovertemplate="%{x|%Y-%m-%d}<br>Δ5d: %{y:+.3f}pp<extra></extra>",
+            ))
+            _fig121b.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+            _fig121b.update_layout(
+                height=180, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="2s10s Spread 5-Day Change (pp) — short-horizon moves", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig121b, use_container_width=True)
+
+            # Term structure of changes: current snapshot
+            _ts_vals121 = [_cur_sc5, _cur_sc90]
+            _ts_labs121 = ["5d", "90d"]
+            _ts_colors121 = ["#ef4444" if pd.notna(v) and v < 0 else "#27ae60" if pd.notna(v) else "#6b7280"
+                             for v in _ts_vals121]
+            _fig121c = _go121.Figure()
+            _fig121c.add_trace(_go121.Bar(
+                x=_ts_labs121, y=_ts_vals121,
+                marker_color=_ts_colors121,
+                text=[f"{v:+.3f}pp" if pd.notna(v) else "n/a" for v in _ts_vals121],
+                textposition="outside",
+                hovertemplate="%{x}: %{y:+.3f}pp<extra></extra>",
+            ))
+            _fig121c.add_hline(y=0, line_color="rgba(255,255,255,0.3)", line_width=1)
+            _fig121c.update_layout(
+                height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Current Curve Change Term Structure", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Δ spread (pp)"),
+                xaxis=dict(color="#6b7280", title="Horizon"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig121c, use_container_width=True)
+            st.caption("Both negative = Sustained Flattening (most credit-negative) · "
+                       "Both positive = Sustained Steepening · Mixed = transition / counter-move")
+        else:
+            st.info("Spread change columns not found — run the feature pipeline.")
+    except Exception as _e121:
+        st.caption(f"Spread changes: {_e121}")
