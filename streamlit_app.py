@@ -156,6 +156,12 @@ from src.cross_currency_basis import run_cross_currency_basis
 from src.cre_stress import run_cre_stress
 from src.primary_market_issuance import run_primary_market_issuance
 from src.distressed_debt import run_distressed_debt_analysis
+from src.clo_monitor import run_clo_monitor
+from src.financial_conditions import run_fci_analysis
+from src.credit_impulse import run_credit_impulse_analysis
+from src.etf_premium_discount import run_etf_premium_discount
+from src.sovereign_contagion import run_sovereign_contagion
+from src.consumer_credit_stress import run_consumer_credit_stress
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -889,6 +895,36 @@ def load_primary_market_issuance(_df):
 @st.cache_data
 def load_distressed_debt(_df):
     return run_distressed_debt_analysis(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_clo_monitor(_df):
+    return run_clo_monitor(_df)
+
+
+@st.cache_data
+def load_financial_conditions(_df):
+    return run_fci_analysis(_df)
+
+
+@st.cache_data
+def load_credit_impulse(_df):
+    return run_credit_impulse_analysis(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_etf_premium_discount(_df):
+    return run_etf_premium_discount(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_sovereign_contagion(_df):
+    return run_sovereign_contagion(_df)
+
+
+@st.cache_data
+def load_consumer_credit_stress(_df):
+    return run_consumer_credit_stress(_df)
 
 
 @st.cache_data
@@ -2895,7 +2931,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 61 sub-tabs
+with tab5:  # Analytics — 67 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
@@ -2914,7 +2950,9 @@ with tab5:  # Analytics — 61 sub-tabs
      _analytics_sub50, _analytics_sub51, _analytics_sub52,
      _analytics_sub53, _analytics_sub54, _analytics_sub55,
      _analytics_sub56, _analytics_sub57, _analytics_sub58,
-     _analytics_sub59, _analytics_sub60, _analytics_sub61) = st.tabs([
+     _analytics_sub59, _analytics_sub60, _analytics_sub61,
+     _analytics_sub62, _analytics_sub63, _analytics_sub64,
+     _analytics_sub65, _analytics_sub66, _analytics_sub67) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2934,6 +2972,8 @@ with tab5:  # Analytics — 61 sub-tabs
         "Fed Liquidity", "G4 Divergence", "Port Stress",
         "AT1/CoCo", "Swap Spreads", "XCcy Basis",
         "CRE Stress", "Issuance", "Distressed",
+        "CLO", "FCI", "Credit Impulse",
+        "ETF Disloc", "Sovereign", "Consumer Credit",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -10950,6 +10990,355 @@ with _analytics_sub61:
             st.info("Distressed debt monitor unavailable — requires hy_spread column.")
     except Exception as _dis_e:
         st.caption(f"Distressed debt monitor unavailable: {_dis_e}")
+
+# --- sub-tab 62: CLO Monitor ------------------------------------------------
+with _analytics_sub62:
+    import plotly.graph_objects as _go_clo
+    st.header("CLO / Structured Credit Monitor")
+    st.markdown(
+        "CLO stress tracker. CLOs are the largest buyers of leveraged loans — when CLO "
+        "demand is constrained, loan spreads widen and HY technicals deteriorate. "
+        "BKLN/HYG divergence and OC cushion proxy signal CLO market health."
+    )
+    try:
+        _clo = load_clo_monitor(df)
+        if _clo.get("available"):
+            _cloc = _clo.get("current", {})
+            _c1clo, _c2clo, _c3clo = st.columns(3)
+            _c1clo.metric("CLO Stress Score", f"{_cloc.get('clo_stress_score', 0):.0f}/100")
+            _c2clo.metric("Regime", _cloc.get("regime", "N/A"))
+            _c3clo.metric("Refi Window", _cloc.get("refi_window", "N/A"))
+            _oc = _cloc.get("oc_cushion_proxy")
+            if _oc is not None:
+                st.metric("OC Cushion Proxy", f"{_oc:.0f}/100 (100=max cushion)")
+            if _cloc.get("warning"):
+                st.warning(_cloc["warning"])
+            if _cloc.get("interpretation"):
+                st.info(_cloc["interpretation"])
+            _clo_hist = _clo.get("historical_score")
+            _clo_loan_hy = _clo.get("loan_vs_hy_history")
+            if _clo_hist is not None and len(_clo_hist.dropna()) > 20:
+                _fig_clo = _go_clo.Figure()
+                _fig_clo.add_trace(_go_clo.Scatter(
+                    x=_clo_hist.index, y=_clo_hist.values,
+                    name="CLO Stress Score", line=dict(color="#f59e0b", width=1.5)
+                ))
+                _fig_clo.add_hline(y=50, line_dash="dot", line_color="#f59e0b", annotation_text="Stress")
+                _fig_clo.add_hline(y=75, line_dash="dot", line_color="#ef4444", annotation_text="Acute")
+                _fig_clo.update_layout(
+                    template="plotly_dark", height=300, title="CLO Stress Score (0–100)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_clo, use_container_width=True)
+            if _clo_loan_hy is not None and len(_clo_loan_hy.dropna()) > 20:
+                _fig_lh = _go_clo.Figure()
+                _fig_lh.add_trace(_go_clo.Scatter(
+                    x=_clo_loan_hy.index, y=(_clo_loan_hy * 100).values,
+                    name="Loan vs HY Relative Return (%)", line=dict(color="#34d399", width=1.2)
+                ))
+                _fig_lh.add_hline(y=0, line_dash="solid", line_color="#6b7280")
+                _fig_lh.update_layout(
+                    template="plotly_dark", height=250, title="BKLN/HYG Relative Return (21d, %)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="%"),
+                )
+                st.plotly_chart(_fig_lh, use_container_width=True)
+        else:
+            st.info("CLO monitor unavailable — requires BKLN/HYG ETF data or hy_spread column.")
+    except Exception as _clo_e:
+        st.caption(f"CLO monitor unavailable: {_clo_e}")
+
+# --- sub-tab 63: Financial Conditions Index ----------------------------------
+with _analytics_sub63:
+    import plotly.graph_objects as _go_fci
+    st.header("Financial Conditions Index (FCI)")
+    st.markdown(
+        "Single 0–100 score capturing how tight or loose overall financial conditions are, "
+        "credit-tilted. Higher = tighter. Leads economic activity by ~6–12 months. "
+        "A 100bps tightening historically adds ~0.3–0.5% to HY default rates."
+    )
+    try:
+        _fci = load_financial_conditions(df)
+        if _fci.get("available"):
+            _fcic = _fci.get("current", {})
+            _c1f, _c2f, _c3f, _c4f = st.columns(4)
+            _fci_score = _fcic.get("fci_score")
+            _c1f.metric("FCI Score", f"{_fci_score:.0f}/100" if _fci_score is not None else "N/A")
+            _c2f.metric("Regime", _fcic.get("fci_regime", "N/A"))
+            _f1m = _fcic.get("fci_1m_change")
+            _c3f.metric("1M Change", f"{'+' if _f1m and _f1m > 0 else ''}{_f1m:.1f}" if _f1m is not None else "N/A")
+            _c4f.metric("Tightest Component", _fcic.get("tightest_component", "N/A"))
+            if _fcic.get("interpretation"):
+                st.info(_fcic["interpretation"])
+            _fci_hist = _fci.get("fci_history")
+            if _fci_hist is not None and len(_fci_hist.dropna()) > 50:
+                _fig_fci = _go_fci.Figure()
+                _fig_fci.add_trace(_go_fci.Scatter(
+                    x=_fci_hist.index, y=_fci_hist.values,
+                    name="FCI Score", line=dict(color="#a78bfa", width=1.5)
+                ))
+                _fig_fci.add_hrect(y0=75, y1=100, fillcolor="rgba(239,68,68,0.08)", line_width=0)
+                _fig_fci.add_hrect(y0=0, y1=25, fillcolor="rgba(52,211,153,0.08)", line_width=0)
+                _fig_fci.add_hline(y=60, line_dash="dot", line_color="#f59e0b", annotation_text="Tight")
+                _fig_fci.update_layout(
+                    template="plotly_dark", height=320, title="Financial Conditions Index (0–100, higher=tighter)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="FCI Score", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_fci, use_container_width=True)
+            _fci_comp = _fci.get("component_df")
+            if _fci_comp is not None and not _fci_comp.empty:
+                st.subheader("Component Z-Scores")
+                _fig_comp = _go_fci.Figure()
+                _comp_colors = {"hy_spread": "#ef4444", "ig_spread": "#f97316", "vix": "#f59e0b",
+                                "yield_10y": "#60a5fa", "usd": "#34d399", "sp500": "#a78bfa"}
+                for _col in _fci_comp.columns:
+                    _fig_comp.add_trace(_go_fci.Scatter(
+                        x=_fci_comp.index, y=_fci_comp[_col],
+                        name=_col, line=dict(color=_comp_colors.get(_col, "#9aa0aa"), width=1.2)
+                    ))
+                _fig_comp.add_hline(y=0, line_dash="solid", line_color="#6b7280")
+                _fig_comp.update_layout(
+                    template="plotly_dark", height=260, title="FCI Component Z-Scores",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Z-score"),
+                )
+                st.plotly_chart(_fig_comp, use_container_width=True)
+        else:
+            st.info("FCI unavailable — requires hy_spread or ig_spread columns.")
+    except Exception as _fci_e:
+        st.caption(f"Financial Conditions Index unavailable: {_fci_e}")
+
+# --- sub-tab 64: Credit Impulse ---------------------------------------------
+with _analytics_sub64:
+    import plotly.graph_objects as _go_ci
+    st.header("Credit Impulse")
+    st.markdown(
+        "Rate of change of new credit flow relative to GDP (ΔCredit/GDP). "
+        "Positive impulse supports spreads; contraction leads default cycles by 6–18 months. "
+        "Requires FRED API key for TOTLL + CONSUMER + GDP series."
+    )
+    try:
+        _ci = load_credit_impulse(df)
+        if _ci.get("available"):
+            _cic = _ci.get("current", {})
+            _c1ci, _c2ci, _c3ci = st.columns(3)
+            _ci_score = _cic.get("credit_impulse_score")
+            _c1ci.metric("Impulse Score", f"{_ci_score:.0f}/100" if _ci_score is not None else "N/A")
+            _c2ci.metric("Direction", _cic.get("impulse_direction", "N/A"))
+            _c3ci.metric("Momentum", _cic.get("impulse_momentum", "N/A"))
+            if _cic.get("lead_signal"):
+                st.info(_cic["lead_signal"])
+            if _cic.get("interpretation"):
+                st.caption(_cic["interpretation"])
+            if _cic.get("warning"):
+                st.warning(_cic["warning"])
+            _lc = _ci.get("lead_correlation")
+            if _lc is not None:
+                st.metric("Lead Correlation (impulse → fwd HY spread, 126d)", f"{_lc:.3f}")
+            _ci_hist = _ci.get("impulse_score_history")
+            if _ci_hist is not None and len(_ci_hist.dropna()) > 30:
+                _fig_ci = _go_ci.Figure()
+                _fig_ci.add_trace(_go_ci.Scatter(
+                    x=_ci_hist.index, y=_ci_hist.values,
+                    name="Credit Impulse Score", line=dict(color="#22d3ee", width=1.5)
+                ))
+                _fig_ci.add_hline(y=50, line_dash="dot", line_color="#6b7280", annotation_text="Neutral")
+                _fig_ci.add_hline(y=30, line_dash="dot", line_color="#ef4444", annotation_text="Contraction Risk")
+                _fig_ci.update_layout(
+                    template="plotly_dark", height=300, title="Credit Impulse Score (0=most contractionary, 100=most expansionary)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_ci, use_container_width=True)
+        else:
+            st.info("Credit impulse unavailable — requires FRED API key (TOTLL, CONSUMER, GDP) or total_credit/gdp columns.")
+    except Exception as _ci_e:
+        st.caption(f"Credit impulse unavailable: {_ci_e}")
+
+# --- sub-tab 65: ETF Premium/Discount ----------------------------------------
+with _analytics_sub65:
+    import plotly.graph_objects as _go_etf
+    st.header("ETF Premium / Discount Monitor")
+    st.markdown(
+        "Tracks whether HYG, LQD, JNK trade at a premium or discount to NAV. "
+        "During stress, ETFs trade at discounts — a real-time signal of forced "
+        "redemption pressure and bond market illiquidity."
+    )
+    try:
+        _etf = load_etf_premium_discount(df)
+        if _etf.get("available"):
+            _etfc = _etf.get("current", {})
+            _c1e, _c2e, _c3e = st.columns(3)
+            _etf_score = _etfc.get("dislocation_score")
+            _c1e.metric("Dislocation Score", f"{_etf_score:.0f}/100" if _etf_score is not None else "N/A")
+            _c2e.metric("Regime", _etfc.get("regime", "N/A"))
+            _c3e.metric("Most Dislocated", _etfc.get("most_dislocated", "N/A"))
+            _cpd = _etfc.get("composite_premium_discount_bps")
+            if _cpd is not None:
+                _sign = "+" if _cpd > 0 else ""
+                st.metric("Composite Premium/Discount", f"{_sign}{_cpd:.1f}bps")
+            if _etfc.get("warning"):
+                st.warning(_etfc["warning"])
+            if _etfc.get("interpretation"):
+                st.info(_etfc["interpretation"])
+            _etf_readings = _etfc.get("etf_readings", {})
+            if _etf_readings:
+                _etf_rows = [
+                    {"ETF": t, "P/D (bps)": f"{v.get('premium_discount_bps', 0):.1f}",
+                     "Dislocation": "YES" if v.get("dislocation_flag") else "NO",
+                     "Vol Ratio": f"{v.get('volume_ratio', 1):.1f}x"}
+                    for t, v in _etf_readings.items()
+                ]
+                import pandas as _pd_etf
+                st.dataframe(_pd_etf.DataFrame(_etf_rows).set_index("ETF"), use_container_width=True)
+            _etf_hist = _etf.get("dislocation_history")
+            if _etf_hist is not None and len(_etf_hist.dropna()) > 20:
+                _fig_etf = _go_etf.Figure()
+                _fig_etf.add_trace(_go_etf.Scatter(
+                    x=_etf_hist.index, y=_etf_hist.values,
+                    name="ETF Dislocation Score", line=dict(color="#f87171", width=1.5)
+                ))
+                _fig_etf.add_hline(y=40, line_dash="dot", line_color="#f59e0b", annotation_text="Stress")
+                _fig_etf.add_hline(y=70, line_dash="dot", line_color="#ef4444", annotation_text="Dislocation")
+                _fig_etf.update_layout(
+                    template="plotly_dark", height=300, title="Credit ETF Dislocation Score (0–100)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_etf, use_container_width=True)
+        else:
+            st.info("ETF premium/discount monitor unavailable — requires live yfinance data (HYG, LQD, JNK).")
+    except Exception as _etf_e:
+        st.caption(f"ETF premium/discount unavailable: {_etf_e}")
+
+# --- sub-tab 66: Sovereign Contagion ----------------------------------------
+with _analytics_sub66:
+    import plotly.graph_objects as _go_sov
+    st.header("Sovereign Contagion")
+    st.markdown(
+        "EU peripheral (Italy/Germany proxy) and EM sovereign stress monitor. "
+        "Sovereign distress transmits to corporate credit via bank balance sheets. "
+        "A leading indicator for corporate spread widening."
+    )
+    try:
+        _sov = load_sovereign_contagion(df)
+        if _sov.get("available"):
+            _sovc = _sov.get("current", {})
+            _c1sv, _c2sv, _c3sv, _c4sv = st.columns(4)
+            _sov_score = _sovc.get("sovereign_stress_score")
+            _c1sv.metric("Sovereign Stress", f"{_sov_score:.0f}/100" if _sov_score is not None else "N/A")
+            _eu_score = _sovc.get("eu_peripheral_score")
+            _c2sv.metric("EU Peripheral", f"{_eu_score:.0f}/100" if _eu_score is not None else "N/A")
+            _em_score = _sovc.get("em_sovereign_score")
+            _c3sv.metric("EM Sovereign", f"{_em_score:.0f}/100" if _em_score is not None else "N/A")
+            _c4sv.metric("Regime", _sovc.get("regime", "N/A"))
+            if _sovc.get("contagion_flag"):
+                st.error("CONTAGION FLAG: Sovereign stress elevated — corporate spread widening likely.")
+            elif _sovc.get("spillover_risk") == "Moderate":
+                st.warning("Spillover risk moderate — watch corporate spreads.")
+            if _sovc.get("interpretation"):
+                st.info(_sovc["interpretation"])
+            _sov_hist = _sov.get("stress_history")
+            _eu_hist  = _sov.get("eu_stress_history")
+            _em_hist  = _sov.get("em_stress_history")
+            if _sov_hist is not None and len(_sov_hist.dropna()) > 20:
+                _fig_sov = _go_sov.Figure()
+                _fig_sov.add_trace(_go_sov.Scatter(
+                    x=_sov_hist.index, y=_sov_hist.values,
+                    name="Sovereign Stress", line=dict(color="#f59e0b", width=2)
+                ))
+                if _eu_hist is not None and len(_eu_hist.dropna()) > 20:
+                    _fig_sov.add_trace(_go_sov.Scatter(
+                        x=_eu_hist.index, y=_eu_hist.values,
+                        name="EU Peripheral", line=dict(color="#60a5fa", width=1.2, dash="dot")
+                    ))
+                if _em_hist is not None and len(_em_hist.dropna()) > 20:
+                    _fig_sov.add_trace(_go_sov.Scatter(
+                        x=_em_hist.index, y=_em_hist.values,
+                        name="EM Sovereign", line=dict(color="#34d399", width=1.2, dash="dot")
+                    ))
+                _fig_sov.add_hline(y=65, line_dash="dot", line_color="#ef4444", annotation_text="Contagion Risk")
+                _fig_sov.update_layout(
+                    template="plotly_dark", height=320, title="Sovereign Stress Score (0–100)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                    legend=dict(orientation="h", y=1.05),
+                )
+                st.plotly_chart(_fig_sov, use_container_width=True)
+            _sov_corr = _sov.get("spillover_correlation")
+            if _sov_corr is not None:
+                st.metric("Sovereign→HY Spillover Correlation (63d rolling, latest)", f"{_sov_corr:.3f}")
+        else:
+            st.info("Sovereign contagion monitor unavailable — requires EWI/EWG/EMB/TLT ETF data.")
+    except Exception as _sov_e:
+        st.caption(f"Sovereign contagion unavailable: {_sov_e}")
+
+# --- sub-tab 67: Consumer Credit Stress -------------------------------------
+with _analytics_sub67:
+    import plotly.graph_objects as _go_cons
+    st.header("Consumer Credit Stress")
+    st.markdown(
+        "Delinquency-based consumer credit stress monitor. Consumer-facing HY sectors "
+        "(retail, auto, restaurants) represent ~30% of the index. Rising delinquencies "
+        "lead corporate spread widening by 2–3 quarters. Requires FRED API key."
+    )
+    try:
+        _cons = load_consumer_credit_stress(df)
+        if _cons.get("available"):
+            _consc = _cons.get("current", {})
+            _c1cs, _c2cs, _c3cs = st.columns(3)
+            _cons_score = _consc.get("consumer_stress_score")
+            _c1cs.metric("Consumer Stress", f"{_cons_score:.0f}/100" if _cons_score is not None else "N/A")
+            _c2cs.metric("Regime", _consc.get("regime", "N/A"))
+            _ar_bps = _consc.get("at_risk_spread_contribution")
+            _c3cs.metric("At-Risk HY Spread (est.)", f"{_ar_bps:.0f}bps" if _ar_bps is not None else "N/A")
+            if _consc.get("warning"):
+                st.warning(_consc["warning"])
+            if _consc.get("lead_signal"):
+                st.info(_consc["lead_signal"])
+            if _consc.get("interpretation"):
+                st.caption(_consc["interpretation"])
+            _cons_comps = _consc.get("component_scores", {})
+            if _cons_comps:
+                _comp_cols = st.columns(len(_cons_comps))
+                for _i, (_ck, _cv) in enumerate(_cons_comps.items()):
+                    _comp_cols[_i].metric(_ck.replace("_", " ").title(), f"{_cv:.0f}/100" if _cv is not None else "N/A")
+            _cons_hist = _cons.get("stress_history")
+            if _cons_hist is not None and len(_cons_hist.dropna()) > 20:
+                _fig_cons = _go_cons.Figure()
+                _fig_cons.add_trace(_go_cons.Scatter(
+                    x=_cons_hist.index, y=_cons_hist.values,
+                    name="Consumer Stress Score", line=dict(color="#fb923c", width=1.5)
+                ))
+                _comp_hists = _cons.get("component_histories", {})
+                _comp_hist_colors = {
+                    "cc_delinquency": "#ef4444", "auto_delinquency": "#f59e0b",
+                    "mortgage_delinquency": "#60a5fa", "revolving_growth": "#34d399"
+                }
+                for _ch_key, _ch_series in _comp_hists.items():
+                    if len(_ch_series.dropna()) > 20:
+                        _fig_cons.add_trace(_go_cons.Scatter(
+                            x=_ch_series.index, y=_ch_series.values,
+                            name=_ch_key.replace("_", " ").title(),
+                            line=dict(color=_comp_hist_colors.get(_ch_key, "#9aa0aa"), width=1, dash="dot")
+                        ))
+                _fig_cons.add_hline(y=60, line_dash="dot", line_color="#ef4444", annotation_text="Stress")
+                _fig_cons.update_layout(
+                    template="plotly_dark", height=320, title="Consumer Credit Stress (0–100)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                    legend=dict(orientation="h", y=1.05),
+                )
+                st.plotly_chart(_fig_cons, use_container_width=True)
+            _lc2 = _cons.get("hy_lead_correlation")
+            if _lc2 is not None:
+                st.metric("Lead Correlation (consumer stress → HY spread, 189d forward)", f"{_lc2:.3f}")
+        else:
+            st.info("Consumer credit stress unavailable — requires FRED API key (DRCCLACBS, DRAUTOACBS, DRSFRMACBS, REVOLSL).")
+    except Exception as _cons_e:
+        st.caption(f"Consumer credit stress unavailable: {_cons_e}")
 
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
