@@ -3001,7 +3001,7 @@ with tab_credit:  # Credit Markets — 25 sub-tabs
         "Credit Risk Score",
     ])
 
-with tab_macro:  # Rates & Macro — 30 sub-tabs
+with tab_macro:  # Rates & Macro — 32 sub-tabs
     (_analytics_sub23, _analytics_sub38, _analytics_sub41,
      _analytics_sub45, _analytics_sub53, _analytics_sub54,
      _analytics_sub57, _analytics_sub58, _analytics_sub63,
@@ -3013,7 +3013,8 @@ with tab_macro:  # Rates & Macro — 30 sub-tabs
      _analytics_sub103,
      _analytics_sub104, _analytics_sub106, _analytics_sub109,
      _analytics_sub111, _analytics_sub114,
-     _analytics_sub118, _analytics_sub121) = st.tabs([
+     _analytics_sub118, _analytics_sub121,
+     _analytics_sub122, _analytics_sub125) = st.tabs([
         "Regime Returns", "X-Asset Mom", "Macro Surprise",
         "Inflation Regime", "Fed Liquidity", "G4 Divergence",
         "Swap Spreads", "XCcy Basis", "FCI",
@@ -3027,9 +3028,10 @@ with tab_macro:  # Rates & Macro — 30 sub-tabs
         "Curve Regime", "Real Yield Z", "Unemp Momentum",
         "NFCI Trend", "Labor Warning",
         "Treasury Score", "Spread Changes",
+        "Breakeven", "10y Yield",
     ])
 
-with tab_risk:  # Risk Monitors — 31 sub-tabs
+with tab_risk:  # Risk Monitors — 33 sub-tabs
     (_analytics_sub6, _analytics_sub7, _analytics_sub12,
      _analytics_sub39, _analytics_sub44, _analytics_sub46,
      _analytics_sub47, _analytics_sub52, _analytics_sub55,
@@ -3041,7 +3043,7 @@ with tab_risk:  # Risk Monitors — 31 sub-tabs
      _analytics_sub95, _analytics_sub96, _analytics_sub97,
      _analytics_sub98, _analytics_sub99,
      _analytics_sub107, _analytics_sub112, _analytics_sub113,
-     _analytics_sub119) = st.tabs([
+     _analytics_sub119, _analytics_sub124, _analytics_sub127) = st.tabs([
         "Tail Risk", "Stress", "Contagion",
         "Vol Regime", "Deleveraging", "Sector Stress",
         "Put/Call", "Tail Dependency", "Port Stress",
@@ -3053,10 +3055,10 @@ with tab_risk:  # Risk Monitors — 31 sub-tabs
         "Mkt Internals", "Vol-Credit", "Drawdown",
         "EQ-Credit Div", "Shock Monitor",
         "Liquidity Score", "VIX Momentum", "FX/Commodity",
-        "Enh Funding",
+        "Enh Funding", "Equity Returns", "VIX Context",
     ])
 
-with tab_siglab:  # Signal Lab — 20 sub-tabs
+with tab_siglab:  # Signal Lab — 21 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3,
      _analytics_sub4, _analytics_sub5, _analytics_sub9,
      _analytics_sub18, _analytics_sub22, _analytics_sub26,
@@ -3064,7 +3066,8 @@ with tab_siglab:  # Signal Lab — 20 sub-tabs
      _analytics_sub91, _analytics_sub94,
      _analytics_sub101, _analytics_sub108,
      _analytics_sub115, _analytics_sub116,
-     _analytics_sub120) = st.tabs([
+     _analytics_sub120, _analytics_sub123,
+     _analytics_sub126) = st.tabs([
         "Validation", "Attribution", "Timeline",
         "Sig Decay", "Ortho", "Factors",
         "Granger", "EQ-Credit Corr", "Corr Heatmap",
@@ -3072,7 +3075,8 @@ with tab_siglab:  # Signal Lab — 20 sub-tabs
         "Data Diagnostics", "Score Decomp",
         "Score Velocity", "X-Asset Div",
         "Complacency", "Macro Risk Score",
-        "Mean Reversion",
+        "Mean Reversion", "Score Consensus",
+        "Composite History",
     ])
 
 with tab_regime:  # Regime — 12 sub-tabs
@@ -17462,3 +17466,778 @@ with _analytics_sub121:
             st.info("Spread change columns not found — run the feature pipeline.")
     except Exception as _e121:
         st.caption(f"Spread changes: {_e121}")
+
+# =============================================================================
+# BATCH 16 ANALYTICS — sub122–127
+# sub122  Breakeven Inflation Monitor      → tab_macro
+# sub123  Score Consensus Monitor          → tab_siglab
+# sub124  Equity Return Context            → tab_risk
+# sub125  10y Yield Level Context          → tab_macro
+# sub126  Composite Score History          → tab_siglab
+# sub127  VIX Level Context               → tab_risk
+# =============================================================================
+
+with _analytics_sub122:
+    import plotly.graph_objects as _go122
+    st.header("Breakeven Inflation Monitor")
+    st.markdown(
+        "The **10-year breakeven inflation rate** (TIPS-implied) is the market's expectation of average "
+        "CPI over the next decade. Rising breakevens signal **reflation risk**: the Fed must stay "
+        "restrictive longer, keeping real yields high and pressuring credit spreads. Falling breakevens "
+        "signal **deflation/recession risk**: demand destruction arriving, which typically leads "
+        "HY spread widening as default expectations rise. The 'sweet spot' for credit is moderate, "
+        "stable breakevens (2–2.5%) — neither deflationary collapse nor inflationary overshooting."
+    )
+    try:
+        _be122_col = "breakeven_10y"
+        if _be122_col in df.columns and df[_be122_col].notna().any():
+            _be122 = df[[_be122_col]].copy()
+            for _c in ["real_yield_proxy", "yield_10y", "hy_spread"]:
+                if _c in df.columns:
+                    _be122[_c] = df[_c]
+            _be122.index = pd.to_datetime(_be122.index)
+            _cur_be = float(latest.get(_be122_col, float("nan")))
+            _be_1m = float(df[_be122_col].diff(21).iloc[-1]) if df[_be122_col].notna().any() else float("nan")
+            _be_3m = float(df[_be122_col].diff(63).iloc[-1]) if df[_be122_col].notna().any() else float("nan")
+            _be_pctile = (df[_be122_col].dropna() < _cur_be).mean() * 100 if pd.notna(_cur_be) else float("nan")
+
+            def _be_regime(be):
+                if pd.isna(be):
+                    return "Unknown"
+                if be > 2.75:
+                    return "Elevated (Reflationary)"
+                if be >= 2.0:
+                    return "Moderate (Sweet Spot)"
+                if be >= 1.5:
+                    return "Low (Disinflation)"
+                return "Very Low (Deflation Risk)"
+
+            _be_reg = _be_regime(_cur_be)
+            _be_reg_colors = {
+                "Elevated (Reflationary)": "#ef4444",
+                "Moderate (Sweet Spot)": "#27ae60",
+                "Low (Disinflation)": "#f59e0b",
+                "Very Low (Deflation Risk)": "#a78bfa",
+            }
+
+            _ba, _bb, _bc, _bd = st.columns(4)
+            _ba.metric("10y Breakeven", f"{_cur_be:.2f}%" if pd.notna(_cur_be) else "—",
+                       delta=f"{_be_1m:+.2f}pp 1M" if pd.notna(_be_1m) else None)
+            _bb.metric("3M Change", f"{_be_3m:+.2f}pp" if pd.notna(_be_3m) else "—",
+                       delta_color="inverse" if pd.notna(_be_3m) and _be_3m > 0.25 else "normal")
+            _bc.metric("Regime", _be_reg)
+            _bd.metric("Historical Pctile", f"{_be_pctile:.0f}th" if pd.notna(_be_pctile) else "—")
+
+            if pd.notna(_cur_be):
+                if _cur_be > 2.75:
+                    st.warning("Breakeven inflation elevated — reflationary pressures keeping Fed hawkish. "
+                               "Real yields likely to remain high; credit spread pressure building.")
+                elif _cur_be < 1.5:
+                    st.warning("Breakeven inflation very low — deflation/recession risk priced in. "
+                               "Credit default expectations rising; HY spread widening typically follows.")
+
+            # Breakeven time series with sweet-spot band
+            _be_tail = _be122.tail(756)
+            _fig122a = _go122.Figure()
+            _fig122a.add_hrect(y0=2.0, y1=2.75, fillcolor="rgba(39,174,96,0.08)", line_width=0)
+            _fig122a.add_trace(_go122.Scatter(
+                x=_be_tail.index, y=_be_tail[_be122_col],
+                line=dict(color="#f59e0b", width=2.5), name="10y Breakeven",
+                hovertemplate="%{x|%Y-%m-%d}<br>Breakeven: %{y:.2f}%<extra></extra>",
+            ))
+            _fig122a.add_hline(y=2.0, line=dict(color="rgba(39,174,96,0.4)", dash="dot", width=1))
+            _fig122a.add_hline(y=2.75, line=dict(color="rgba(239,68,68,0.4)", dash="dot", width=1))
+            _fig122a.update_layout(
+                height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="10Y Breakeven Inflation (TIPS-implied, 3Y)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="%"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig122a, use_container_width=True)
+            st.caption("Green band = sweet spot for credit (2.0–2.75%) · Above = reflationary risk · Below = deflation risk")
+
+            # Nominal = Real + Breakeven decomposition
+            if "real_yield_proxy" in _be_tail.columns and "yield_10y" in _be_tail.columns:
+                _fig122b = _go122.Figure()
+                _fig122b.add_trace(_go122.Scatter(
+                    x=_be_tail.index, y=_be_tail["yield_10y"],
+                    name="10y Nominal Yield", line=dict(color="#e2e8f0", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Nominal: %{y:.2f}%<extra></extra>",
+                ))
+                _fig122b.add_trace(_go122.Scatter(
+                    x=_be_tail.index, y=_be_tail["real_yield_proxy"],
+                    name="10y Real Yield", line=dict(color="#4f8ef7", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Real: %{y:.2f}%<extra></extra>",
+                ))
+                _fig122b.add_trace(_go122.Scatter(
+                    x=_be_tail.index, y=_be_tail[_be122_col],
+                    name="Breakeven (Inflation Exp)", line=dict(color="#f59e0b", width=2, dash="dot"),
+                    hovertemplate="%{x|%Y-%m-%d}<br>BE: %{y:.2f}%<extra></extra>",
+                ))
+                _fig122b.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                _fig122b.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Nominal = Real Yield + Breakeven Decomposition", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="%"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig122b, use_container_width=True)
+
+            # Breakeven vs HY spread
+            if "hy_spread" in _be_tail.columns:
+                _be_sc = _be_tail.dropna(subset=[_be122_col, "hy_spread"])
+                _fig122c = _go122.Figure()
+                _fig122c.add_trace(_go122.Scatter(
+                    x=_be_sc[_be122_col], y=_be_sc["hy_spread"],
+                    mode="markers",
+                    marker=dict(color="#f59e0b", size=3, opacity=0.4),
+                    hovertemplate="Breakeven: %{x:.2f}%<br>HY: %{y:.0f}bps<extra></extra>",
+                ))
+                _fig122c.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Breakeven Inflation vs HY Spread (3Y scatter)", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="10Y Breakeven (%)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="HY Spread (bps)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig122c, use_container_width=True)
+                st.caption("U-shaped relationship expected: very low OR very high breakevens both widen HY spreads. "
+                           "Moderate 2–2.5% breakevens correlate with tightest credit spreads.")
+        else:
+            st.info("breakeven_10y column not found — requires T10YIE FRED series.")
+    except Exception as _e122:
+        st.caption(f"Breakeven monitor: {_e122}")
+
+with _analytics_sub123:
+    import plotly.graph_objects as _go123
+    from src.regime_attribution import SCORE_COLS as _SC123, COMPOSITE_WEIGHTS as _CW123, DISPLAY_NAMES as _DN123
+    st.header("Score Consensus Monitor")
+    st.markdown(
+        "**Score consensus** measures how many of the 7 composite sub-scores agree on direction. "
+        "When all 7 are elevated simultaneously, the signal is the strongest — multi-dimensional stress "
+        "confirmation with no offsetting factors. When scores diverge widely, the composite may be "
+        "masking internal disagreement. This tab tracks: breadth of sub-score elevation, the "
+        "count of scores above 50 (elevated), above 70 (high-stress), and the inter-score "
+        "standard deviation (high dispersion = mixed signals)."
+    )
+    try:
+        _sc123_present = {k: v for k, v in _SC123.items() if v in df.columns and k in _CW123}
+        if len(_sc123_present) >= 3:
+            _cons123 = df[[v for v in _sc123_present.values()]].copy()
+            _cons123.index = pd.to_datetime(_cons123.index)
+
+            # Compute consensus metrics per row
+            _cons123["n_above_50"] = (_cons123 >= 50).sum(axis=1)
+            _cons123["n_above_70"] = (_cons123 >= 70).sum(axis=1)
+            _cons123["score_std"] = _cons123[[v for v in _sc123_present.values()]].std(axis=1)
+            _cons123["score_mean"] = _cons123[[v for v in _sc123_present.values()]].mean(axis=1)
+
+            _cur_n50 = int(_cons123["n_above_50"].iloc[-1])
+            _cur_n70 = int(_cons123["n_above_70"].iloc[-1])
+            _cur_std = float(_cons123["score_std"].iloc[-1])
+            _n_total = len(_sc123_present)
+
+            _ca123, _cb123, _cc123, _cd123 = st.columns(4)
+            _ca123.metric("Scores ≥ 50 (Elevated)", f"{_cur_n50}/{_n_total}")
+            _cb123.metric("Scores ≥ 70 (High Stress)", f"{_cur_n70}/{_n_total}")
+            _cc123.metric("Score Std Dev", f"{_cur_std:.1f}pts",
+                          help="High = sub-scores diverging (mixed signal). Low = all agree.")
+            _consensus_pct = _cur_n50 / _n_total * 100
+            _cd123.metric("Consensus (%)", f"{_consensus_pct:.0f}%")
+
+            if _cur_n50 >= 5:
+                st.error(f"{_cur_n50}/{_n_total} sub-scores elevated — broad consensus that risk conditions are stressed. "
+                         "Multi-dimensional confirmation: not a false positive.")
+            elif _cur_std > 20:
+                st.info("High score dispersion — sub-scores disagree significantly. "
+                        "Mixed environment: some dimensions stressed, others benign. Interpret composite with caution.")
+
+            # Rolling count of elevated scores
+            _cons_tail = _cons123.tail(756)
+            _fig123a = _go123.Figure()
+            _fig123a.add_trace(_go123.Scatter(
+                x=_cons_tail.index, y=_cons_tail["n_above_50"],
+                fill="tozeroy", fillcolor="rgba(245,158,11,0.1)",
+                line=dict(color="#f59e0b", width=2), name="Scores ≥ 50",
+                hovertemplate="%{x|%Y-%m-%d}<br>Elevated: %{y}/" + str(_n_total) + "<extra></extra>",
+            ))
+            _fig123a.add_trace(_go123.Scatter(
+                x=_cons_tail.index, y=_cons_tail["n_above_70"],
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.12)",
+                line=dict(color="#ef4444", width=2), name="Scores ≥ 70",
+                hovertemplate="%{x|%Y-%m-%d}<br>High Stress: %{y}/" + str(_n_total) + "<extra></extra>",
+            ))
+            _fig123a.add_hline(y=_n_total * 0.5, line=dict(color="rgba(245,158,11,0.4)", dash="dot", width=1))
+            _fig123a.update_layout(
+                height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Count of Elevated Sub-Scores (3Y)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, _n_total + 0.5], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="# Sub-Scores"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig123a, use_container_width=True)
+            st.caption(f"Dashed line = majority threshold ({_n_total//2 +1}/{_n_total} scores elevated = broad consensus)")
+
+            # Score dispersion (std dev)
+            _fig123b = _go123.Figure()
+            _fig123b.add_trace(_go123.Scatter(
+                x=_cons_tail.index, y=_cons_tail["score_std"],
+                line=dict(color="#a78bfa", width=2), name="Score Std Dev",
+                hovertemplate="%{x|%Y-%m-%d}<br>Std Dev: %{y:.1f}pts<extra></extra>",
+            ))
+            _fig123b.add_hline(y=20, line=dict(color="rgba(167,139,250,0.4)", dash="dot", width=1))
+            _fig123b.update_layout(
+                height=180, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Inter-Score Dispersion (Std Dev, pts)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig123b, use_container_width=True)
+            st.caption("High dispersion (>20pts) = mixed signal environment — composite may understate or overstate risk")
+
+            # Current score bar chart (all sub-scores)
+            _cur_scores = {_DN123.get(k, k): float(latest.get(v, float("nan")))
+                           for k, v in _sc123_present.items()}
+            _sorted_scores = sorted(_cur_scores.items(), key=lambda x: x[1] if pd.notna(x[1]) else 0, reverse=True)
+            _fig123c = _go123.Figure()
+            _fig123c.add_trace(_go123.Bar(
+                x=[s[0] for s in _sorted_scores],
+                y=[s[1] for s in _sorted_scores],
+                marker_color=["#ef4444" if s[1] >= 70 else "#f59e0b" if s[1] >= 50 else "#27ae60"
+                              if pd.notna(s[1]) else "#6b7280" for s in _sorted_scores],
+                text=[f"{s[1]:.0f}" if pd.notna(s[1]) else "—" for s in _sorted_scores],
+                textposition="auto",
+                hovertemplate="%{x}<br>Score: %{y:.0f}<extra></extra>",
+            ))
+            _fig123c.add_hline(y=50, line=dict(color="rgba(245,158,11,0.4)", dash="dot", width=1))
+            _fig123c.add_hline(y=70, line=dict(color="rgba(239,68,68,0.4)", dash="dot", width=1))
+            _fig123c.update_layout(
+                height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="All Sub-Scores — Current Snapshot (ranked)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Score"),
+                xaxis=dict(color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig123c, use_container_width=True)
+        else:
+            st.info("Not enough sub-score columns in dataframe for consensus analysis.")
+    except Exception as _e123:
+        st.caption(f"Score consensus: {_e123}")
+
+with _analytics_sub124:
+    import plotly.graph_objects as _go124
+    st.header("Equity Return Context")
+    st.markdown(
+        "**SP500 5-day and 30-day returns** are used as inputs in multiple composite sub-scores, "
+        "but their standalone distribution and clustering properties are also credit-relevant. "
+        "Equity declines of more than **-5% in 5 days** historically see HY spreads widen 20–80 bps "
+        "within 2 weeks. Sustained **-10%+ over 30 days** signals de-risking flows that spill into "
+        "credit, even when HY fundamentals are intact. "
+        "The **drawdown context** — where the 5d/30d return sits relative to the trailing drawdown — "
+        "distinguishes shallow corrections from structural breaks."
+    )
+    try:
+        _eq124_cols = ["sp500_return_5d", "sp500_return_30d", "sp500_drawdown", "sp500", "hy_spread"]
+        _avail124 = [c for c in _eq124_cols if c in df.columns]
+        if "sp500_return_5d" in df.columns or "sp500_return_30d" in df.columns:
+            _eq124 = df[[c for c in _avail124]].copy()
+            _eq124.index = pd.to_datetime(_eq124.index)
+            _cur_r5 = float(latest.get("sp500_return_5d", float("nan")))
+            _cur_r30 = float(latest.get("sp500_return_30d", float("nan")))
+            _cur_dd = float(latest.get("sp500_drawdown", float("nan")))
+
+            _ea124, _eb124, _ec124, _ed124 = st.columns(4)
+            _ea124.metric("SP500 Return 5d", f"{_cur_r5:.1%}" if pd.notna(_cur_r5) else "—",
+                          delta_color="normal" if pd.notna(_cur_r5) and _cur_r5 > 0 else "inverse")
+            _eb124.metric("SP500 Return 30d", f"{_cur_r30:.1%}" if pd.notna(_cur_r30) else "—",
+                          delta_color="normal" if pd.notna(_cur_r30) and _cur_r30 > 0 else "inverse")
+            _ec124.metric("SP500 Drawdown", f"{_cur_dd:.1%}" if pd.notna(_cur_dd) else "—",
+                          delta_color="inverse")
+            _r30_pctile = (df["sp500_return_30d"].dropna() < _cur_r30).mean() * 100 if pd.notna(_cur_r30) and "sp500_return_30d" in df.columns else float("nan")
+            _ed124.metric("30d Return Pctile", f"{_r30_pctile:.0f}th" if pd.notna(_r30_pctile) else "—")
+
+            if pd.notna(_cur_r5) and _cur_r5 < -0.05:
+                st.error(f"SP500 down {_cur_r5:.1%} in 5 days — historical pattern: HY spreads widen 20–80bps within 2 weeks.")
+            elif pd.notna(_cur_r30) and _cur_r30 < -0.10:
+                st.warning(f"SP500 down {_cur_r30:.1%} over 30 days — sustained de-risking; credit spread widening risk elevated.")
+
+            # Return history
+            _eq_tail = _eq124.tail(504)
+            if "sp500_return_30d" in _eq_tail.columns:
+                _r30_colors = ["#ef4444" if v < -0.05 else "#f59e0b" if v < 0 else "#27ae60"
+                               for v in _eq_tail["sp500_return_30d"].fillna(0)]
+                _fig124a = _go124.Figure()
+                _fig124a.add_trace(_go124.Bar(
+                    x=_eq_tail.index, y=(_eq_tail["sp500_return_30d"] * 100),
+                    marker_color=_r30_colors, name="30d Return",
+                    hovertemplate="%{x|%Y-%m-%d}<br>30d: %{y:+.1f}%<extra></extra>",
+                ))
+                _fig124a.add_hline(y=-5, line=dict(color="rgba(245,158,11,0.5)", dash="dot", width=1))
+                _fig124a.add_hline(y=-10, line=dict(color="rgba(239,68,68,0.5)", dash="dot", width=1))
+                _fig124a.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _fig124a.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="SP500 30-Day Return (2Y)", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="%"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig124a, use_container_width=True)
+                st.caption("Orange: -5% threshold | Red: -10% threshold — credit contagion risk zones")
+
+            # SP500 return 30d vs HY change 30d scatter
+            if "hy_spread" in _eq124.columns and "sp500_return_30d" in _eq124.columns:
+                _eq_sc = _eq124.dropna(subset=["sp500_return_30d"]).tail(504).copy()
+                _eq_sc["hy_change_30d"] = _eq_sc["hy_spread"].diff(30)
+                _eq_sc = _eq_sc.dropna(subset=["hy_change_30d"])
+                _sc_colors124 = ["#ef4444" if r < -0.05 else "#f59e0b" if r < 0 else "#27ae60"
+                                  for r in _eq_sc["sp500_return_30d"]]
+                _fig124b = _go124.Figure()
+                _fig124b.add_trace(_go124.Scatter(
+                    x=_eq_sc["sp500_return_30d"] * 100, y=_eq_sc["hy_change_30d"],
+                    mode="markers",
+                    marker=dict(color=_sc_colors124, size=4, opacity=0.45),
+                    hovertemplate="SP500 30d: %{x:+.1f}%<br>HY Δ30d: %{y:+.0f}bps<extra></extra>",
+                ))
+                _fig124b.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                _fig124b.add_vline(x=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                _fig124b.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="SP500 30d Return vs HY 30d Change", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="SP500 30d Return (%)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="HY Δ30d (bps)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig124b, use_container_width=True)
+                st.caption("Strong negative correlation: equity declines → HY widening · "
+                           "Outliers (equity up + HY wider) = credit-equity divergence episodes")
+
+            # Return distribution
+            if "sp500_return_30d" in _eq124.columns:
+                _ret_vals = _eq124["sp500_return_30d"].dropna() * 100
+                _fig124c = _go124.Figure()
+                _fig124c.add_trace(_go124.Histogram(
+                    x=_ret_vals, nbinsx=60,
+                    marker_color="#4f8ef7", opacity=0.7, name="30d Return Distribution",
+                    hovertemplate="Return: %{x:.1f}%<br>Count: %{y}<extra></extra>",
+                ))
+                if pd.notna(_cur_r30):
+                    _fig124c.add_vline(x=_cur_r30 * 100,
+                                       line=dict(color="#f59e0b", dash="dash", width=2),
+                                       annotation_text=f"Current: {_cur_r30:.1%}",
+                                       annotation_font_color="#f59e0b")
+                _fig124c.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="SP500 30-Day Return Distribution (full history)", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280", title="30d Return (%)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig124c, use_container_width=True)
+        else:
+            st.info("SP500 return columns not found — run the feature pipeline.")
+    except Exception as _e124:
+        st.caption(f"Equity returns: {_e124}")
+
+with _analytics_sub125:
+    import plotly.graph_objects as _go125
+    st.header("10-Year Yield Level Context")
+    st.markdown(
+        "The **10-year Treasury yield** is the risk-free rate anchor for all credit pricing. "
+        "When the 10y yield rises sharply (bear market in rates), investment-grade credit "
+        "suffers most from duration losses; HY spreads may initially be stable but widen "
+        "as refinancing costs rise. When the 10y falls rapidly (flight to safety), "
+        "it signals risk-off — spreads typically widen simultaneously despite lower base rates. "
+        "This tab tracks the 10y yield level, its rolling percentile, and co-movement with HY spreads."
+    )
+    try:
+        _y10_col = "yield_10y"
+        _y2_col = "yield_2y"
+        if _y10_col in df.columns and df[_y10_col].notna().any():
+            _y10125 = df[[_y10_col]].copy()
+            for _c in [_y2_col, "hy_spread", "spread", "breakeven_10y", "real_yield_proxy"]:
+                if _c in df.columns:
+                    _y10125[_c] = df[_c]
+            _y10125.index = pd.to_datetime(_y10125.index)
+            _cur_y10 = float(latest.get(_y10_col, float("nan")))
+            _cur_y2 = float(latest.get(_y2_col, float("nan"))) if _y2_col in df.columns else float("nan")
+            _y10_1m = float(df[_y10_col].diff(21).iloc[-1]) if df[_y10_col].notna().any() else float("nan")
+            _y10_3m = float(df[_y10_col].diff(63).iloc[-1]) if df[_y10_col].notna().any() else float("nan")
+            _y10_pctile = (df[_y10_col].dropna() < _cur_y10).mean() * 100 if pd.notna(_cur_y10) else float("nan")
+
+            _ya, _yb, _yc, _yd = st.columns(4)
+            _ya.metric("10y Yield", f"{_cur_y10:.2f}%" if pd.notna(_cur_y10) else "—",
+                       delta=f"{_y10_1m:+.2f}pp 1M" if pd.notna(_y10_1m) else None,
+                       delta_color="inverse")
+            _yb.metric("2y Yield", f"{_cur_y2:.2f}%" if pd.notna(_cur_y2) else "—")
+            _yc.metric("3M Change", f"{_y10_3m:+.2f}pp" if pd.notna(_y10_3m) else "—",
+                       delta_color="inverse")
+            _yd.metric("Full-History Pctile", f"{_y10_pctile:.0f}th" if pd.notna(_y10_pctile) else "—")
+
+            if pd.notna(_y10_3m) and _y10_3m > 0.75:
+                st.warning(f"10y yield rising rapidly (+{_y10_3m:.2f}pp in 3M) — rate shock risk. "
+                           "Duration-sensitive IG credit under pressure; HY refinancing costs rising.")
+            elif pd.notna(_y10_3m) and _y10_3m < -0.50:
+                st.info(f"10y yield falling sharply ({_y10_3m:.2f}pp in 3M) — flight-to-safety signal. "
+                        "Typically coincides with or leads HY spread widening.")
+
+            # 10y + 2y yield time series
+            _y10_tail = _y10125.tail(756)
+            _fig125a = _go125.Figure()
+            _fig125a.add_trace(_go125.Scatter(
+                x=_y10_tail.index, y=_y10_tail[_y10_col],
+                name="10y Yield", line=dict(color="#4f8ef7", width=2.5),
+                hovertemplate="%{x|%Y-%m-%d}<br>10y: %{y:.2f}%<extra></extra>",
+            ))
+            if _y2_col in _y10_tail.columns:
+                _fig125a.add_trace(_go125.Scatter(
+                    x=_y10_tail.index, y=_y10_tail[_y2_col],
+                    name="2y Yield", line=dict(color="#a78bfa", width=1.5, dash="dot"),
+                    hovertemplate="%{x|%Y-%m-%d}<br>2y: %{y:.2f}%<extra></extra>",
+                ))
+            _fig125a.update_layout(
+                height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="10y and 2y Treasury Yields (3Y)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="%"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig125a, use_container_width=True)
+
+            # Rolling percentile of 10y yield
+            _y10125["y10_pctile"] = _y10125[_y10_col].expanding().rank(pct=True) * 100
+            _fig125b = _go125.Figure()
+            _fig125b.add_hrect(y0=80, y1=100, fillcolor="rgba(239,68,68,0.07)", line_width=0)
+            _fig125b.add_hrect(y0=0, y1=20, fillcolor="rgba(39,174,96,0.07)", line_width=0)
+            _fig125b.add_trace(_go125.Scatter(
+                x=_y10_tail.index, y=_y10125["y10_pctile"].loc[_y10_tail.index],
+                line=dict(color="#4f8ef7", width=2), name="10y Yield Pctile",
+                hovertemplate="%{x|%Y-%m-%d}<br>Pctile: %{y:.0f}th<extra></extra>",
+            ))
+            _fig125b.add_hline(y=50, line=dict(color="rgba(255,255,255,0.15)", dash="dot", width=1))
+            _fig125b.update_layout(
+                height=180, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="10y Yield Historical Percentile Rank", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Pctile"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig125b, use_container_width=True)
+
+            # 10y yield vs HY spread dual-axis
+            if "hy_spread" in _y10_tail.columns:
+                _fig125c = _go125.Figure()
+                _fig125c.add_trace(_go125.Scatter(
+                    x=_y10_tail.index, y=_y10_tail[_y10_col],
+                    name="10y Yield (%)", line=dict(color="#4f8ef7", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>10y: %{y:.2f}%<extra></extra>",
+                ))
+                _fig125c.add_trace(_go125.Scatter(
+                    x=_y10_tail.index, y=_y10_tail["hy_spread"],
+                    name="HY Spread (bps)", line=dict(color="#f59e0b", width=1.5, dash="dot"),
+                    yaxis="y2",
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY: %{y:.0f}bps<extra></extra>",
+                ))
+                _fig125c.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=50),
+                    title=dict(text="10y Treasury Yield vs HY Spread", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#4f8ef7", title="10y Yield (%)"),
+                    yaxis2=dict(overlaying="y", side="right", color="#f59e0b", title="HY Spread (bps)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+                                orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig125c, use_container_width=True)
+                st.caption("Both rising = stagflation / rate-shock risk (worst for total return) · "
+                           "Yield falling + spreads rising = flight-to-safety episode (risk-off)")
+        else:
+            st.info("yield_10y column not found — run the feature pipeline.")
+    except Exception as _e125:
+        st.caption(f"10y yield context: {_e125}")
+
+with _analytics_sub126:
+    import plotly.graph_objects as _go126
+    st.header("Composite Risk Score — Full History")
+    st.markdown(
+        "The **composite risk score** is the primary output of this dashboard — a 0–100 index weighting "
+        "seven sub-scores into a single credit stress signal. This tab provides the full historical "
+        "context: where is the current score relative to all prior readings, how persistent are "
+        "high-risk regimes, and what was the HY spread outcome following each major score peak. "
+        "**Score thresholds:** 0–30 = Low Risk · 30–50 = Moderate · 50–70 = Elevated · 70–100 = High Risk."
+    )
+    try:
+        _comp126_col = "composite_risk_score_smooth"
+        if _comp126_col in df.columns and df[_comp126_col].notna().any():
+            _comp126 = df[[_comp126_col]].copy()
+            if "hy_spread" in df.columns:
+                _comp126["hy_spread"] = df["hy_spread"]
+            _comp126.index = pd.to_datetime(_comp126.index)
+            _cur_comp = float(latest.get(_comp126_col, float("nan")))
+            _comp_pctile = (df[_comp126_col].dropna() < _cur_comp).mean() * 100 if pd.notna(_cur_comp) else float("nan")
+            _comp_max = float(df[_comp126_col].max())
+            _comp_mean = float(df[_comp126_col].mean())
+
+            def _comp_regime(score):
+                if pd.isna(score):
+                    return "Unknown"
+                if score >= 70:
+                    return "High Risk"
+                if score >= 50:
+                    return "Elevated Risk"
+                if score >= 30:
+                    return "Moderate Risk"
+                return "Low Risk"
+
+            _comp_reg = _comp_regime(_cur_comp)
+            _comp_reg_colors = {"High Risk": "#ef4444", "Elevated Risk": "#f59e0b",
+                                "Moderate Risk": "#4f8ef7", "Low Risk": "#27ae60"}
+
+            _ca126, _cb126, _cc126, _cd126 = st.columns(4)
+            _ca126.metric("Composite Score", f"{_cur_comp:.0f}/100" if pd.notna(_cur_comp) else "—")
+            _cb126.metric("Regime", _comp_reg)
+            _cc126.metric("Historical Pctile", f"{_comp_pctile:.0f}th" if pd.notna(_comp_pctile) else "—")
+            _cd126.metric("All-Time High", f"{_comp_max:.0f}" if pd.notna(_comp_max) else "—")
+
+            if pd.notna(_cur_comp) and _cur_comp >= 70:
+                st.error(f"Composite score in High Risk territory ({_cur_comp:.0f}/100) — "
+                         "broad multi-dimensional stress confirmed. Full defensive posture warranted.")
+
+            # Full-history composite with regime bands
+            _comp_full = _comp126.copy()
+            _fig126a = _go126.Figure()
+            _fig126a.add_hrect(y0=70, y1=105, fillcolor="rgba(239,68,68,0.08)", line_width=0)
+            _fig126a.add_hrect(y0=50, y1=70, fillcolor="rgba(245,158,11,0.06)", line_width=0)
+            _fig126a.add_hrect(y0=30, y1=50, fillcolor="rgba(79,142,247,0.04)", line_width=0)
+            _fig126a.add_trace(_go126.Scatter(
+                x=_comp_full.index, y=_comp_full[_comp126_col],
+                line=dict(color="#e2e8f0", width=1.5), name="Composite Score",
+                fill="tozeroy", fillcolor="rgba(226,232,240,0.05)",
+                hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.0f}<extra></extra>",
+            ))
+            for _thresh, _tc in [(30, "rgba(79,142,247,0.3)"), (50, "rgba(245,158,11,0.4)"),
+                                  (70, "rgba(239,68,68,0.5)")]:
+                _fig126a.add_hline(y=_thresh, line=dict(color=_tc, dash="dot", width=1))
+            _fig126a.add_hline(y=_comp_mean, line=dict(color="rgba(255,255,255,0.2)", dash="dash", width=1),
+                               annotation_text=f"Mean: {_comp_mean:.0f}",
+                               annotation_font_color="rgba(255,255,255,0.5)")
+            _fig126a.update_layout(
+                height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Composite Risk Score — Full History", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Score (0–100)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig126a, use_container_width=True)
+            st.caption("Red band = High Risk (≥70) · Orange = Elevated (50–70) · Blue = Moderate (30–50) · Dashed = historical mean")
+
+            # Rolling % time in each regime
+            _comp126["regime"] = _comp126[_comp126_col].apply(_comp_regime)
+            _regime_freq126 = _comp126["regime"].value_counts(normalize=True).mul(100)
+            _fig126b = _go126.Figure()
+            _fig126b.add_trace(_go126.Bar(
+                x=_regime_freq126.index.tolist(), y=_regime_freq126.values.tolist(),
+                marker_color=[_comp_reg_colors.get(r, "#6b7280") for r in _regime_freq126.index],
+                text=[f"{v:.0f}%" for v in _regime_freq126.values], textposition="auto",
+                hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
+            ))
+            _fig126b.update_layout(
+                height=190, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Time Spent in Each Risk Regime (Full History)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="% of days"),
+                xaxis=dict(color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig126b, use_container_width=True)
+
+            # Composite vs HY spread full history
+            if "hy_spread" in _comp_full.columns:
+                _fig126c = _go126.Figure()
+                _fig126c.add_trace(_go126.Scatter(
+                    x=_comp_full.index, y=_comp_full[_comp126_col],
+                    name="Composite Score", line=dict(color="#e2e8f0", width=1.5),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.0f}<extra></extra>",
+                ))
+                _fig126c.add_trace(_go126.Scatter(
+                    x=_comp_full.index, y=_comp_full["hy_spread"],
+                    name="HY Spread (bps)", line=dict(color="#f59e0b", width=1.5, dash="dot"),
+                    yaxis="y2",
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY: %{y:.0f}bps<extra></extra>",
+                ))
+                _fig126c.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=50),
+                    title=dict(text="Composite Score vs HY Spread — Full History", font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(range=[0, 105], showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#e2e8f0", title="Composite Score"),
+                    yaxis2=dict(overlaying="y", side="right", color="#f59e0b", title="HY Spread (bps)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+                                orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig126c, use_container_width=True)
+        else:
+            st.info("Composite risk score not found — run the full scoring pipeline.")
+    except Exception as _e126:
+        st.caption(f"Composite history: {_e126}")
+
+with _analytics_sub127:
+    import plotly.graph_objects as _go127
+    st.header("VIX Level Context")
+    st.markdown(
+        "The **VIX** (CBOE Volatility Index) measures the market's 30-day implied volatility on S&P 500 "
+        "options. For credit, VIX is important because it is the primary component of the Complacency "
+        "sub-score and a key input to the Credit Market Risk sub-score. "
+        "Key levels: **VIX < 15** = complacency risk / tight credit; **15–20** = normal; "
+        "**20–30** = elevated stress; **VIX > 30** = acute fear / HY spread widening underway. "
+        "This tab examines VIX in isolation — its full-history percentile, regime distribution, "
+        "and the relationship between sustained VIX elevation and HY spread outcomes."
+    )
+    try:
+        if "vix" in df.columns and df["vix"].notna().any():
+            _vix127 = df[["vix"]].copy()
+            if "hy_spread" in df.columns:
+                _vix127["hy_spread"] = df["hy_spread"]
+            _vix127.index = pd.to_datetime(_vix127.index)
+            _cur_vix = float(latest.get("vix", float("nan")))
+            _vix_pctile = (df["vix"].dropna() < _cur_vix).mean() * 100 if pd.notna(_cur_vix) else float("nan")
+            _vix_1m_avg = float(df["vix"].rolling(21).mean().iloc[-1])
+            _vix_3m_avg = float(df["vix"].rolling(63).mean().iloc[-1])
+
+            def _vix_regime_label(vix):
+                if pd.isna(vix):
+                    return "Unknown"
+                if vix > 40:
+                    return "Panic (>40)"
+                if vix > 30:
+                    return "Acute Fear (30–40)"
+                if vix > 20:
+                    return "Elevated (20–30)"
+                if vix > 15:
+                    return "Normal (15–20)"
+                return "Complacent (<15)"
+
+            _vix_reg = _vix_regime_label(_cur_vix)
+            _vix_reg_colors = {
+                "Panic (>40)": "#7f1d1d",
+                "Acute Fear (30–40)": "#ef4444",
+                "Elevated (20–30)": "#f59e0b",
+                "Normal (15–20)": "#4f8ef7",
+                "Complacent (<15)": "#27ae60",
+            }
+
+            _va127, _vb127, _vc127, _vd127 = st.columns(4)
+            _va127.metric("VIX Level", f"{_cur_vix:.1f}" if pd.notna(_cur_vix) else "—")
+            _vb127.metric("Regime", _vix_reg)
+            _vc127.metric("Historical Pctile", f"{_vix_pctile:.0f}th" if pd.notna(_vix_pctile) else "—")
+            _vd127.metric("1M / 3M Avg", f"{_vix_1m_avg:.1f} / {_vix_3m_avg:.1f}"
+                          if pd.notna(_vix_1m_avg) else "—")
+
+            if pd.notna(_cur_vix) and _cur_vix > 30:
+                st.error(f"VIX in Acute Fear territory ({_cur_vix:.1f}) — "
+                         "implied volatility at stressed levels. HY spreads typically widen during sustained VIX>30 regimes.")
+            elif pd.notna(_cur_vix) and _cur_vix < 15:
+                st.warning(f"VIX at complacency levels ({_cur_vix:.1f}) — "
+                           "fear premia historically insufficient at these levels. Credit spread compression risk elevated.")
+
+            # VIX full history with regime shading
+            _vix_full = _vix127.copy()
+            _fig127a = _go127.Figure()
+            _fig127a.add_hrect(y0=30, y1=80, fillcolor="rgba(239,68,68,0.08)", line_width=0)
+            _fig127a.add_hrect(y0=0, y1=15, fillcolor="rgba(39,174,96,0.06)", line_width=0)
+            _fig127a.add_trace(_go127.Scatter(
+                x=_vix_full.index, y=_vix_full["vix"],
+                line=dict(color="#ef4444", width=1.5), name="VIX",
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.06)",
+                hovertemplate="%{x|%Y-%m-%d}<br>VIX: %{y:.1f}<extra></extra>",
+            ))
+            for _vt, _vc in [(15, "rgba(39,174,96,0.4)"), (20, "rgba(79,142,247,0.4)"),
+                              (30, "rgba(245,158,11,0.4)"), (40, "rgba(239,68,68,0.4)")]:
+                _fig127a.add_hline(y=_vt, line=dict(color=_vc, dash="dot", width=1))
+            _fig127a.update_layout(
+                height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="VIX Level — Full History", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig127a, use_container_width=True)
+            st.caption("Green band = Complacent (<15) · Red band = Fear (>30) · Thresholds: 15, 20, 30, 40")
+
+            # VIX regime frequency
+            _vix_full["regime"] = _vix_full["vix"].apply(_vix_regime_label)
+            _vix_freq = _vix_full["regime"].value_counts(normalize=True).mul(100)
+            _fig127b = _go127.Figure()
+            _fig127b.add_trace(_go127.Bar(
+                x=_vix_freq.index.tolist(), y=_vix_freq.values.tolist(),
+                marker_color=[_vix_reg_colors.get(r, "#6b7280") for r in _vix_freq.index],
+                text=[f"{v:.0f}%" for v in _vix_freq.values], textposition="auto",
+                hovertemplate="%{x}: %{y:.0f}%<extra></extra>",
+            ))
+            _fig127b.update_layout(
+                height=190, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="VIX Regime Frequency (Full History)", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="% of days"),
+                xaxis=dict(color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig127b, use_container_width=True)
+
+            # VIX vs HY spread scatter
+            if "hy_spread" in _vix_full.columns:
+                _vix_sc = _vix_full.dropna(subset=["vix", "hy_spread"])
+                _sc_colors127 = [_vix_reg_colors.get(_vix_regime_label(v), "#6b7280") for v in _vix_sc["vix"]]
+                _fig127c = _go127.Figure()
+                _fig127c.add_trace(_go127.Scatter(
+                    x=_vix_sc["vix"], y=_vix_sc["hy_spread"],
+                    mode="markers",
+                    marker=dict(color=_sc_colors127, size=3, opacity=0.35),
+                    hovertemplate="VIX: %{x:.1f}<br>HY: %{y:.0f}bps<extra></extra>",
+                ))
+                _fig127c.update_layout(
+                    height=230, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="VIX vs HY Spread — Full History Scatter", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="VIX"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="HY Spread (bps)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig127c, use_container_width=True)
+                st.caption("Strong positive correlation: VIX>30 historically coexists with HY spreads >500bps. "
+                           "Note: correlation is nonlinear — VIX 15→20 barely moves HY; VIX 30→40 surges HY 200+ bps.")
+        else:
+            st.info("VIX column not found — run the feature pipeline.")
+    except Exception as _e127:
+        st.caption(f"VIX context: {_e127}")
