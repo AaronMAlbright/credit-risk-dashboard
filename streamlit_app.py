@@ -150,6 +150,12 @@ from src.tail_dependency import run_tail_dependency
 from src.fed_liquidity import run_fed_liquidity
 from src.g4_divergence import run_g4_divergence
 from src.portfolio_stress_test import run_portfolio_stress_test, DEFAULT_PORTFOLIO, ASSET_LABELS, SHOCK_SCENARIOS as PST_SCENARIOS
+from src.at1_coco_monitor import run_at1_coco_monitor
+from src.swap_spread_monitor import run_swap_spread_monitor
+from src.cross_currency_basis import run_cross_currency_basis
+from src.cre_stress import run_cre_stress
+from src.primary_market_issuance import run_primary_market_issuance
+from src.distressed_debt import run_distressed_debt_analysis
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -853,6 +859,36 @@ def load_g4_divergence(_df):
 @st.cache_data
 def load_portfolio_stress_test(_df):
     return run_portfolio_stress_test(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_at1_coco_monitor(_df):
+    return run_at1_coco_monitor(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_swap_spread_monitor(_df):
+    return run_swap_spread_monitor(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_cross_currency_basis(_df):
+    return run_cross_currency_basis(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_cre_stress(_df):
+    return run_cre_stress(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_primary_market_issuance(_df):
+    return run_primary_market_issuance(_df)
+
+
+@st.cache_data
+def load_distressed_debt(_df):
+    return run_distressed_debt_analysis(_df)
 
 
 @st.cache_data
@@ -2859,7 +2895,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 55 sub-tabs
+with tab5:  # Analytics — 61 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
@@ -2876,7 +2912,9 @@ with tab5:  # Analytics — 55 sub-tabs
      _analytics_sub44, _analytics_sub45, _analytics_sub46,
      _analytics_sub47, _analytics_sub48, _analytics_sub49,
      _analytics_sub50, _analytics_sub51, _analytics_sub52,
-     _analytics_sub53, _analytics_sub54, _analytics_sub55) = st.tabs([
+     _analytics_sub53, _analytics_sub54, _analytics_sub55,
+     _analytics_sub56, _analytics_sub57, _analytics_sub58,
+     _analytics_sub59, _analytics_sub60, _analytics_sub61) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2894,6 +2932,8 @@ with tab5:  # Analytics — 55 sub-tabs
         "Put/Call", "Credit Basis", "Drawdown",
         "Signal Move", "Risk Parity", "Tail Dependency",
         "Fed Liquidity", "G4 Divergence", "Port Stress",
+        "AT1/CoCo", "Swap Spreads", "XCcy Basis",
+        "CRE Stress", "Issuance", "Distressed",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -10628,6 +10668,288 @@ with _analytics_sub55:
             st.info("Portfolio stress test unavailable.")
     except Exception as _pst_e:
         st.caption(f"Portfolio stress test unavailable: {_pst_e}")
+
+# --- sub-tab 56: AT1/CoCo Monitor -------------------------------------------
+with _analytics_sub56:
+    import plotly.graph_objects as _go_at1
+    st.header("AT1 / CoCo Monitor")
+    st.markdown(
+        "Bank hybrid capital stress tracker. AT1 bonds (CoCos) absorb losses before senior debt — "
+        "stress here is an early-warning signal for bank credit conditions."
+    )
+    try:
+        _at1 = load_at1_coco_monitor(df)
+        if _at1.get("available"):
+            _at1c = _at1.get("current", {})
+            _c1at1, _c2at1, _c3at1 = st.columns(3)
+            _c1at1.metric("Bank Stress Score", f"{_at1c.get('bank_stress_score', 0):.0f}/100")
+            _c2at1.metric("AT1 Signal", _at1c.get("at1_signal", "N/A"))
+            _c3at1.metric("CoCo Trigger Flag", "YES" if _at1c.get("coco_trigger_flag") else "NO")
+            if _at1c.get("warning"):
+                st.warning(_at1c["warning"])
+            if _at1c.get("interpretation"):
+                st.info(_at1c["interpretation"])
+            _at1_hist = _at1.get("bank_stress_history")
+            if _at1_hist is not None and len(_at1_hist) > 20:
+                _fig_at1 = _go_at1.Figure()
+                _fig_at1.add_trace(_go_at1.Scatter(
+                    x=_at1_hist.index, y=_at1_hist.values,
+                    name="Bank Stress Score", line=dict(color="#f59e0b", width=1.5)
+                ))
+                _fig_at1.add_hline(y=75, line_dash="dot", line_color="#ef4444",
+                                   annotation_text="Systemic Risk")
+                _fig_at1.update_layout(
+                    template="plotly_dark", height=300, title="AT1/Bank Stress Score",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score (0–100)", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_at1, use_container_width=True)
+        else:
+            st.info("AT1/CoCo monitor unavailable — requires bank ETF data (KBE, KRE, KBW, AT1).")
+    except Exception as _at1_e:
+        st.caption(f"AT1/CoCo monitor unavailable: {_at1_e}")
+
+# --- sub-tab 57: Swap Spread Monitor ----------------------------------------
+with _analytics_sub57:
+    import plotly.graph_objects as _go_swp
+    st.header("Swap Spread Monitor")
+    st.markdown(
+        "Interest rate swap spreads (swap rate minus Treasury yield) reflect bank balance-sheet "
+        "constraints and systemic funding pressure. Deeply negative spreads signal dealer stress."
+    )
+    try:
+        _swp = load_swap_spread_monitor(df)
+        if _swp.get("available"):
+            _swpc = _swp.get("current", {})
+            _c1s, _c2s, _c3s, _c4s = st.columns(4)
+            _c1s.metric("2y Swap Spread", f"{_swpc.get('spread_2y', float('nan')):.0f}bps" if _swpc.get('spread_2y') is not None else "N/A")
+            _c2s.metric("5y Swap Spread", f"{_swpc.get('spread_5y', float('nan')):.0f}bps" if _swpc.get('spread_5y') is not None else "N/A")
+            _c3s.metric("10y Swap Spread", f"{_swpc.get('spread_10y', float('nan')):.0f}bps" if _swpc.get('spread_10y') is not None else "N/A")
+            _c4s.metric("30y Swap Spread", f"{_swpc.get('spread_30y', float('nan')):.0f}bps" if _swpc.get('spread_30y') is not None else "N/A")
+            if _swpc.get("systemic_flag"):
+                st.error("SYSTEMIC FLAG: Swap spread(s) deeply negative — dealer balance sheet stress elevated.")
+            elif _swpc.get("stress_flag"):
+                st.warning("Stress flag: At least one tenor in negative territory.")
+            _swp_regime = _swpc.get("regime_10y", "")
+            if _swp_regime:
+                st.caption(f"10y Regime: {_swp_regime}")
+            if _swpc.get("interpretation"):
+                st.info(_swpc["interpretation"])
+            _swp_hist = _swp.get("historical", {})
+            _swp_10y = _swp_hist.get("10y")
+            if _swp_10y is not None and len(_swp_10y) > 20:
+                _fig_swp = _go_swp.Figure()
+                _fig_swp.add_trace(_go_swp.Scatter(
+                    x=_swp_10y.index, y=_swp_10y.values,
+                    name="10y Swap Spread", line=dict(color="#60a5fa", width=1.5)
+                ))
+                _fig_swp.add_hline(y=0, line_dash="solid", line_color="#6b7280")
+                _fig_swp.add_hline(y=-20, line_dash="dot", line_color="#ef4444",
+                                   annotation_text="Systemic threshold")
+                _fig_swp.update_layout(
+                    template="plotly_dark", height=300, title="10y Swap Spread (bps)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="bps"),
+                )
+                st.plotly_chart(_fig_swp, use_container_width=True)
+        else:
+            st.info("Swap spread monitor unavailable — requires FRED API key or swap rate columns.")
+    except Exception as _swp_e:
+        st.caption(f"Swap spread monitor unavailable: {_swp_e}")
+
+# --- sub-tab 58: Cross-Currency Basis ----------------------------------------
+with _analytics_sub58:
+    import plotly.graph_objects as _go_xccy
+    st.header("Cross-Currency Basis")
+    st.markdown(
+        "EUR/USD and JPY/USD cross-currency basis swap cost. Negative basis = foreign investors "
+        "pay a premium to hedge USD credit exposure → reduced demand for USD credit → spread widening."
+    )
+    try:
+        _xccy = load_cross_currency_basis(df)
+        if _xccy.get("available"):
+            _xccyc = _xccy.get("current", {})
+            _c1x, _c2x, _c3x = st.columns(3)
+            _c1x.metric("EUR/USD Basis (proxy)", f"{_xccyc.get('eur_basis_bps', float('nan')):.1f}bps" if _xccyc.get('eur_basis_bps') is not None else "N/A")
+            _c2x.metric("JPY/USD Basis (proxy)", f"{_xccyc.get('jpy_basis_bps', float('nan')):.1f}bps" if _xccyc.get('jpy_basis_bps') is not None else "N/A")
+            _c3x.metric("Signal", _xccyc.get("signal", "N/A"))
+            if _xccyc.get("interpretation"):
+                st.info(_xccyc["interpretation"])
+            _xccy_hist = _xccy.get("historical")
+            if _xccy_hist is not None and len(_xccy_hist) > 20:
+                _fig_xccy = _go_xccy.Figure()
+                if "eur_basis_bps" in _xccy_hist.columns:
+                    _fig_xccy.add_trace(_go_xccy.Scatter(
+                        x=_xccy_hist.index, y=_xccy_hist["eur_basis_bps"],
+                        name="EUR/USD Basis", line=dict(color="#34d399", width=1.5)
+                    ))
+                if "jpy_basis_bps" in _xccy_hist.columns:
+                    _fig_xccy.add_trace(_go_xccy.Scatter(
+                        x=_xccy_hist.index, y=_xccy_hist["jpy_basis_bps"],
+                        name="JPY/USD Basis", line=dict(color="#a78bfa", width=1.5)
+                    ))
+                _fig_xccy.add_hline(y=-30, line_dash="dot", line_color="#ef4444",
+                                    annotation_text="Significant Headwind")
+                _fig_xccy.add_hline(y=0, line_dash="solid", line_color="#6b7280")
+                _fig_xccy.update_layout(
+                    template="plotly_dark", height=300,
+                    title="Cross-Currency Basis (proxy, bps)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="bps"),
+                )
+                st.plotly_chart(_fig_xccy, use_container_width=True)
+        else:
+            st.info("Cross-currency basis unavailable — requires DXY or FX data.")
+    except Exception as _xccy_e:
+        st.caption(f"Cross-currency basis unavailable: {_xccy_e}")
+
+# --- sub-tab 59: CRE Stress --------------------------------------------------
+with _analytics_sub59:
+    import plotly.graph_objects as _go_cre
+    st.header("Commercial Real Estate (CRE) Stress")
+    st.markdown(
+        "CRE stress tracker using REIT ETFs (VNQ, IYR) and regional bank ETFs (KRE). "
+        "CRE distress transmits to bank balance sheets via loan losses → credit spread widening."
+    )
+    try:
+        _cre = load_cre_stress(df)
+        if _cre.get("available"):
+            _crec = _cre.get("current", {})
+            _c1cre, _c2cre, _c3cre = st.columns(3)
+            _c1cre.metric("CRE Stress Score", f"{_crec.get('cre_stress_score', 0):.0f}/100")
+            _c2cre.metric("Regime", _crec.get("regime", "N/A"))
+            _c3cre.metric("Systemic Flag", "YES" if _crec.get("systemic_flag") else "NO")
+            if _crec.get("office_stress_flag"):
+                st.warning("Office stress flag: VNQ >20% below 52-week high.")
+            if _crec.get("systemic_flag"):
+                st.error("SYSTEMIC FLAG: CRE stress score ≥75 — potential bank contagion risk.")
+            if _crec.get("interpretation"):
+                st.info(_crec["interpretation"])
+            _cre_hist = _cre.get("historical")
+            if _cre_hist is not None and len(_cre_hist) > 20:
+                _fig_cre = _go_cre.Figure()
+                _fig_cre.add_trace(_go_cre.Scatter(
+                    x=_cre_hist.index, y=_cre_hist.values,
+                    name="CRE Stress Score", line=dict(color="#fb923c", width=1.5)
+                ))
+                _fig_cre.add_hline(y=75, line_dash="dot", line_color="#ef4444",
+                                   annotation_text="Systemic Risk")
+                _fig_cre.add_hline(y=50, line_dash="dot", line_color="#f59e0b",
+                                   annotation_text="Elevated")
+                _fig_cre.update_layout(
+                    template="plotly_dark", height=300, title="CRE Stress Score (0–100)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Score", range=[0, 100]),
+                )
+                st.plotly_chart(_fig_cre, use_container_width=True)
+        else:
+            st.info("CRE stress monitor unavailable — requires VNQ or CRE spread data.")
+    except Exception as _cre_e:
+        st.caption(f"CRE stress unavailable: {_cre_e}")
+
+# --- sub-tab 60: Primary Market Issuance ------------------------------------
+with _analytics_sub60:
+    import plotly.graph_objects as _go_iss
+    st.header("Primary Market Issuance")
+    st.markdown(
+        "New issue concession (NIC) proxy and issuance activity monitor. "
+        "Heavy supply / high NIC signals indigestion — spreads tend to widen. "
+        "Light supply / low NIC signals favorable technicals."
+    )
+    try:
+        _iss = load_primary_market_issuance(df)
+        if _iss.get("available"):
+            _issc = _iss.get("current", {})
+            _c1i, _c2i, _c3i = st.columns(3)
+            _c1i.metric("Issuance Score", f"{_issc.get('issuance_score', 0):.0f}/100")
+            _c2i.metric("NIC Signal", _issc.get("nic_signal", "N/A"))
+            _c3i.metric("Season", _issc.get("season", "N/A"))
+            if _issc.get("interpretation"):
+                st.info(_issc["interpretation"])
+            if _issc.get("supply_warning"):
+                st.warning(_issc["supply_warning"])
+            _iss_hist = _iss.get("nic_history")
+            if _iss_hist is not None and len(_iss_hist) > 20:
+                _fig_iss = _go_iss.Figure()
+                _fig_iss.add_trace(_go_iss.Scatter(
+                    x=_iss_hist.index, y=_iss_hist.values,
+                    name="NIC Proxy (bps)", line=dict(color="#22d3ee", width=1.5)
+                ))
+                _fig_iss.add_hline(y=0, line_dash="solid", line_color="#6b7280")
+                _fig_iss.update_layout(
+                    template="plotly_dark", height=300,
+                    title="New Issue Concession Proxy (bps)",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="bps"),
+                )
+                st.plotly_chart(_fig_iss, use_container_width=True)
+        else:
+            st.info("Issuance monitor unavailable — requires hy_spread data.")
+    except Exception as _iss_e:
+        st.caption(f"Primary market issuance unavailable: {_iss_e}")
+
+# --- sub-tab 61: Distressed Debt ---------------------------------------------
+with _analytics_sub61:
+    import plotly.graph_objects as _go_dis
+    st.header("Distressed Debt Monitor")
+    st.markdown(
+        "Estimates the fraction of the HY market trading at distressed levels (spread >1000bps) "
+        "and the implied recovery rate / LGD cycle. Tracks credit cycle phase from Pristine → Acute."
+    )
+    try:
+        _dis = load_distressed_debt(df)
+        if _dis.get("available"):
+            _disc = _dis.get("current", {})
+            _c1d, _c2d, _c3d, _c4d = st.columns(4)
+            _dr = _disc.get("distressed_ratio")
+            _c1d.metric("Distressed Ratio", f"{_dr:.1%}" if _dr is not None else "N/A")
+            _c2d.metric("Phase", _disc.get("distress_phase", "N/A"))
+            _rr = _disc.get("recovery_rate")
+            _c3d.metric("Recovery Rate", f"{_rr:.1f}%" if _rr is not None else "N/A")
+            _lgd = _disc.get("lgd")
+            _c4d.metric("LGD", f"{_lgd:.1%}" if _lgd is not None else "N/A")
+            if _disc.get("warning"):
+                st.error(_disc["warning"])
+            if _disc.get("interpretation"):
+                st.info(_disc["interpretation"])
+            _dis_ratio = _dis.get("ratio_history")
+            _dis_rr = _dis.get("recovery_history")
+            if _dis_ratio is not None and len(_dis_ratio.dropna()) > 20:
+                _fig_dis = _go_dis.Figure()
+                _fig_dis.add_trace(_go_dis.Scatter(
+                    x=_dis_ratio.index, y=(_dis_ratio * 100).values,
+                    name="Distressed Ratio (%)", line=dict(color="#ef4444", width=1.5)
+                ))
+                if _dis_rr is not None and len(_dis_rr.dropna()) > 20:
+                    _fig_dis.add_trace(_go_dis.Scatter(
+                        x=_dis_rr.index, y=_dis_rr.values,
+                        name="Recovery Rate (%)", line=dict(color="#34d399", width=1.5),
+                        yaxis="y2"
+                    ))
+                _fig_dis.add_hline(y=22, line_dash="dot", line_color="#f59e0b",
+                                   annotation_text="Distressed threshold (22%)")
+                _fig_dis.update_layout(
+                    template="plotly_dark", height=350,
+                    title="Distressed Ratio vs Recovery Rate",
+                    margin=dict(l=8, r=8, t=32, b=8),
+                    yaxis=dict(title="Distressed Ratio (%)", range=[0, 50]),
+                    yaxis2=dict(title="Recovery Rate (%)", overlaying="y", side="right",
+                                range=[0, 60]),
+                    legend=dict(orientation="h", y=1.05),
+                )
+                st.plotly_chart(_fig_dis, use_container_width=True)
+            _dis_ps = _dis.get("phase_summary", {})
+            if _dis_ps:
+                _dis_ps_rows = [
+                    {"Phase": ph, "Obs": v["n_obs"], "Avg Score": v["mean_score"]}
+                    for ph, v in _dis_ps.items()
+                ]
+                import pandas as _pd_dis
+                st.dataframe(_pd_dis.DataFrame(_dis_ps_rows).set_index("Phase"), use_container_width=True)
+        else:
+            st.info("Distressed debt monitor unavailable — requires hy_spread column.")
+    except Exception as _dis_e:
+        st.caption(f"Distressed debt monitor unavailable: {_dis_e}")
 
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
