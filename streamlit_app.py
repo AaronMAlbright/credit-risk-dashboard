@@ -138,6 +138,12 @@ from src.credit_quality_migration import run_credit_quality_migration
 from src.macro_surprise_index import run_macro_surprise_index
 from src.loan_market_monitor import run_loan_market_monitor
 from src.regime_duration import run_regime_duration
+from src.systematic_deleveraging import run_systematic_deleveraging
+from src.inflation_regime import run_inflation_regime
+from src.sector_divergence import run_sector_divergence
+from src.put_call_sentiment import run_put_call_sentiment
+from src.credit_basis import run_credit_basis
+from src.drawdown_recovery import run_drawdown_recovery
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -781,6 +787,36 @@ def load_loan_market_monitor(_df):
 @st.cache_data
 def load_regime_duration(_df):
     return run_regime_duration(_df)
+
+
+@st.cache_data
+def load_systematic_deleveraging(_df):
+    return run_systematic_deleveraging(_df)
+
+
+@st.cache_data
+def load_inflation_regime(_df):
+    return run_inflation_regime(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_sector_divergence(_df):
+    return run_sector_divergence(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_put_call_sentiment(_df):
+    return run_put_call_sentiment(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_credit_basis(_df):
+    return run_credit_basis(_df)
+
+
+@st.cache_data
+def load_drawdown_recovery(_df):
+    return run_drawdown_recovery(_df)
 
 
 @st.cache_data
@@ -2787,7 +2823,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 43 sub-tabs
+with tab5:  # Analytics — 49 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
@@ -2800,7 +2836,9 @@ with tab5:  # Analytics — 43 sub-tabs
      _analytics_sub32, _analytics_sub33, _analytics_sub34,
      _analytics_sub35, _analytics_sub36, _analytics_sub37,
      _analytics_sub38, _analytics_sub39, _analytics_sub40,
-     _analytics_sub41, _analytics_sub42, _analytics_sub43) = st.tabs([
+     _analytics_sub41, _analytics_sub42, _analytics_sub43,
+     _analytics_sub44, _analytics_sub45, _analytics_sub46,
+     _analytics_sub47, _analytics_sub48, _analytics_sub49) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2814,6 +2852,8 @@ with tab5:  # Analytics — 43 sub-tabs
         "PCA", "Regime Fcast", "Composite",
         "X-Asset Mom", "Vol Regime", "Quality Migr",
         "Macro Surprise", "Loan Market", "Regime Age",
+        "Deleveraging", "Inflation Regime", "Sector Stress",
+        "Put/Call", "Credit Basis", "Drawdown",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -9658,6 +9698,442 @@ with _analytics_sub43:
             st.info("Regime duration unavailable — requires `final_decision` column, ≥2 regimes observed, and ≥100 rows.")
     except Exception as _rd_e:
         st.caption(f"Regime duration unavailable: {_rd_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 44: Systematic Deleveraging Detector
+# =============================================================================
+with _analytics_sub44:
+    import plotly.graph_objects as _go_sdl
+    st.header("Systematic Deleveraging Detector")
+    st.markdown(
+        "Identifies when quant/systematic strategies are force-selling via the **correlation-to-1** phenomenon: "
+        "assets that normally move independently begin moving together. "
+        "Three sub-signals: cross-asset correlation spike + vol expansion + simultaneous drawdown."
+    )
+    try:
+        _sdl = load_systematic_deleveraging(df)
+        if _sdl.get("available"):
+            _sdl_cur = _sdl.get("current", {})
+            _sdl_comp = _sdl_cur.get("delev_composite")
+            _sdl_alert = _sdl_cur.get("alert_level", "No Signal")
+            _sdl_warn = _sdl.get("warning")
+            _sdl_interp = _sdl.get("interpretation", "")
+
+            _sdl_alert_color = {
+                "No Signal": "#27ae60", "Elevated Correlation": "#f39c12",
+                "Deleveraging Warning": "#e67e22", "Systematic Deleveraging Alert": "#e74c3c",
+            }.get(_sdl_alert, "#9aa0aa")
+
+            _sd1, _sd2, _sd3, _sd4 = st.columns(4)
+            _sd1.metric("Deleveraging Score", f"{_sdl_comp:.1f}" if _sdl_comp is not None else "—")
+            _sd2.metric("Alert Level", _sdl_alert)
+            _sd3.metric("Correlation Score", f"{_sdl_cur.get('corr_score', 0):.1f}")
+            _sd4.metric("Vol Expansion", f"{_sdl_cur.get('vol_score', 0):.1f}")
+
+            if _sdl_warn:
+                st.warning(_sdl_warn)
+            elif _sdl_interp:
+                st.info(_sdl_interp)
+
+            _sdl_in_dd = _sdl_cur.get("assets_in_drawdown", [])
+            if _sdl_in_dd:
+                st.caption(f"Assets currently in simultaneous drawdown: **{', '.join(_sdl_in_dd)}**")
+
+            # Historical composite
+            _sdl_series = _sdl.get("signal_series")
+            if _sdl_series is not None and len(_sdl_series) > 0:
+                _sdl_fig = _go_sdl.Figure()
+                _sdl_fig.add_trace(_go_sdl.Scatter(
+                    x=list(_sdl_series.index), y=list(_sdl_series.values),
+                    mode="lines", name="Deleveraging Score",
+                    line=dict(color="#e74c3c", width=2),
+                    fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.1f}<extra></extra>",
+                ))
+                for _thresh, _col, _lbl in [(30, "#f39c12", "Elevated"), (60, "#e67e22", "Warning"), (80, "#e74c3c", "Alert")]:
+                    _sdl_fig.add_hline(y=_thresh, line_color=_col, line_width=1, line_dash="dot",
+                                       annotation_text=_lbl, annotation_position="right")
+                _sdl_fig.update_layout(
+                    height=270, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="Deleveraging Score (0-100)", range=[0, 100], showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                )
+                st.plotly_chart(_sdl_fig, use_container_width=True)
+
+            # Peak events
+            _sdl_peaks = _sdl.get("peak_events", [])
+            if _sdl_peaks:
+                with st.expander("Top Historical Deleveraging Events"):
+                    _peak_rows = [{"Date": p.get("date", "—"), "Score": f"{p.get('composite', 0):.1f}",
+                                   "Alert": p.get("alert_level", "—")} for p in _sdl_peaks]
+                    st.dataframe(pd.DataFrame(_peak_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("Systematic deleveraging detector unavailable — requires ≥2 asset columns and ≥126 rows.")
+    except Exception as _sdl_e:
+        st.caption(f"Systematic deleveraging unavailable: {_sdl_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 45: Inflation Regime Monitor
+# =============================================================================
+with _analytics_sub45:
+    import plotly.graph_objects as _go_infl
+    st.header("Inflation Regime Monitor")
+    st.markdown(
+        "Decomposes the 10y nominal yield into **real rate + breakeven inflation** and maps today "
+        "onto the four-quadrant framework: Stagflation / Tightening / Reflation / Deflation Risk. "
+        "Different inflation regimes produce dramatically different credit spread outcomes."
+    )
+    try:
+        _infl = load_inflation_regime(df)
+        if _infl.get("available"):
+            _infl_cur = _infl.get("current", {})
+            _infl_quad = _infl_cur.get("quadrant", "—")
+            _infl_outlook = _infl_cur.get("credit_outlook", "—")
+            _infl_real = _infl_cur.get("real_rate")
+            _infl_be = _infl_cur.get("breakeven")
+            _infl_nom = _infl_cur.get("nominal_yield")
+            _infl_interp = _infl_cur.get("interpretation", "") or _infl.get("interpretation", "")
+
+            _infl_quad_color = {
+                "Reflation": "#27ae60", "Tightening": "#f39c12",
+                "Stagflation": "#e74c3c", "Deflation Risk": "#3498db",
+            }.get(_infl_quad, "#9aa0aa")
+            _infl_outlook_color = {"Bullish": "#27ae60", "Cautious": "#f39c12",
+                                    "Bearish": "#e74c3c", "Mixed": "#9aa0aa"}.get(_infl_outlook, "#9aa0aa")
+
+            _if1, _if2, _if3, _if4 = st.columns(4)
+            _if1.metric("Inflation Regime", _infl_quad)
+            _if2.metric("Credit Outlook", _infl_outlook)
+            _if3.metric("Real Rate", f"{_infl_real:.2f}%" if _infl_real is not None else "—",
+                        delta=f"{_infl_cur.get('d_real_63d', 0):+.2f}% (63d)" if _infl_cur.get('d_real_63d') is not None else None)
+            _if4.metric("Breakeven", f"{_infl_be:.2f}%" if _infl_be is not None else "—",
+                        delta=f"{_infl_cur.get('d_breakeven_63d', 0):+.2f}% (63d)" if _infl_cur.get('d_breakeven_63d') is not None else None)
+
+            if _infl_interp:
+                st.info(_infl_interp)
+
+            # Credit return by regime
+            _infl_cbr = _infl.get("credit_by_regime", {})
+            if _infl_cbr:
+                _cbr_rows = [
+                    {"Regime": q,
+                     "Mean HY Δ (63d)": f"{v.get('mean_hy_change', 0):+.0f}bps" if v.get('mean_hy_change') is not None else "—",
+                     "Widening Rate": f"{v.get('hit_rate', 0):.0%}" if v.get('hit_rate') is not None else "—",
+                     "N Obs": v.get("n_obs", 0)}
+                    for q, v in _infl_cbr.items()
+                ]
+                st.dataframe(pd.DataFrame(_cbr_rows), use_container_width=True, hide_index=True)
+                st.caption("Widening Rate = % of periods where HY spreads widened over next 63 days in this regime")
+
+            # Historical real rate & breakeven chart
+            _infl_hist = _infl.get("historical")
+            if _infl_hist is not None and "infl_real_rate" in _infl_hist.columns:
+                with st.expander("Historical Real Rate & Breakeven (2yr)"):
+                    _infl_fig = _go_infl.Figure()
+                    _infl_fig.add_trace(_go_infl.Scatter(
+                        x=_infl_hist.index, y=_infl_hist["infl_real_rate"],
+                        name="Real Rate", mode="lines",
+                        line=dict(color="#3498db", width=2),
+                    ))
+                    if "infl_breakeven" in _infl_hist.columns:
+                        _infl_fig.add_trace(_go_infl.Scatter(
+                            x=_infl_hist.index, y=_infl_hist["infl_breakeven"],
+                            name="Breakeven Inflation", mode="lines",
+                            line=dict(color="#e74c3c", width=2),
+                        ))
+                    _infl_fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                    _infl_fig.update_layout(
+                        height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                        yaxis=dict(title="Rate (%)", showgrid=True,
+                                   gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    )
+                    st.plotly_chart(_infl_fig, use_container_width=True)
+        else:
+            st.info("Inflation regime unavailable — requires yield_10y and ≥126 rows.")
+    except Exception as _infl_e:
+        st.caption(f"Inflation regime unavailable: {_infl_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 46: Sector ETF Stress Divergence
+# =============================================================================
+with _analytics_sub46:
+    import plotly.graph_objects as _go_sec
+    st.header("Sector ETF Stress Divergence")
+    st.markdown(
+        "Live sector ETF performance (XLF, XLE, XBI, XLU, XHB, XLI, XLK, XLP) relative to SPY. "
+        "**Financials leading down** by 3–4 weeks is historically the most reliable early warning for credit spreads. "
+        "≥4 sectors simultaneously leading down = systematic stress."
+    )
+    try:
+        _sec = load_sector_divergence(df)
+        if _sec.get("available"):
+            _sec_snap = _sec.get("snapshot", {})
+            _sec_lead = _sec.get("lead_signal", "—")
+            _sec_impl = _sec.get("credit_implication", "")
+            _sec_interp = _sec.get("interpretation", "")
+
+            if _sec_snap.get("available"):
+                _sec_n_down = _sec_snap.get("n_leading_down", 0)
+                _sec_n_up = _sec_snap.get("n_leading_up", 0)
+                _sec_stress = _sec_snap.get("stress_sectors", [])
+                _sec_xlf = _sec_snap.get("financials_signal", "—")
+                _sec_sys = _sec_snap.get("systematic_stress", False)
+
+                _se1, _se2, _se3, _se4 = st.columns(4)
+                _se1.metric("Lead Signal", _sec_lead)
+                _se2.metric("Financials (XLF)", _sec_xlf)
+                _se3.metric("Sectors Leading Down", _sec_n_down,
+                            delta="systematic stress" if _sec_sys else None,
+                            delta_color="inverse")
+                _se4.metric("SPY 1M Return", f"{_sec_snap.get('spy_return_1m', 0):+.1f}%")
+
+                if _sec_sys:
+                    st.warning(f"Systematic stress: {_sec_n_down} sectors leading down simultaneously. Stress sectors: {', '.join(_sec_stress)}")
+                elif _sec_stress:
+                    st.warning(f"Stress sectors: **{', '.join(_sec_stress)}**")
+
+                if _sec_impl:
+                    st.info(_sec_impl)
+
+                # Sector table
+                _sec_sectors = _sec_snap.get("sectors", [])
+                if _sec_sectors:
+                    _sec_rows = [
+                        {"Sector": s.get("name"), "1M Return": f"{s.get('return_1m', 0):+.1f}%",
+                         "3M Return": f"{s.get('return_3m', 0):+.1f}%",
+                         "Rel Perf 1M": f"{s.get('rel_perf_1m', 0):+.1f}%",
+                         "Z-Score": f"{s.get('z_score_1m', 0):.2f}",
+                         "Signal": s.get("signal", "—")}
+                        for s in _sec_sectors
+                    ]
+                    st.dataframe(pd.DataFrame(_sec_rows), use_container_width=True, hide_index=True)
+                    st.caption(f"Live data via yfinance · As of: {_sec_snap.get('as_of', '—')}")
+            else:
+                if _sec_interp:
+                    st.info(_sec_interp)
+                else:
+                    st.info("Live sector data unavailable — check network connection.")
+        else:
+            st.info("Sector divergence unavailable — requires yfinance connection.")
+    except Exception as _sec_e:
+        st.caption(f"Sector divergence unavailable: {_sec_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 47: Put/Call Ratio & Sentiment
+# =============================================================================
+with _analytics_sub47:
+    import plotly.graph_objects as _go_pcs
+    st.header("Put/Call Ratio & Sentiment Composite")
+    st.markdown(
+        "**Contrarian sentiment signal**: extreme put buying = crowded short = squeeze risk. "
+        "Composite = 60% put/call score + 40% VIX percentile. "
+        "Score > 70 = extreme fear → contrarian bullish for credit. Score < 30 = complacency → bearish."
+    )
+    try:
+        _pcs = load_put_call_sentiment(df)
+        if _pcs.get("available"):
+            _pcs_snap = _pcs.get("snapshot", {})
+            _pcs_contra = _pcs.get("contrarian_signal", "—")
+            _pcs_interp = _pcs.get("interpretation", "")
+
+            _pcs_score = _pcs_snap.get("sentiment_composite") if _pcs_snap.get("available") else None
+            _pcs_sig = _pcs_snap.get("sentiment_signal", "—")
+            _pcs_pc = _pcs_snap.get("pc_ratio")
+            _pcs_src = _pcs_snap.get("pc_source", "—")
+            _pcs_vix = _pcs_snap.get("vix")
+
+            _pc1, _pc2, _pc3, _pc4 = st.columns(4)
+            _pc1.metric("Sentiment Score", f"{_pcs_score:.1f}" if _pcs_score is not None else "—",
+                        help="0=extreme complacency, 100=extreme fear")
+            _pc2.metric("Signal", _pcs_sig)
+            _pc3.metric("P/C Ratio", f"{_pcs_pc:.2f}" if _pcs_pc is not None else "—",
+                        help=_pcs_src)
+            _pc4.metric("Contrarian View", _pcs_contra)
+
+            if _pcs_interp:
+                st.info(_pcs_interp)
+
+            st.caption(f"P/C Source: {_pcs_src} · As of: {_pcs_snap.get('as_of', '—')}")
+
+            # Historical sentiment chart
+            _pcs_series = _pcs.get("signal_series")
+            if _pcs_series is not None and len(_pcs_series) > 0:
+                _pcs_fig = _go_pcs.Figure()
+                _pcs_fig.add_trace(_go_pcs.Scatter(
+                    x=list(_pcs_series.index), y=list(_pcs_series.values),
+                    mode="lines", name="Sentiment Score",
+                    line=dict(color="#9b59b6", width=2),
+                    fill="tozeroy", fillcolor="rgba(155,89,182,0.08)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.1f}<extra></extra>",
+                ))
+                _pcs_fig.add_hline(y=70, line_color="#27ae60", line_width=1, line_dash="dot",
+                                   annotation_text="Extreme Fear (Contrarian Bullish)")
+                _pcs_fig.add_hline(y=30, line_color="#e74c3c", line_width=1, line_dash="dot",
+                                   annotation_text="Complacency (Contrarian Bearish)")
+                _pcs_fig.update_layout(
+                    height=270, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="Sentiment Score (0-100)", range=[0, 100], showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                )
+                st.plotly_chart(_pcs_fig, use_container_width=True)
+                st.caption("Higher = more fear = contrarian bullish · Composite uses VIX percentile as fallback when P/C unavailable")
+        else:
+            st.info("Put/call sentiment unavailable — requires VIX data.")
+    except Exception as _pcs_e:
+        st.caption(f"Put/call sentiment unavailable: {_pcs_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 48: Credit Basis Monitor
+# =============================================================================
+with _analytics_sub48:
+    import plotly.graph_objects as _go_cb
+    st.header("Credit Basis Monitor")
+    st.markdown(
+        "**CDX vs cash bond basis**: when cash bonds cheapen relative to CDS (negative basis), "
+        "it signals forced cash bond selling — real-money deleveraging, not just hedging. "
+        "The most reliable institutional stress signal in credit markets."
+    )
+    try:
+        _cb = load_credit_basis(df)
+        if _cb.get("available"):
+            _cb_snap = _cb.get("snapshot", {})
+            _cb_signal = _cb.get("basis_signal", "—")
+            _cb_stress = _cb.get("stress_flag", False)
+            _cb_basis = _cb.get("current_basis")
+            _cb_pct = _cb.get("percentile_current")
+            _cb_warn = _cb.get("warning")
+            _cb_interp = _cb.get("interpretation", "")
+
+            _cb_signal_color = {
+                "Negative Basis (Forced Selling)": "#e74c3c",
+                "Compressed Basis": "#f39c12",
+                "Normal": "#27ae60",
+                "Rich Basis": "#3498db",
+            }.get(_cb_signal, "#9aa0aa")
+
+            _cb1, _cb2, _cb3, _cb4 = st.columns(4)
+            _cb1.metric("Basis Signal", _cb_signal)
+            _cb2.metric("Current Basis", f"{_cb_basis:+.1f}bps" if _cb_basis is not None else "—")
+            _cb3.metric("Stress Flag", "⚠ ACTIVE" if _cb_stress else "Clear")
+            _cb4.metric("Historical Percentile", f"{_cb_pct:.0f}th" if _cb_pct is not None else "—")
+
+            if _cb_warn:
+                st.warning(_cb_warn)
+            elif _cb_interp:
+                st.info(_cb_interp)
+
+            if _cb_snap.get("available"):
+                st.caption(
+                    f"HYG: ${_cb_snap.get('hyg_price', 0):.2f} · "
+                    f"JNK: ${_cb_snap.get('jnk_price', 0):.2f} · "
+                    f"As of: {_cb_snap.get('as_of', '—')}"
+                )
+
+            # Historical basis chart
+            _cb_series = _cb.get("signal_series")
+            if _cb_series is not None and len(_cb_series) > 0:
+                _cb_fig = _go_cb.Figure()
+                _cb_colors = ["#e74c3c" if v < -5 else "#27ae60" for v in _cb_series.values]
+                _cb_fig.add_trace(_go_cb.Bar(
+                    x=list(_cb_series.index), y=list(_cb_series.values),
+                    name="Credit Basis", marker_color=_cb_colors,
+                    hovertemplate="%{x|%Y-%m-%d}<br>Basis: %{y:+.1f}bps<extra></extra>",
+                ))
+                _cb_fig.add_hline(y=-20, line_color="#e74c3c", line_width=1, line_dash="dot",
+                                  annotation_text="Forced Selling")
+                _cb_fig.add_hline(y=15, line_color="#3498db", line_width=1, line_dash="dot",
+                                  annotation_text="Rich Basis")
+                _cb_fig.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="Basis (bps equivalent)", showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                )
+                st.plotly_chart(_cb_fig, use_container_width=True)
+                st.caption("Negative basis = cash cheaper than synthetic = forced selling signal · Uses ETF proxy when CDX data unavailable")
+        else:
+            st.info("Credit basis unavailable — requires yfinance or CDX/spread data.")
+    except Exception as _cb_e:
+        st.caption(f"Credit basis unavailable: {_cb_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 49: Drawdown Recovery Analyzer
+# =============================================================================
+with _analytics_sub49:
+    import plotly.graph_objects as _go_ddr
+    st.header("Drawdown Recovery Analyzer")
+    st.markdown(
+        "For any ongoing drawdown in HY spreads or the composite risk score, "
+        "shows current depth vs all historical episodes and the **empirical recovery time distribution**. "
+        "Answers: *how long until this typically normalizes?*"
+    )
+    try:
+        _ddr = load_drawdown_recovery(df)
+        if _ddr.get("available"):
+            _ddr_primary = _ddr.get("primary_asset", "HY Spread")
+            _ddr_depth = _ddr.get("current_depth")
+            _ddr_rec = _ddr.get("recovery_estimate", {})
+            _ddr_warn = _ddr.get("warning")
+            _ddr_interp = _ddr.get("interpretation", "")
+
+            _ddr_assets = _ddr.get("assets", {})
+            _primary_cur = _ddr_assets.get(_ddr_primary, {}).get("current", {})
+            _in_dd = _primary_cur.get("in_drawdown", False)
+
+            _dd1, _dd2, _dd3, _dd4 = st.columns(4)
+            _dd1.metric("Primary Asset", _ddr_primary)
+            _dd2.metric("In Drawdown?", "Yes" if _in_dd else "No",
+                        delta=f"{_ddr_depth:+.1f} bps/pts" if _ddr_depth else None,
+                        delta_color="inverse")
+            _dd3.metric("Median Recovery", f"{_ddr_rec.get('median_recovery_days', 0):.0f}d"
+                        if _ddr_rec.get('median_recovery_days') is not None else "—")
+            _dd4.metric("Comparable Episodes", _ddr_rec.get("n_comparable", 0))
+
+            if _ddr_warn:
+                st.warning(_ddr_warn)
+            elif _ddr_interp:
+                st.info(_ddr_interp)
+
+            # Recovery time distribution
+            if _ddr_rec.get("n_comparable", 0) > 0:
+                _ddr_p25 = _ddr_rec.get("p25_recovery_days")
+                _ddr_p50 = _ddr_rec.get("median_recovery_days")
+                _ddr_p75 = _ddr_rec.get("p75_recovery_days")
+                _ddr_pct_rec = _ddr_rec.get("pct_recovered", 0)
+
+                _rec_cols = st.columns(4)
+                _rec_cols[0].metric("P25 Recovery", f"{_ddr_p25:.0f}d" if _ddr_p25 else "—")
+                _rec_cols[1].metric("Median Recovery", f"{_ddr_p50:.0f}d" if _ddr_p50 else "—")
+                _rec_cols[2].metric("P75 Recovery", f"{_ddr_p75:.0f}d" if _ddr_p75 else "—")
+                _rec_cols[3].metric("Eventually Recovered", f"{_ddr_pct_rec:.0%}")
+
+            # Historical episodes table
+            _ddr_episodes = _ddr.get("all_episodes")
+            if _ddr_episodes is not None and not _ddr_episodes.empty:
+                with st.expander(f"All Historical Drawdown Episodes ({len(_ddr_episodes)} total)"):
+                    _ep_disp = _ddr_episodes.copy()
+                    for _col in ["depth"]:
+                        if _col in _ep_disp.columns:
+                            _ep_disp[_col] = _ep_disp[_col].apply(lambda x: f"{x:+.1f}" if x is not None and not pd.isna(x) else "—")
+                    if "recovery_days" in _ep_disp.columns:
+                        _ep_disp["recovery_days"] = _ep_disp["recovery_days"].apply(
+                            lambda x: f"{x:.0f}d" if x is not None and not pd.isna(x) else "Not recovered"
+                        )
+                    st.dataframe(_ep_disp, use_container_width=True, hide_index=True)
+
+            st.caption("Recovery = return within 10% of pre-drawdown level · Depth in bps for spreads, score points for composite")
+        else:
+            st.info("Drawdown recovery unavailable — requires HY spread or composite score data with ≥252 rows.")
+    except Exception as _ddr_e:
+        st.caption(f"Drawdown recovery unavailable: {_ddr_e}")
 
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
