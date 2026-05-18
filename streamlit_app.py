@@ -108,6 +108,12 @@ from src.forward_simulation import run_forward_simulation
 from src.cdx_proxy import run_cdx_analysis
 from src.fed_sentiment import run_fed_sentiment
 from src.snapshot_pdf import generate_snapshot_bytes
+from src.vix_term_structure import run_vix_term_analysis
+from src.options_skew import run_skew_analysis
+from src.regime_return_table import run_regime_return_analysis
+from src.default_cycle import run_default_cycle_analysis
+from src.carry_breakeven import run_breakeven_analysis
+from src.comparison_mode import get_available_dates, compare_dates, format_comparison_table
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -589,6 +595,36 @@ def load_cdx_proxy(_df):
 def load_fed_sentiment(_df):
     """Run Fed statement sentiment scoring (cached 1h — fetches live from Fed website)."""
     return run_fed_sentiment(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_vix_term(_df):
+    """Run VIX term structure analysis (cached 1h — fetches live VIX3M data)."""
+    return run_vix_term_analysis(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_options_skew(_df):
+    """Run SKEW/VVIX options skew analysis (cached 1h — fetches live data)."""
+    return run_skew_analysis(_df)
+
+
+@st.cache_data
+def load_regime_return_table(_df):
+    """Compute regime-conditional return table."""
+    return run_regime_return_analysis(_df)
+
+
+@st.cache_data
+def load_default_cycle(_df):
+    """Run default cycle positioning analysis."""
+    return run_default_cycle_analysis(_df)
+
+
+@st.cache_data
+def load_carry_breakeven(_df):
+    """Compute carry breakeven analysis."""
+    return run_breakeven_analysis(_df)
 
 
 @st.cache_data
@@ -1551,6 +1587,59 @@ with tab1:
     except Exception as _rec_e:
         st.caption(f"Recession model unavailable: {_rec_e}")
 
+    # ── VIX Term Structure ────────────────────────────────────────────────────
+    st.subheader("VIX Term Structure")
+    st.caption(
+        "The VIX term structure measures the slope between near-term and longer-term implied vol. "
+        "**Backwardation** (VIX > VIX3M) signals acute fear — short-dated demand for protection exceeds "
+        "longer-dated, historically preceding credit spread widening by 2–4 weeks."
+    )
+    try:
+        _vts = load_vix_term(df)
+        if _vts.get("available"):
+            _snap = _vts.get("snapshot", {})
+            _v1, _v2, _v3, _v4 = st.columns(4)
+            _v1.metric("VIX", f"{_snap.get('vix', float('nan')):.1f}")
+            _v2.metric("VIX3M", f"{_snap.get('vix3m', float('nan')):.1f}")
+            _v3.metric("Slope (VIX3M−VIX)", f"{_snap.get('slope', float('nan')):.1f}",
+                       help="Negative = backwardation (acute stress)")
+            _v4.metric("Structure", _snap.get("structure", "—"))
+            if _snap.get("structure", "").startswith("Backwardation") or _snap.get("structure", "") == "Severe Backwardation":
+                st.warning(f"VIX Backwardation detected — short-dated vol exceeds longer-dated. Historically precedes HY spread widening.")
+            if _vts.get("key_insight"):
+                st.caption(_vts["key_insight"])
+        else:
+            st.info("VIX term structure unavailable — requires live market data (^VIX, ^VIX3M).")
+    except Exception as _vts_e:
+        st.caption(f"VIX term structure unavailable: {_vts_e}")
+
+    # ── Options Skew (CBOE SKEW / VVIX) ──────────────────────────────────────
+    st.subheader("Options Skew & Tail Risk")
+    st.caption(
+        "The **CBOE SKEW Index** measures the price of left-tail protection relative to ATM vol. "
+        "SKEW > 140 signals elevated tail-risk hedging. "
+        "**Hidden danger**: SKEW > 140 while VIX < 20 means markets are complacent about near-term vol "
+        "but paying up for deep downside protection — often precedes sharp dislocations."
+    )
+    try:
+        _skw = load_options_skew(df)
+        if _skw.get("available"):
+            _ss = _skw.get("snapshot", {})
+            _s1, _s2, _s3, _s4 = st.columns(4)
+            _s1.metric("SKEW Index", f"{_ss.get('skew', float('nan')):.1f}")
+            _s2.metric("VVIX", f"{_ss.get('vvix', float('nan')):.1f}",
+                       help="VIX of VIX — uncertainty about future fear")
+            _s3.metric("Regime", _ss.get("skew_regime", "—"))
+            _s4.metric("30d Avg SKEW", f"{_ss.get('skew_30d_avg', float('nan')):.1f}")
+            if _ss.get("hidden_danger"):
+                st.error("HIDDEN DANGER: SKEW > 140 + VIX < 20 — complacency with elevated tail hedging. Review downside positioning.")
+            if _skw.get("interpretation"):
+                st.caption(_skw["interpretation"])
+        else:
+            st.info("Options skew unavailable — requires live market data (^SKEW, ^VVIX).")
+    except Exception as _skw_e:
+        st.caption(f"Options skew unavailable: {_skw_e}")
+
 with tab2:
     import plotly.graph_objects as _go
     from plotly.subplots import make_subplots as _make_subplots
@@ -2270,19 +2359,21 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 22 sub-tabs
+with tab5:  # Analytics — 25 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
      _analytics_sub12, _analytics_sub13, _analytics_sub14,
      _analytics_sub15, _analytics_sub16, _analytics_sub17, _analytics_sub18,
-     _analytics_sub19, _analytics_sub20, _analytics_sub21, _analytics_sub22) = st.tabs([
+     _analytics_sub19, _analytics_sub20, _analytics_sub21, _analytics_sub22,
+     _analytics_sub23, _analytics_sub24, _analytics_sub25) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
         "Contagion", "Analogs", "Persistence",
         "Merton DD", "Frontier", "Kelly", "Granger", "Defaults",
         "Fwd Sim", "CDX Proxy", "EQ-Credit Corr",
+        "Regime Returns", "Default Cycle", "Compare Dates",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -3280,8 +3371,73 @@ with tab4:
     except Exception as _dv_e:
         st.caption(f"DV01 unavailable: {_dv_e}")
 
+    # ── Carry Breakeven ───────────────────────────────────────────────────────
+    st.subheader("4. Carry Breakeven — How Much Spread Widening Can Carry Absorb?")
+    st.caption(
+        "**Carry Breakeven** answers: *how far do spreads have to widen before my carry income is wiped out?* "
+        "Formula: Breakeven = All-In Yield (%) / Duration × 100 bps/yr. "
+        "Example: HY yield 8%, duration 4yr → breakeven = 200bps/yr. "
+        "If spreads widen more than that over the next year, total return turns negative."
+    )
+    try:
+        _cb = load_carry_breakeven(df)
+        if _cb.get("available"):
+            _cbc = _cb.get("current", {})
+            _cb1, _cb2, _cb3, _cb4 = st.columns(4)
+            _cb1.metric("HY Yield", f"{(_cbc.get('hy_yield_bps') or 0)/100:.1f}%",
+                        help="All-in yield used for carry calculation")
+            _cb2.metric("HY Breakeven", f"{_cbc.get('breakeven_hy_bps', 0):.0f} bps/yr",
+                        help="Max spread widening before 1yr total return = 0")
+            _cb3.metric("IG Breakeven", f"{_cbc.get('breakeven_ig_bps', 0):.0f} bps/yr")
+            _cb4.metric("HY Carry Regime", _cbc.get("carry_hy_regime", "—"))
+
+            # Scenario table
+            _cb_st = _cb.get("scenario_table")
+            if _cb_st is not None and hasattr(_cb_st, "shape") and not _cb_st.empty:
+                with st.expander("Spread shock scenario analysis"):
+                    _cb_disp = _cb_st.copy()
+                    _cb_disp.columns = ["Shock (bps)", "HY Months", "HY P&L (bps)", "HY Action",
+                                        "IG Months", "IG P&L (bps)", "IG Action"]
+                    st.dataframe(_cb_disp, use_container_width=True, hide_index=True)
+
+            if _cbc.get("interpretation"):
+                st.caption(_cbc["interpretation"])
+
+            # Historical breakeven chart
+            _cb_hist = _cb.get("historical_breakeven")
+            if _cb_hist is not None and hasattr(_cb_hist, "shape") and not _cb_hist.empty:
+                import plotly.graph_objects as _cbgo
+                _cb_fig = _cbgo.Figure()
+                if "breakeven_hy_bps" in _cb_hist.columns:
+                    _cb_fig.add_trace(_cbgo.Scatter(
+                        x=_cb_hist.index, y=_cb_hist["breakeven_hy_bps"],
+                        name="HY Breakeven", line=dict(color="#e67e22", width=2),
+                        hovertemplate="%{x|%Y-%m-%d}<br>HY Breakeven: %{y:.0f} bps<extra></extra>",
+                    ))
+                if "breakeven_ig_bps" in _cb_hist.columns:
+                    _cb_fig.add_trace(_cbgo.Scatter(
+                        x=_cb_hist.index, y=_cb_hist["breakeven_ig_bps"],
+                        name="IG Breakeven", line=dict(color="#3498db", width=1.5, dash="dash"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>IG Breakeven: %{y:.0f} bps<extra></extra>",
+                    ))
+                _cb_fig.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="bps/yr"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_cb_fig, use_container_width=True)
+        else:
+            st.info("Carry breakeven unavailable — requires HY/IG yield or spread data.")
+    except Exception as _cb_e:
+        st.caption(f"Carry breakeven unavailable: {_cb_e}")
+
     # ── CVaR by Regime ────────────────────────────────────────────────────────
-    st.subheader("4. Conditional Value-at-Risk (CVaR) by Regime")
+    st.subheader("5. Conditional Value-at-Risk (CVaR) by Regime")
     st.caption(
         "**CVaR** (Expected Shortfall) answers: *given that tomorrow is a bad day, how bad?* "
         "It is the expected loss beyond the VaR threshold and is the preferred tail risk measure under Basel III. "
@@ -7512,3 +7668,203 @@ with _analytics_sub22:
             st.info("Correlation analysis unavailable — requires SP500 and HY spread data.")
     except Exception as _cr_e:
         st.caption(f"Correlation analysis unavailable: {_cr_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 23: Regime-Conditional Return Table
+# =============================================================================
+with _analytics_sub23:
+    import plotly.graph_objects as _go_rrt
+    st.header("Regime-Conditional Return Table")
+    st.markdown(
+        """
+        **How does each asset class perform in each risk regime?**
+        This table shows historical mean returns, hit rates, and volatility
+        conditioned on the current regime label — across 1M, 3M, 6M, and 12M horizons.
+        Use it to set return expectations and calibrate position sizing by regime.
+        """
+    )
+    try:
+        _rrt = load_regime_return_table(df)
+        if _rrt.get("available"):
+            _tbl_result = _rrt.get("table", {})
+            _rrt_tbl = _tbl_result.get("table", None) if isinstance(_tbl_result, dict) else None
+
+            # Regime outlook narrative
+            _rrt_outlook = _rrt.get("current_regime_outlook", {})
+            if _rrt_outlook.get("available") and _rrt_outlook.get("narrative"):
+                st.info(_rrt_outlook["narrative"])
+
+            # Pivot: show mean SP500 return by regime x horizon
+            if _rrt_tbl is not None and not _rrt_tbl.empty:
+                _assets_avail = _tbl_result.get("assets_available", [])
+
+                # SP500 mean return pivot
+                if "sp500" in _assets_avail and "mean_sp500" in _rrt_tbl.columns:
+                    _rrt_pivot = _rrt_tbl["mean_sp500"].unstack(level="horizon")
+                    _rrt_pivot.columns = ["1M", "3M", "6M", "12M"]
+                    _rrt_pivot = _rrt_pivot * 100
+                    with st.expander("SP500 Mean Return (%) by Regime & Horizon", expanded=True):
+                        st.dataframe(_rrt_pivot.style.format("{:.1f}%"), use_container_width=True)
+
+                # HY spread mean change pivot
+                if "hy_spread" in _assets_avail and "mean_hy_spread" in _rrt_tbl.columns:
+                    _hy_pivot = _rrt_tbl["mean_hy_spread"].unstack(level="horizon")
+                    _hy_pivot.columns = ["1M", "3M", "6M", "12M"]
+                    with st.expander("HY Spread Mean Change (bps) by Regime & Horizon"):
+                        st.dataframe(_hy_pivot.style.format("{:.0f} bps"), use_container_width=True)
+
+                # Observation counts
+                if "n_obs" in _rrt_tbl.columns:
+                    _nobs = _rrt_tbl["n_obs"].unstack(level="horizon")
+                    _nobs.columns = ["1M", "3M", "6M", "12M"]
+                    with st.expander("Observation Counts by Regime & Horizon"):
+                        st.dataframe(_nobs, use_container_width=True)
+
+            # Best entry analysis
+            _bea = _rrt.get("best_entry_analysis", {})
+            _unconditional = _bea.get("unconditional_12m_mean")
+            if _unconditional is not None:
+                st.caption(f"Unconditional 12M SP500 mean return: {_unconditional*100:.1f}%")
+                _regimes_bea = [r for r in ["Risk-On", "Neutral", "Caution", "Risk-Off"] if r in _bea]
+                _bea_rows = []
+                for _rg in _regimes_bea:
+                    _rd = _bea[_rg]
+                    _bea_rows.append({
+                        "Regime": _rg,
+                        "Entry Return 12M": f"{_rd.get('entry_12m_mean', 0)*100:.1f}%",
+                        "vs Unconditional": f"{_rd.get('vs_unconditional', 0)*100:+.1f}%",
+                        "N Entries": _rd.get("n_entries", 0),
+                    })
+                if _bea_rows:
+                    with st.expander("Best Entry Points by Regime Transition"):
+                        st.dataframe(pd.DataFrame(_bea_rows), use_container_width=True, hide_index=True)
+                        st.caption("'Entry Return 12M' = SP500 return in the 12M following the first day of a new regime spell.")
+        else:
+            st.info("Regime return table unavailable — requires at least 4 regimes with 20+ observations each.")
+    except Exception as _rrt_e:
+        st.caption(f"Regime return table unavailable: {_rrt_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 24: Default Cycle Positioning
+# =============================================================================
+with _analytics_sub24:
+    import plotly.graph_objects as _go_dc
+    st.header("Default Cycle Positioning")
+    st.markdown(
+        """
+        **Where are we in the credit default cycle?**
+        Compare current Jarrow-Turnbull implied default rates against historical cycle peaks:
+        1991 recession, 2001–02 tech bust, 2008–09 GFC, 2015–16 energy/mining, 2020 COVID.
+        The cycle position tells you how much additional stress is already priced in
+        and what upside-to-peak scenarios look like.
+        """
+    )
+    try:
+        _dc = load_default_cycle(df)
+        if _dc.get("available"):
+            _dcc = _dc.get("current", {})
+            _d1, _d2, _d3, _d4 = st.columns(4)
+            _d1.metric("Implied Default Rate", f"{_dcc.get('current_implied_pct', 0):.2f}%",
+                       help="Jarrow-Turnbull: HY spread / (100 × LGD)")
+            _d2.metric("Phase", _dcc.get("current_phase", "—"))
+            _d3.metric("% of GFC Peak", f"{_dcc.get('pct_of_gfc_peak', 0):.0f}%")
+            _d4.metric("% of COVID Peak", f"{_dcc.get('pct_of_covid_peak', 0):.0f}%")
+
+            if _dcc.get("interpretation"):
+                st.info(_dcc["interpretation"])
+
+            # Cycle comparison table
+            _dc_cc = _dc.get("cycle_comparison")
+            if _dc_cc is not None and not _dc_cc.empty:
+                with st.expander("Historical Cycle Comparison", expanded=True):
+                    st.dataframe(_dc_cc, use_container_width=True)
+
+            # Time series chart
+            _dc_ts = _dc.get("time_series")
+            if _dc_ts is not None and not _dc_ts.empty and "implied_default_pct" in _dc_ts.columns:
+                _dc_fig = _go_dc.Figure()
+                _dc_ts_idx = pd.to_datetime(_dc_ts.index if _dc_ts.index.dtype != object else _dc_ts.get("date", _dc_ts.index))
+                _dc_fig.add_trace(_go_dc.Scatter(
+                    x=_dc_ts_idx, y=_dc_ts["implied_default_pct"],
+                    name="Implied Default Rate", line=dict(color="#e74c3c", width=2),
+                    fill="tozeroy", fillcolor="rgba(231,76,60,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Implied Default: %{y:.2f}%<extra></extra>",
+                ))
+                _dc_fig.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Implied Default Rate (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_dc_fig, use_container_width=True)
+        else:
+            st.info("Default cycle unavailable — requires HY spread data.")
+    except Exception as _dc_e:
+        st.caption(f"Default cycle unavailable: {_dc_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 25: Signal Comparison Mode
+# =============================================================================
+with _analytics_sub25:
+    st.header("Signal Comparison Mode")
+    st.markdown(
+        """
+        **Compare the full dashboard signal state between any two dates.**
+        Use this to answer: *"What changed since the last Fed meeting?"*
+        or *"How does today compare to the 2022 peak stress?"*
+        """
+    )
+    try:
+        _avail_dates = get_available_dates(df)
+        if len(_avail_dates) >= 2:
+            _cmp_col1, _cmp_col2 = st.columns(2)
+            with _cmp_col1:
+                _cmp_date_a = st.selectbox("Baseline date (Date A)",
+                                            options=_avail_dates,
+                                            index=max(0, len(_avail_dates) - 252),
+                                            key="cmp_date_a")
+            with _cmp_col2:
+                _cmp_date_b = st.selectbox("Comparison date (Date B)",
+                                            options=_avail_dates,
+                                            index=len(_avail_dates) - 1,
+                                            key="cmp_date_b")
+
+            if st.button("Run Comparison", key="run_comparison"):
+                _cmp = compare_dates(df, _cmp_date_a, _cmp_date_b)
+                if _cmp.get("available"):
+                    # Regime change banner
+                    if _cmp.get("regime_changed"):
+                        st.warning(
+                            f"Regime changed: **{_cmp['regime_a']}** → **{_cmp['regime_b']}**"
+                        )
+                    else:
+                        st.success(f"Regime unchanged: **{_cmp['regime_a']}**")
+
+                    # Risk summary
+                    _rs = _cmp.get("risk_summary", "Mixed")
+                    _cd = _cmp.get("composite_delta")
+                    _rs_str = f"{_rs}" + (f" (composite score {_cd:+.1f})" if _cd is not None else "")
+                    st.metric("Risk Direction", _rs_str)
+
+                    # Biggest movers
+                    _bm = _cmp.get("biggest_movers", [])
+                    if _bm:
+                        st.caption("**Top movers:**  " + " · ".join(
+                            f"{m['label']} ({m['delta']:+.1f}, {m['direction']})" for m in _bm
+                        ))
+
+                    # Full comparison table
+                    _cmp_tbl = format_comparison_table(_cmp)
+                    if not _cmp_tbl.empty:
+                        st.dataframe(_cmp_tbl, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Comparison failed — try different dates.")
+            else:
+                st.caption("Select two dates above and click **Run Comparison** to see the signal diff.")
+        else:
+            st.info("Comparison mode requires at least 2 dates with valid composite score data.")
+    except Exception as _cmp_e:
+        st.caption(f"Comparison mode unavailable: {_cmp_e}")
