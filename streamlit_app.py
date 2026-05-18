@@ -168,6 +168,7 @@ from src.sloos_monitor import run_sloos_monitor
 from src.etf_fund_flows import run_etf_fund_flows
 from src.corporate_profit_cycle import run_corporate_profit_cycle
 from src.cds_implied_pd import run_cds_implied_pd
+from src.data_diagnostics import run_diagnostics as _run_data_diagnostics
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -961,6 +962,12 @@ def load_corporate_profit_cycle(_df):
 @st.cache_data
 def load_cds_implied_pd(_df):
     return run_cds_implied_pd(_df)
+
+
+@st.cache_data
+def load_data_diagnostics(_df):
+    """Run data quality diagnostics (date continuity, duplicates, missing values, lookahead)."""
+    return _run_data_diagnostics(_df)
 
 
 @st.cache_data
@@ -2971,29 +2978,32 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab_credit:  # Credit Markets — 18 sub-tabs
+with tab_credit:  # Credit Markets — 20 sub-tabs
     (_analytics_sub19, _analytics_sub20, _analytics_sub21,
      _analytics_sub24, _analytics_sub27, _analytics_sub28,
      _analytics_sub29, _analytics_sub30, _analytics_sub31,
      _analytics_sub40, _analytics_sub42, _analytics_sub48,
      _analytics_sub60, _analytics_sub61, _analytics_sub62,
-     _analytics_sub73, _analytics_sub77, _analytics_sub78) = st.tabs([
+     _analytics_sub73, _analytics_sub77, _analytics_sub78,
+     _analytics_sub87, _analytics_sub89) = st.tabs([
         "Defaults", "Fwd Sim", "CDX Proxy",
         "Default Cycle", "Spread Vol", "Fallen Angel",
         "Global Credit", "Corp Leverage", "Seasonality",
         "Quality Migr", "Loan Market", "Credit Basis",
         "Issuance", "Distressed", "CLO", "CDS PD",
         "EM Credit", "Carry BEven",
+        "Credit Momentum", "Quality Curve",
     ])
 
-with tab_macro:  # Rates & Macro — 19 sub-tabs
+with tab_macro:  # Rates & Macro — 20 sub-tabs
     (_analytics_sub23, _analytics_sub38, _analytics_sub41,
      _analytics_sub45, _analytics_sub53, _analytics_sub54,
      _analytics_sub57, _analytics_sub58, _analytics_sub63,
      _analytics_sub64, _analytics_sub68, _analytics_sub69,
      _analytics_sub70, _analytics_sub72,
      _analytics_sub74, _analytics_sub75,
-     _analytics_sub81, _analytics_sub84, _analytics_sub85) = st.tabs([
+     _analytics_sub81, _analytics_sub84, _analytics_sub85,
+     _analytics_sub90) = st.tabs([
         "Regime Returns", "X-Asset Mom", "Macro Surprise",
         "Inflation Regime", "Fed Liquidity", "G4 Divergence",
         "Swap Spreads", "XCcy Basis", "FCI",
@@ -3001,16 +3011,18 @@ with tab_macro:  # Rates & Macro — 19 sub-tabs
         "SLOOS", "Corp Profits",
         "Recession Model", "Real Rates",
         "Fed Sentiment", "Taylor Rule", "Macro Nowcast",
+        "Term Structure",
     ])
 
-with tab_risk:  # Risk Monitors — 20 sub-tabs
+with tab_risk:  # Risk Monitors — 22 sub-tabs
     (_analytics_sub6, _analytics_sub7, _analytics_sub12,
      _analytics_sub39, _analytics_sub44, _analytics_sub46,
      _analytics_sub47, _analytics_sub52, _analytics_sub55,
      _analytics_sub56, _analytics_sub59, _analytics_sub65,
      _analytics_sub66, _analytics_sub67, _analytics_sub71,
      _analytics_sub76, _analytics_sub79,
-     _analytics_sub80, _analytics_sub82, _analytics_sub83) = st.tabs([
+     _analytics_sub80, _analytics_sub82, _analytics_sub83,
+     _analytics_sub86, _analytics_sub88) = st.tabs([
         "Tail Risk", "Stress", "Contagion",
         "Vol Regime", "Deleveraging", "Sector Stress",
         "Put/Call", "Tail Dependency", "Port Stress",
@@ -3018,17 +3030,20 @@ with tab_risk:  # Risk Monitors — 20 sub-tabs
         "Sovereign", "Consumer Credit", "ETF Flows",
         "MOVE Index", "VIX Term",
         "Options Skew", "DV01", "CVaR",
+        "VRP", "Funding Stress",
     ])
 
-with tab_siglab:  # Signal Lab — 12 sub-tabs
+with tab_siglab:  # Signal Lab — 13 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3,
      _analytics_sub4, _analytics_sub5, _analytics_sub9,
      _analytics_sub18, _analytics_sub22, _analytics_sub26,
-     _analytics_sub35, _analytics_sub37, _analytics_sub50) = st.tabs([
+     _analytics_sub35, _analytics_sub37, _analytics_sub50,
+     _analytics_sub91) = st.tabs([
         "Validation", "Attribution", "Timeline",
         "Sig Decay", "Ortho", "Factors",
         "Granger", "EQ-Credit Corr", "Corr Heatmap",
         "PCA", "Composite", "Signal Move",
+        "Data Diagnostics",
     ])
 
 with tab_regime:  # Regime — 12 sub-tabs
@@ -12979,6 +12994,642 @@ with _analytics_sub85:
             st.info("Macro nowcast unavailable — requires at least 2 indicators (unemployment/claims/SP500/yield curve).")
     except Exception as _e85:
         st.caption(f"Macro nowcast unavailable: {_e85}")
+
+
+# =============================================================================
+# BATCH 10 ANALYTICS: sub86–91
+# =============================================================================
+
+with _analytics_sub86:
+    import plotly.graph_objects as _go86
+    st.header("Volatility Risk Premium (VRP)")
+    st.markdown(
+        "**VRP = VIX − 21-day realized SP500 volatility.** "
+        "When positive, the options market is charging a *fear premium* above realized vol — the normal state. "
+        "When **inverted** (VRP < 0), realized vol has exceeded implied: the fear premium has collapsed "
+        "and panic is already in the price. Inversion historically precedes credit spread widening by ~2 weeks "
+        "as the volatility regime confirms what the credit market hasn't fully priced yet."
+    )
+    try:
+        _vrp86 = load_vrp(df)
+        if _vrp86.get("available"):
+            _vc86 = _vrp86["current"]
+            _v86a, _v86b, _v86c, _v86d = st.columns(4)
+            _vrp21 = _vc86.get("vrp_21d", float("nan"))
+            _vrp63 = _vc86.get("vrp_63d", float("nan"))
+            _v86a.metric("VRP (21d)", f"{_vrp21:.2f}%",
+                         help="VIX minus 21d realized vol. Negative = inverted.")
+            _v86b.metric("VRP (63d)", f"{_vrp63:.2f}%",
+                         help="VIX minus 63d realized vol.")
+            _v86c.metric("VIX", f"{_vc86.get('vix', float('nan')):.1f}")
+            _v86d.metric("VRP Regime", _vc86.get("vrp_regime", "—"))
+
+            if _vrp86.get("warning"):
+                st.warning(_vrp86["warning"])
+            if _vrp86.get("interpretation"):
+                st.info(_vrp86["interpretation"])
+
+            _hist86 = _vrp86.get("historical")
+            if _hist86 is not None and not _hist86.empty:
+                _hist86 = _hist86.copy()
+                _hist86.index = pd.to_datetime(_hist86.index)
+
+                # VRP 21d with inversion shading
+                _fig86a = _go86.Figure()
+                if "vrp_21d" in _hist86.columns:
+                    _vrp_vals = _hist86["vrp_21d"].fillna(0)
+                    _fig86a.add_trace(_go86.Scatter(
+                        x=_hist86.index, y=_hist86["vrp_21d"],
+                        name="VRP (21d)", line=dict(color="#9b59b6", width=2),
+                        fill="tozeroy", fillcolor="rgba(155,89,182,0.10)",
+                        hovertemplate="%{x|%Y-%m-%d}<br>VRP: %{y:.2f}%<extra></extra>",
+                    ))
+                if "vrp_63d" in _hist86.columns:
+                    _fig86a.add_trace(_go86.Scatter(
+                        x=_hist86.index, y=_hist86["vrp_63d"],
+                        name="VRP (63d)", line=dict(color="#8e44ad", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>VRP 63d: %{y:.2f}%<extra></extra>",
+                    ))
+                _fig86a.add_hline(y=0, line_color="rgba(231,76,60,0.6)", line_width=1.5,
+                                  annotation_text="Inversion threshold",
+                                  annotation_font=dict(color="#e74c3c", size=10))
+                _fig86a.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="VRP (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig86a, use_container_width=True)
+
+                # VIX vs realized vol chart
+                if "sp500_realized_vol_21d" in _hist86.columns:
+                    _vix_col = _vrp86.get("df")
+                    if _vix_col is not None and "vix" in _vix_col.columns:
+                        _rv86 = _hist86[["sp500_realized_vol_21d"]].join(
+                            _vix_col[["vix"]].tail(504), how="left"
+                        ).dropna()
+                        if not _rv86.empty:
+                            _fig86b = _go86.Figure()
+                            _fig86b.add_trace(_go86.Scatter(
+                                x=_rv86.index, y=_rv86["vix"],
+                                name="VIX (Implied Vol)", line=dict(color="#f59e0b", width=2),
+                                hovertemplate="%{x|%Y-%m-%d}<br>VIX: %{y:.1f}%<extra></extra>",
+                            ))
+                            _fig86b.add_trace(_go86.Scatter(
+                                x=_rv86.index, y=_rv86["sp500_realized_vol_21d"],
+                                name="Realized Vol (21d)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                                hovertemplate="%{x|%Y-%m-%d}<br>Realized: %{y:.1f}%<extra></extra>",
+                            ))
+                            _fig86b.update_layout(
+                                height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                                font=dict(color="#9aa0aa", size=11),
+                                margin=dict(l=8, r=8, t=24, b=8),
+                                title=dict(text="VIX vs 21d Realized Vol (gap = VRP)",
+                                           font=dict(size=12, color="#9aa0aa")),
+                                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                           color="#6b7280", title="Volatility (%)"),
+                                xaxis=dict(showgrid=False, color="#6b7280"),
+                                legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                            )
+                            st.plotly_chart(_fig86b, use_container_width=True)
+
+            # VRP z-score and signal
+            _vrp_z86 = _vc86.get("vrp_zscore_1y", float("nan"))
+            _vrp_sig86 = _vc86.get("vrp_signal", float("nan"))
+            if not pd.isna(_vrp_z86):
+                _zs86a, _zs86b = st.columns(2)
+                _zs86a.metric("VRP Z-Score (1yr)", f"{_vrp_z86:.2f}",
+                              help="How extreme the current VRP is vs trailing year")
+                _zs86b.metric("VRP Signal (0–100)", f"{_vrp_sig86:.0f}"
+                              if not pd.isna(_vrp_sig86) else "—",
+                              help="Higher = more stress from inverted/compressed VRP")
+        else:
+            st.info("VRP unavailable — requires VIX and SP500 columns in dataset.")
+    except Exception as _e86:
+        st.caption(f"VRP unavailable: {_e86}")
+
+
+with _analytics_sub87:
+    import plotly.graph_objects as _go87
+    st.header("Credit Spread Momentum")
+    st.markdown(
+        "Rate-of-change in HY and IG spreads across **1M, 3M, and 6M** horizons. "
+        "Spread tightening (negative momentum) = positive credit signal = risk-on. "
+        "**Momentum divergence** between HY and IG signals which segment the market favors: "
+        "IG tightening while HY widens = flight-to-quality within credit. "
+        "Momentum percentile shows where current 3M momentum sits vs full history."
+    )
+    try:
+        _cm87 = load_credit_momentum(df)
+        if _cm87.get("available"):
+            _cmc = _cm87["current"]
+            _cm87a, _cm87b, _cm87c, _cm87d = st.columns(4)
+            _cm87a.metric("HY Mom (1M)", f"{_cmc.get('hy_mom_21d', 0):+.0f} bps",
+                          delta_color="inverse")
+            _cm87b.metric("HY Mom (3M)", f"{_cmc.get('hy_mom_63d', 0):+.0f} bps",
+                          delta_color="inverse")
+            _cm87c.metric("HY Mom (6M)", f"{_cmc.get('hy_mom_126d', 0):+.0f} bps",
+                          delta_color="inverse")
+            _cm87d.metric("Momentum Signal", f"{_cmc.get('credit_momentum_signal', 0):.0f}/100",
+                          help="0 = very negative momentum, 100 = very positive")
+
+            _div87 = _cmc.get("hy_ig_momentum_divergence", 0) or 0
+            _pct87 = _cm87.get("momentum_percentile")
+            _cm87_info = (
+                f"Trend: **{_cm87.get('trend', '—')}** · "
+                f"HY/IG divergence: {_div87:+.0f} bps"
+                + (f" · 3M momentum percentile: {_pct87:.0f}th" if _pct87 is not None else "")
+            )
+            st.caption(_cm87_info)
+            if _cm87.get("interpretation"):
+                st.info(_cm87["interpretation"])
+
+            # Multi-horizon momentum chart
+            _hist87 = _cm87.get("historical")
+            if _hist87 is not None and not _hist87.empty:
+                _hist87 = _hist87.copy()
+                _hist87.index = pd.to_datetime(_hist87.index)
+                _fig87a = _go87.Figure()
+                _mom_series = [
+                    ("hy_mom_21d",  "HY 1M", "#ef4444", False),
+                    ("hy_mom_63d",  "HY 3M", "#f59e0b", False),
+                    ("ig_mom_63d",  "IG 3M", "#3b82f6", True),
+                ]
+                for _col87, _lbl87, _clr87, _dot87 in _mom_series:
+                    if _col87 in _hist87.columns:
+                        _fig87a.add_trace(_go87.Scatter(
+                            x=_hist87.index, y=_hist87[_col87],
+                            name=_lbl87, line=dict(color=_clr87, width=1.5,
+                                                   dash="dot" if _dot87 else "solid"),
+                            hovertemplate=f"%{{x|%Y-%m-%d}}<br>{_lbl87}: %{{y:+.0f}} bps<extra></extra>",
+                        ))
+                _fig87a.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _fig87a.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Spread Change (bps)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig87a, use_container_width=True)
+                st.caption("Negative = spreads tightening (positive for credit) · "
+                           "Positive = spreads widening (negative for credit)")
+
+                # Momentum signal history
+                if "credit_momentum_signal" in _hist87.columns:
+                    _fig87b = _go87.Figure()
+                    _sig87 = _hist87["credit_momentum_signal"].fillna(50)
+                    _sig87_colors = ["#ef4444" if v < 40 else "#27ae60" if v > 60 else "#f59e0b"
+                                     for v in _sig87]
+                    _fig87b.add_trace(_go87.Bar(
+                        x=_hist87.index, y=_sig87,
+                        marker_color=_sig87_colors, name="Momentum Signal",
+                        hovertemplate="%{x|%Y-%m-%d}<br>Signal: %{y:.0f}<extra></extra>",
+                    ))
+                    _fig87b.add_hline(y=60, line=dict(color="#27ae60", dash="dash", width=1),
+                                      annotation_text="Positive (60)",
+                                      annotation_font=dict(color="#27ae60", size=9))
+                    _fig87b.add_hline(y=40, line=dict(color="#ef4444", dash="dash", width=1),
+                                      annotation_text="Negative (40)",
+                                      annotation_font=dict(color="#ef4444", size=9))
+                    _fig87b.update_layout(
+                        height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                        title=dict(text="Credit Momentum Signal (0–100)",
+                                   font=dict(size=12, color="#9aa0aa")),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                   color="#6b7280", range=[0, 100]),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                        hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    )
+                    st.plotly_chart(_fig87b, use_container_width=True)
+
+            # Current snapshot table
+            st.subheader("Momentum Snapshot")
+            import pandas as _pd87
+            _snap87_rows = []
+            for _hz87, _hy_key87, _ig_key87 in [
+                ("1M (21d)", "hy_mom_21d", "ig_mom_21d"),
+                ("3M (63d)", "hy_mom_63d", "ig_mom_63d"),
+                ("6M (126d)", "hy_mom_126d", "ig_mom_126d"),
+            ]:
+                _hy87 = _cmc.get(_hy_key87)
+                _ig87 = _cmc.get(_ig_key87)
+                _snap87_rows.append({
+                    "Horizon": _hz87,
+                    "HY Mom (bps)": f"{_hy87:+.0f}" if _hy87 is not None else "—",
+                    "IG Mom (bps)": f"{_ig87:+.0f}" if _ig87 is not None else "—",
+                    "HY/IG Divergence (bps)": f"{(_hy87 or 0) - (_ig87 or 0):+.0f}"
+                    if _hy87 is not None and _ig87 is not None else "—",
+                })
+            st.dataframe(_pd87.DataFrame(_snap87_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("Credit momentum unavailable — requires HY or IG spread data.")
+    except Exception as _e87:
+        st.caption(f"Credit momentum unavailable: {_e87}")
+
+
+with _analytics_sub88:
+    import plotly.graph_objects as _go88
+    st.header("Funding Stress Monitor")
+    st.markdown(
+        "**Funding stress** measures plumbing risk in interbank credit markets. "
+        "The **TED spread** (3m T-bill vs LIBOR/interbank rate) proxies the cost premium banks "
+        "charge each other to lend, reflecting systemic trust and liquidity. "
+        "Stress in funding markets typically **precedes** broad HY spread widening by 3–5 weeks "
+        "as banks restrict credit before it shows in public spread data."
+    )
+    try:
+        _fs88 = load_funding_stress(df)
+        if _fs88.get("available"):
+            _fsc = _fs88["current"]
+            _fs88a, _fs88b, _fs88c, _fs88d = st.columns(4)
+            _ted88 = _fsc.get("ted_spread_proxy_bps", float("nan"))
+            _fs88a.metric("TED Proxy (bps)", f"{_ted88:.1f}" if not pd.isna(_ted88) else "—",
+                          help="3m T-bill vs Fed funds proxy — measures interbank lending premium")
+            _fs88b.metric("Z-Score (1yr)", f"{_fsc.get('ted_spread_zscore', float('nan')):.2f}"
+                          if not pd.isna(_fsc.get("ted_spread_zscore", float("nan"))) else "—")
+            _fs88c.metric("Funding Regime", _fsc.get("funding_regime", "—"))
+            _fs88d.metric("Stress Signal", f"{_fsc.get('funding_stress_signal', 0):.0f}/100")
+
+            if _fs88.get("warning"):
+                st.error(_fs88["warning"])
+            if _fs88.get("interpretation"):
+                st.info(_fs88["interpretation"])
+
+            st.caption(f"Historical lead time: ~{_fs88.get('lead_weeks', 3)} weeks ahead of HY spread widening.")
+
+            # TED proxy time series
+            _hist88 = _fs88.get("historical")
+            if _hist88 is not None and not _hist88.empty:
+                _hist88 = _hist88.copy()
+                _hist88.index = pd.to_datetime(_hist88.index)
+                _fig88a = _go88.Figure()
+                if "ted_spread_proxy" in _hist88.columns:
+                    _fig88a.add_trace(_go88.Scatter(
+                        x=_hist88.index, y=_hist88["ted_spread_proxy"] * 100,
+                        name="TED Proxy (bps)", line=dict(color="#06b6d4", width=2),
+                        fill="tozeroy", fillcolor="rgba(6,182,212,0.10)",
+                        hovertemplate="%{x|%Y-%m-%d}<br>TED: %{y:.1f} bps<extra></extra>",
+                    ))
+                _fig88a.add_hline(y=25, line=dict(color="#f59e0b", dash="dash", width=1),
+                                  annotation_text="Elevated (25 bps)",
+                                  annotation_font=dict(color="#f59e0b", size=9))
+                _fig88a.add_hline(y=50, line=dict(color="#ef4444", dash="dash", width=1),
+                                  annotation_text="Stress (50 bps)",
+                                  annotation_font=dict(color="#ef4444", size=9))
+                _fig88a.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="TED Proxy (bps)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig88a, use_container_width=True)
+
+                # Funding stress signal vs HY spread
+                if "funding_stress_signal" in _hist88.columns and "hy_spread" in df.columns:
+                    _fs88_combo = _hist88[["funding_stress_signal"]].join(
+                        df[["hy_spread"]].dropna(), how="inner"
+                    ).dropna().tail(504)
+                    if not _fs88_combo.empty:
+                        _fig88b = _go88.Figure()
+                        _fig88b.add_trace(_go88.Scatter(
+                            x=_fs88_combo.index, y=_fs88_combo["funding_stress_signal"],
+                            name="Funding Stress Signal", line=dict(color="#06b6d4", width=1.5),
+                            yaxis="y1",
+                            hovertemplate="%{x|%Y-%m-%d}<br>Funding: %{y:.0f}<extra></extra>",
+                        ))
+                        _fig88b.add_trace(_go88.Scatter(
+                            x=_fs88_combo.index, y=_fs88_combo["hy_spread"],
+                            name="HY OAS (%)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                            yaxis="y2",
+                            hovertemplate="%{x|%Y-%m-%d}<br>HY OAS: %{y:.2f}%<extra></extra>",
+                        ))
+                        _fig88b.update_layout(
+                            height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(color="#9aa0aa", size=11),
+                            margin=dict(l=8, r=8, t=24, b=8),
+                            title=dict(text="Funding Stress Signal vs HY Spread",
+                                       font=dict(size=12, color="#9aa0aa")),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                       color="#06b6d4", title="Funding Signal (0–100)"),
+                            yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                        title="HY OAS (%)", showgrid=False),
+                            xaxis=dict(showgrid=False, color="#6b7280"),
+                            legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                        )
+                        st.plotly_chart(_fig88b, use_container_width=True)
+                        _fs_corr88 = float(_fs88_combo["funding_stress_signal"].corr(_fs88_combo["hy_spread"]))
+                        st.caption(f"Funding stress vs HY spread correlation: {_fs_corr88:+.2f}. "
+                                   f"Funding stress peaks ~{_fs88.get('lead_weeks', 3)} weeks before HY widening.")
+        else:
+            st.info("Funding stress unavailable — requires yield_3m (3m Treasury) and fed_funds columns.")
+    except Exception as _e88:
+        st.caption(f"Funding stress unavailable: {_e88}")
+
+
+with _analytics_sub89:
+    import plotly.graph_objects as _go89
+    st.header("Credit Quality Curve")
+    st.markdown(
+        "The **credit quality curve** measures the spread premium demanded at each rating tier: "
+        "IG → BBB → HY. A **steep curve** (large HY−IG differential) signals risk aversion — "
+        "investors demand extra compensation to move down the quality spectrum. "
+        "A **flat or inverted curve** signals complacency — historically a late-cycle warning. "
+        "Z-scores are computed over a trailing 252-day window."
+    )
+    try:
+        _qc89 = load_quality_curve(df)
+        if _qc89.get("available"):
+            _qcc89 = _qc89["current"]
+            _qc89a, _qc89b, _qc89c, _qc89d = st.columns(4)
+            _hy_sp89 = _qcc89.get("hy_spread", float("nan"))
+            _hy_ig89 = _qcc89.get("hy_ig_premium", float("nan"))
+            _qc89a.metric("HY Spread", f"{_hy_sp89:.2f}%" if not pd.isna(_hy_sp89) else "—")
+            _qc89b.metric("HY−IG Premium", f"{_hy_ig89:.2f}pp" if not pd.isna(_hy_ig89) else "—",
+                          help="Extra spread HY pays vs IG — higher = more risk aversion")
+            _qc89c.metric("Curve Z-Score (252d)", f"{_qcc89.get('curve_slope_zscore', float('nan')):.2f}"
+                          if not pd.isna(_qcc89.get("curve_slope_zscore", float("nan"))) else "—",
+                          help="How steep the quality curve is vs trailing year")
+            _qc89d.metric("Interpretation", _qcc89.get("interpretation", "—"))
+
+            # Quality curve staircase bar chart (current snapshot)
+            _ig_sp89 = _qcc89.get("ig_spread", float("nan"))
+            _bbb_sp89 = _qcc89.get("bbb_spread", _qcc89.get("bbb_oas", float("nan")))
+            _stair89 = []
+            if not pd.isna(_ig_sp89):
+                _stair89.append(("IG", _ig_sp89, "#3b82f6"))
+            if not pd.isna(_bbb_sp89):
+                _stair89.append(("BBB", _bbb_sp89, "#f59e0b"))
+            if not pd.isna(_hy_sp89):
+                _stair89.append(("HY", _hy_sp89, "#ef4444"))
+            if _stair89:
+                _fig89a = _go89.Figure()
+                _fig89a.add_trace(_go89.Bar(
+                    x=[s[0] for s in _stair89],
+                    y=[s[1] for s in _stair89],
+                    marker_color=[s[2] for s in _stair89],
+                    text=[f"{s[1]:.2f}%" for s in _stair89],
+                    textposition="outside",
+                    hovertemplate="%{x}: %{y:.2f}%<extra></extra>",
+                ))
+                _fig89a.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="Credit Quality Staircase (Current Spreads)",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="OAS / Spread (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig89a, use_container_width=True)
+
+            # HY−IG premium history
+            _qc89_df = _qc89.get("df")
+            if _qc89_df is not None and "hy_ig_premium" in _qc89_df.columns:
+                _qc89_plot = _qc89_df[["hy_ig_premium"]].copy()
+                if "bbb_ig_premium" in _qc89_df.columns:
+                    _qc89_plot["bbb_ig_premium"] = _qc89_df["bbb_ig_premium"]
+                _qc89_plot = _qc89_plot.dropna(how="all").tail(504)
+                _qc89_plot.index = pd.to_datetime(_qc89_plot.index)
+                _fig89b = _go89.Figure()
+                if "bbb_ig_premium" in _qc89_plot.columns:
+                    _fig89b.add_trace(_go89.Scatter(
+                        x=_qc89_plot.index, y=_qc89_plot["bbb_ig_premium"],
+                        name="BBB−IG Premium", line=dict(color="#f59e0b", width=1.5),
+                        hovertemplate="%{x|%Y-%m-%d}<br>BBB−IG: %{y:.2f}pp<extra></extra>",
+                    ))
+                _fig89b.add_trace(_go89.Scatter(
+                    x=_qc89_plot.index, y=_qc89_plot["hy_ig_premium"],
+                    name="HY−IG Premium", line=dict(color="#ef4444", width=2),
+                    fill="tozeroy", fillcolor="rgba(231,76,60,0.08)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY−IG: %{y:.2f}pp<extra></extra>",
+                ))
+                _fig89b.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+                _fig89b.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="Credit Quality Curve Premium Over Time",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Spread Premium (pp)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig89b, use_container_width=True)
+                st.caption("Steep HY−IG premium = elevated risk aversion. "
+                           "Flattening/inversion = complacency or late-cycle compression.")
+        else:
+            st.info("Credit quality curve unavailable — requires hy_spread data in dataset.")
+    except Exception as _e89:
+        st.caption(f"Quality curve unavailable: {_e89}")
+
+
+with _analytics_sub90:
+    import plotly.graph_objects as _go90
+    st.header("Rates & Credit Term Structure")
+    st.markdown(
+        "The joint view of the **Treasury yield curve** (3m/2y/10y slopes) and the "
+        "**credit quality slope** (IG → HY spread differential) describes where stress "
+        "sits in the maturity spectrum. "
+        "Front-end Treasury inversion (3m > 10y) has preceded every US recession since 1969. "
+        "Front-end **credit** stress = near-term liquidity fear. Back-end = solvency concerns."
+    )
+    try:
+        _ts90 = load_term_structure(df)
+        if _ts90.get("available"):
+            _tsc90 = _ts90.get("current", {})
+            _ts90a, _ts90b, _ts90c, _ts90d = st.columns(4)
+            _ts90a.metric("2s10s Slope", f"{_tsc90.get('ts_curve_slope_2s10s', float('nan')):+.2f}pp",
+                          help="10y − 2y Treasury. Negative = inverted.")
+            _ts90b.metric("3m10y Slope", f"{_tsc90.get('ts_curve_slope_3m10y', float('nan')):+.2f}pp",
+                          help="10y − 3m Treasury. Estrella-Mishkin recession predictor.")
+            _ts90c.metric("HY−IG Credit Slope", f"{_tsc90.get('ts_credit_slope_hy_ig', float('nan')):+.2f}pp",
+                          help="HY OAS minus IG OAS. High = steep quality curve = risk aversion.")
+            _ts90d.metric("Curve Regime", _tsc90.get("ts_curve_regime", "—"))
+
+            if _tsc90.get("interpretation"):
+                st.info(_tsc90["interpretation"])
+
+            # Percentile ranks row
+            _ts90_pct = _ts90.get("history_percentiles", {})
+            if _ts90_pct:
+                _pct90_cols = st.columns(len(_ts90_pct))
+                for _pc90, (_pk90, _pv90) in zip(_pct90_cols, _ts90_pct.items()):
+                    _short90 = _pk90.replace("ts_", "").replace("_zscore", " z").replace("_", " ").title()
+                    _pc90.metric(f"{_short90} Pctile", f"{_pv90:.0f}th" if _pv90 is not None else "—")
+
+            # Treasury curve slopes over time
+            _ts90_df = _ts90.get("df")
+            if _ts90_df is not None and "ts_curve_slope_2s10s" in _ts90_df.columns:
+                _ts90_plot = _ts90_df.copy()
+                _ts90_plot.index = pd.to_datetime(_ts90_plot.index)
+                _ts90_plot = _ts90_plot.tail(504)
+                _fig90a = _go90.Figure()
+                _fig90a.add_trace(_go90.Scatter(
+                    x=_ts90_plot.index, y=_ts90_plot["ts_curve_slope_2s10s"],
+                    name="2s10s (Treasury)", line=dict(color="#4f8ef7", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>2s10s: %{y:+.2f}pp<extra></extra>",
+                ))
+                if "ts_curve_slope_3m10y" in _ts90_plot.columns:
+                    _fig90a.add_trace(_go90.Scatter(
+                        x=_ts90_plot.index, y=_ts90_plot["ts_curve_slope_3m10y"],
+                        name="3m10y (Treasury)", line=dict(color="#27ae60", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>3m10y: %{y:+.2f}pp<extra></extra>",
+                    ))
+                if "ts_credit_slope_hy_ig" in _ts90_plot.columns:
+                    _fig90a.add_trace(_go90.Scatter(
+                        x=_ts90_plot.index, y=_ts90_plot["ts_credit_slope_hy_ig"],
+                        name="HY−IG (Credit Slope)", line=dict(color="#ef4444", width=2),
+                        yaxis="y2",
+                        hovertemplate="%{x|%Y-%m-%d}<br>HY−IG: %{y:+.2f}pp<extra></extra>",
+                    ))
+                _fig90a.add_hline(y=0, line_color="rgba(231,76,60,0.5)", line_width=1.5,
+                                  annotation_text="Inversion",
+                                  annotation_font=dict(color="#e74c3c", size=10))
+                _fig90a.update_layout(
+                    height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#4f8ef7", title="Treasury Slope (pp)"),
+                    yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                title="HY−IG Slope (pp)", showgrid=False),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig90a, use_container_width=True)
+                st.caption("Below 0 = inverted. 3m10y inversion has preceded every US recession since 1969.")
+
+            # Regime implication table
+            st.subheader("Curve Shape → Credit Implication")
+            import pandas as _pd90
+            _ts_tbl90 = _pd90.DataFrame([
+                {"Curve Shape":         "Steep (2s10s > +1.5pp)",   "Economic Signal": "Growth expected",     "Credit Signal": "Spreads likely tightening", "Posture": "Risk-on"},
+                {"Curve Shape":         "Flat (0 to +1.5pp)",       "Economic Signal": "Late cycle",          "Credit Signal": "Watch for deterioration",   "Posture": "Neutral"},
+                {"Curve Shape":         "Inverted (2s10s < 0)",     "Economic Signal": "Recession signal",    "Credit Signal": "Widening risk elevated",    "Posture": "Defensive"},
+                {"Curve Shape":         "Deep inversion (< −1pp)",  "Economic Signal": "Recession likely",    "Credit Signal": "Significant widening",      "Posture": "Risk-off"},
+            ])
+            st.dataframe(_ts_tbl90, use_container_width=True, hide_index=True)
+        else:
+            st.info("Term structure unavailable — requires Treasury yield columns (yield_3m, yield_2y, yield_10y).")
+    except Exception as _e90:
+        st.caption(f"Term structure unavailable: {_e90}")
+
+
+with _analytics_sub91:
+    import plotly.graph_objects as _go91
+    st.header("Data Quality Diagnostics")
+    st.markdown(
+        "Automated checks on the dataset powering this dashboard: "
+        "date continuity, duplicate rows, missing value rates, and lookahead leakage detection. "
+        "Run after the pipeline assembles data but before scoring. "
+        "Green = passed · Red = issue found."
+    )
+    try:
+        _dq91 = load_data_diagnostics(df)
+        _overall91 = _dq91.get("overall_passed", False)
+        _nr91 = _dq91.get("n_rows", 0)
+        _dr91 = _dq91.get("date_range", {})
+
+        if _overall91:
+            st.success(f"All checks passed · {_nr91:,} rows · "
+                       f"{_dr91.get('start', '—')} → {_dr91.get('end', '—')}")
+        else:
+            st.warning(f"One or more checks flagged · {_nr91:,} rows · "
+                       f"{_dr91.get('start', '—')} → {_dr91.get('end', '—')}")
+
+        # Date continuity
+        _dc91 = _dq91.get("date_continuity", {})
+        st.subheader("Date Continuity")
+        _dc91a, _dc91b, _dc91c = st.columns(3)
+        _dc91a.metric("Status", "Pass" if _dc91.get("passed") else "FAIL",
+                      delta_color="normal" if _dc91.get("passed") else "inverse")
+        _dc91b.metric("Gaps Found", _dc91.get("n_gaps", 0),
+                      help="Business-day gaps > 5 days (excluding holidays)")
+        _dc91c.metric("Max Gap (days)", _dc91.get("max_gap_days", 0))
+        if _dc91.get("gaps"):
+            with st.expander(f"{len(_dc91['gaps'])} gap(s) detected"):
+                import pandas as _pd91a
+                st.dataframe(_pd91a.DataFrame(_dc91["gaps"]), use_container_width=True, hide_index=True)
+
+        # Duplicates
+        _dup91 = _dq91.get("duplicates", {})
+        st.subheader("Duplicate Rows")
+        _dup91a, _dup91b = st.columns(2)
+        _dup91a.metric("Status", "Pass" if _dup91.get("passed") else "FAIL")
+        _dup91b.metric("Duplicate Count", _dup91.get("n_duplicates", 0))
+
+        # Missing values
+        _mv91 = _dq91.get("missing_values", {})
+        st.subheader("Missing Values")
+        _mv91a, _mv91b = st.columns(2)
+        _mv91a.metric("Status", "Pass" if _mv91.get("passed") else "FAIL")
+        _mv91b.metric("Columns with > 20% Missing", _mv91.get("n_high_missing", 0))
+        _high91 = _mv91.get("high_missing_cols", {})
+        if _high91:
+            import pandas as _pd91b
+            _hm91_rows = [{"Column": k, "Missing %": f"{v:.1f}%"} for k, v in _high91.items()]
+            with st.expander(f"{len(_hm91_rows)} column(s) with high missing rates"):
+                st.dataframe(_pd91b.DataFrame(_hm91_rows), use_container_width=True, hide_index=True)
+
+        # Missing rate bar chart (top 20 columns)
+        _all_missing91 = _mv91.get("missing_pct_by_col", {})
+        if _all_missing91:
+            import pandas as _pd91c
+            _miss91_series = _pd91c.Series(_all_missing91).sort_values(ascending=False).head(20)
+            _miss91_series = _miss91_series[_miss91_series > 0]
+            if not _miss91_series.empty:
+                _fig91 = _go91.Figure()
+                _miss_colors91 = ["#ef4444" if v > 20 else "#f59e0b" if v > 5 else "#27ae60"
+                                  for v in _miss91_series.values]
+                _fig91.add_trace(_go91.Bar(
+                    x=_miss91_series.index, y=_miss91_series.values,
+                    marker_color=_miss_colors91, name="Missing %",
+                    hovertemplate="%{x}<br>Missing: %{y:.1f}%<extra></extra>",
+                ))
+                _fig91.add_hline(y=20, line=dict(color="#ef4444", dash="dash", width=1),
+                                 annotation_text="High missing threshold (20%)",
+                                 annotation_font=dict(color="#ef4444", size=9))
+                _fig91.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="Missing Value Rate by Column (top 20)",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Missing (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280", tickangle=-45),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig91, use_container_width=True)
+
+        # Lookahead leakage
+        _la91 = _dq91.get("lookahead_leakage", {})
+        st.subheader("Lookahead Leakage Check")
+        _la91a, _la91b = st.columns(2)
+        _la91a.metric("Status", "Pass" if _la91.get("passed") else "WARNING")
+        _la91b.metric("Forward-Return Cols Checked", _la91.get("n_cols_checked", 0))
+        if _la91.get("issues"):
+            st.warning("Potential lookahead leakage detected in forward-return columns.")
+            with st.expander("Leakage details"):
+                for _issue91 in _la91.get("issues", []):
+                    st.markdown(f"- `{_issue91}`")
+        else:
+            st.caption("No lookahead leakage detected in forward-return columns.")
+    except Exception as _e91:
+        st.caption(f"Data diagnostics unavailable: {_e91}")
 
 
 # =============================================================================
