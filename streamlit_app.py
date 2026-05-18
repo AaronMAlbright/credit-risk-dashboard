@@ -132,6 +132,12 @@ from src.alert_backtest import run_alert_backtest
 from src.pca_decomposition import run_pca_analysis
 from src.regime_forecast import run_regime_forecast
 from src.custom_composite import run_custom_composite_analysis, SUB_SIGNALS as CUSTOM_COMPOSITE_SIGNALS
+from src.cross_asset_momentum import run_cross_asset_momentum
+from src.vol_regime_composite import run_vol_regime_composite
+from src.credit_quality_migration import run_credit_quality_migration
+from src.macro_surprise_index import run_macro_surprise_index
+from src.loan_market_monitor import run_loan_market_monitor
+from src.regime_duration import run_regime_duration
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -745,6 +751,36 @@ def load_regime_forecast(_df):
 @st.cache_data
 def load_custom_composite(_df):
     return run_custom_composite_analysis(_df)
+
+
+@st.cache_data
+def load_cross_asset_momentum(_df):
+    return run_cross_asset_momentum(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_vol_regime_composite(_df):
+    return run_vol_regime_composite(_df)
+
+
+@st.cache_data
+def load_credit_quality_migration(_df):
+    return run_credit_quality_migration(_df)
+
+
+@st.cache_data
+def load_macro_surprise_index(_df):
+    return run_macro_surprise_index(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_loan_market_monitor(_df):
+    return run_loan_market_monitor(_df)
+
+
+@st.cache_data
+def load_regime_duration(_df):
+    return run_regime_duration(_df)
 
 
 @st.cache_data
@@ -2751,7 +2787,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 37 sub-tabs
+with tab5:  # Analytics — 43 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
@@ -2762,7 +2798,9 @@ with tab5:  # Analytics — 37 sub-tabs
      _analytics_sub26, _analytics_sub27, _analytics_sub28,
      _analytics_sub29, _analytics_sub30, _analytics_sub31,
      _analytics_sub32, _analytics_sub33, _analytics_sub34,
-     _analytics_sub35, _analytics_sub36, _analytics_sub37) = st.tabs([
+     _analytics_sub35, _analytics_sub36, _analytics_sub37,
+     _analytics_sub38, _analytics_sub39, _analytics_sub40,
+     _analytics_sub41, _analytics_sub42, _analytics_sub43) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2774,6 +2812,8 @@ with tab5:  # Analytics — 37 sub-tabs
         "Global Credit", "Corp Leverage", "Seasonality",
         "Traffic Light", "Shock Sim", "Alert BT",
         "PCA", "Regime Fcast", "Composite",
+        "X-Asset Mom", "Vol Regime", "Quality Migr",
+        "Macro Surprise", "Loan Market", "Regime Age",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -9191,6 +9231,433 @@ with _analytics_sub37:
             st.info("Custom composite unavailable — requires ≥3 sub-signal columns and ≥252 rows.")
     except Exception as _cc_e:
         st.caption(f"Custom composite unavailable: {_cc_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 38: Cross-Asset Momentum Scorecard
+# =============================================================================
+with _analytics_sub38:
+    import plotly.graph_objects as _go_xam
+    st.header("Cross-Asset Momentum Scorecard")
+    st.markdown(
+        "Systematic 1M/3M/6M/12M momentum scores across equities, credit, rates, and FX. "
+        "**When all directional assets align** (all positive or all negative 3M momentum), "
+        "the composite signal is most reliable. Divergence = mixed/uncertain environment."
+    )
+    try:
+        _xam = load_cross_asset_momentum(df)
+        if _xam.get("available"):
+            _xam_align = _xam.get("alignment", {})
+            _xam_strength = _xam.get("signal_strength", "—")
+            _xam_regime = _xam.get("current_regime", "—")
+            _xam_interp = _xam.get("interpretation", "")
+
+            _xa1, _xa2, _xa3, _xa4 = st.columns(4)
+            _xa1.metric("Alignment Score", f"{_xam_align.get('alignment_score', 0)}/4")
+            _xa2.metric("Signal Strength", _xam_strength)
+            _xa3.metric("Aligned Positive", len(_xam_align.get("aligned_positive", [])))
+            _xa4.metric("Current Regime", _xam_regime)
+
+            if _xam_interp:
+                st.info(_xam_interp)
+
+            # Momentum table
+            _xam_tbl = _xam.get("momentum_table")
+            if _xam_tbl is not None and not _xam_tbl.empty:
+                _xam_disp = _xam_tbl.copy()
+                for _col in ["window_1m", "window_3m", "window_6m", "window_12m"]:
+                    if _col in _xam_disp.columns:
+                        _xam_disp[_col] = _xam_disp[_col].apply(
+                            lambda x: f"{x:+.1f}" if x is not None and not pd.isna(x) else "—"
+                        )
+                st.dataframe(_xam_disp, use_container_width=True, hide_index=True)
+                st.caption("Positive = risk-on momentum · Negative = risk-off · Rates shown as raw yield change")
+
+            # Historical alignment chart
+            _xam_hist = _xam.get("historical_alignment")
+            if _xam_hist is not None and len(_xam_hist) > 0:
+                with st.expander("Historical Alignment Score (2yr)"):
+                    _xam_fig = _go_xam.Figure()
+                    _xam_fig.add_trace(_go_xam.Scatter(
+                        x=list(_xam_hist.index), y=list(_xam_hist.values),
+                        mode="lines", name="Alignment (0-4)",
+                        line=dict(color="#3498db", width=2),
+                        hovertemplate="Week: %{x|%Y-%m-%d}<br>Alignment: %{y}/4<extra></extra>",
+                    ))
+                    _xam_fig.add_hline(y=2, line_color="rgba(255,255,255,0.2)", line_width=1, line_dash="dot")
+                    _xam_fig.update_layout(
+                        height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                        yaxis=dict(title="Assets Aligned (0-4)", range=[0, 4], showgrid=True,
+                                   gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                        xaxis=dict(showgrid=False, color="#6b7280"),
+                    )
+                    st.plotly_chart(_xam_fig, use_container_width=True)
+        else:
+            st.info("Cross-asset momentum unavailable — requires ≥2 asset class columns and ≥252 rows.")
+    except Exception as _xam_e:
+        st.caption(f"Cross-asset momentum unavailable: {_xam_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 39: Volatility Regime Composite
+# =============================================================================
+with _analytics_sub39:
+    import plotly.graph_objects as _go_vrc
+    st.header("Volatility Regime Composite")
+    st.markdown(
+        "Unified volatility regime score (0–100) combining **VIX level**, **VIX term structure slope**, "
+        "**Volatility Risk Premium (VRP)**, **CBOE SKEW**, and **MOVE** (bond vol). "
+        "Answers the single question: *is vol cheap or expensive right now?*"
+    )
+    try:
+        _vrc = load_vol_regime_composite(df)
+        if _vrc.get("available"):
+            _vrc_cur = _vrc.get("current", {})
+            _vrc_score = _vrc_cur.get("vol_composite_score")
+            _vrc_regime = _vrc_cur.get("vol_regime", "—")
+            _vrc_pct = _vrc.get("percentile_current")
+            _vrc_n = _vrc_cur.get("n_components", 0)
+            _vrc_interp = _vrc.get("interpretation", "")
+
+            _vrc_regime_color = {
+                "Complacent": "#27ae60", "Normal": "#3498db",
+                "Elevated": "#f39c12", "Stressed": "#e74c3c",
+            }.get(_vrc_regime, "#9aa0aa")
+
+            _vr1, _vr2, _vr3, _vr4 = st.columns(4)
+            _vr1.metric("Vol Composite Score", f"{_vrc_score:.1f}" if _vrc_score is not None else "—")
+            _vr2.metric("Vol Regime", _vrc_regime)
+            _vr3.metric("Historical Percentile", f"{_vrc_pct:.0f}th" if _vrc_pct is not None else "—")
+            _vr4.metric("Components Used", _vrc_n)
+
+            if _vrc_interp:
+                st.info(_vrc_interp)
+
+            # Component breakdown
+            _vrc_comps = _vrc_cur.get("components", {})
+            if _vrc_comps:
+                _comp_rows = [
+                    {"Component": k.replace("_", " ").title(), "Score (0-100)": f"{v:.1f}" if v is not None else "—"}
+                    for k, v in _vrc_comps.items()
+                    if k in _vrc_cur.get("components_available", list(_vrc_comps.keys()))
+                ]
+                if _comp_rows:
+                    st.dataframe(pd.DataFrame(_comp_rows), use_container_width=True, hide_index=True)
+
+            # Historical chart
+            _vrc_hist = _vrc.get("historical")
+            if _vrc_hist is not None and "vol_composite_score" in _vrc_hist.columns:
+                _vrc_fig = _go_vrc.Figure()
+                _vrc_fig.add_trace(_go_vrc.Scatter(
+                    x=_vrc_hist.index, y=_vrc_hist["vol_composite_score"],
+                    mode="lines", name="Vol Composite",
+                    line=dict(color="#e74c3c", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.1f}<extra></extra>",
+                ))
+                for _thresh, _col, _lbl in [(25, "#27ae60", "Complacent"), (50, "#3498db", "Normal"),
+                                             (75, "#f39c12", "Elevated")]:
+                    _vrc_fig.add_hline(y=_thresh, line_color=_col, line_width=1, line_dash="dot",
+                                       annotation_text=_lbl, annotation_position="right")
+                _vrc_fig.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="Vol Composite Score (0-100)", range=[0, 100], showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                )
+                st.plotly_chart(_vrc_fig, use_container_width=True)
+        else:
+            st.info("Vol regime composite unavailable — requires VIX data and ≥252 rows.")
+    except Exception as _vrc_e:
+        st.caption(f"Vol regime composite unavailable: {_vrc_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 40: Credit Quality Migration Monitor
+# =============================================================================
+with _analytics_sub40:
+    import plotly.graph_objects as _go_cqm
+    st.header("Credit Quality Migration Monitor")
+    st.markdown(
+        "Tracks the **upgrade/downgrade dynamic** via HY vs IG spread velocity. "
+        "When HY spreads widen faster than IG, downgrades and fallen angel risk are building. "
+        "The **BBB cliff proxy** flags when IG is priced like HY — the most dangerous pre-crisis configuration."
+    )
+    try:
+        _cqm = load_credit_quality_migration(df)
+        if _cqm.get("available"):
+            _cqm_cur = _cqm.get("current", {})
+            _cqm_regime = _cqm_cur.get("migration_regime", "—")
+            _cqm_zscore = _cqm_cur.get("migration_zscore")
+            _cqm_cliff = _cqm_cur.get("cliff_risk_flag", False)
+            _cqm_cliff_pct = _cqm_cur.get("cliff_pct")
+            _cqm_warn = _cqm_cur.get("warning")
+            _cqm_interp = _cqm.get("interpretation", "")
+
+            _cqm_regime_color = {
+                "Upgrade Cycle": "#27ae60", "Stable": "#3498db",
+                "Downgrade Pressure": "#f39c12", "Fallen Angel Risk": "#e74c3c",
+            }.get(_cqm_regime, "#9aa0aa")
+
+            _cq1, _cq2, _cq3, _cq4 = st.columns(4)
+            _cq1.metric("Migration Regime", _cqm_regime)
+            _cq2.metric("Migration Z-Score", f"{_cqm_zscore:.2f}" if _cqm_zscore is not None else "—",
+                        help="Positive = HY underperforming IG = downgrade pressure")
+            _cq3.metric("BBB Cliff Percentile", f"{_cqm_cliff_pct:.0f}th" if _cqm_cliff_pct is not None else "—")
+            _cq4.metric("Cliff Risk Flag", "⚠ ACTIVE" if _cqm_cliff else "Clear",
+                        delta="elevated" if _cqm_cliff else None,
+                        delta_color="inverse" if _cqm_cliff else "normal")
+
+            if _cqm_warn:
+                st.warning(_cqm_warn)
+            elif _cqm_interp:
+                st.info(_cqm_interp)
+
+            # Historical migration z-score
+            _cqm_series = _cqm.get("signal_series")
+            if _cqm_series is not None and len(_cqm_series) > 0:
+                _cqm_fig = _go_cqm.Figure()
+                _cqm_colors = ["#27ae60" if v < 0 else "#e74c3c" for v in _cqm_series.values]
+                _cqm_fig.add_trace(_go_cqm.Bar(
+                    x=list(_cqm_series.index), y=list(_cqm_series.values),
+                    name="Migration Z-Score", marker_color=_cqm_colors,
+                    hovertemplate="%{x|%Y-%m-%d}<br>Z: %{y:.2f}<extra></extra>",
+                ))
+                _cqm_fig.add_hline(y=1.0, line_color="#f39c12", line_width=1, line_dash="dot",
+                                   annotation_text="Downgrade Pressure")
+                _cqm_fig.add_hline(y=2.0, line_color="#e74c3c", line_width=1, line_dash="dot",
+                                   annotation_text="Fallen Angel Risk")
+                _cqm_fig.add_hline(y=-1.0, line_color="#27ae60", line_width=1, line_dash="dot",
+                                   annotation_text="Upgrade Cycle")
+                _cqm_fig.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="Migration Z-Score", showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                )
+                st.plotly_chart(_cqm_fig, use_container_width=True)
+                st.caption("Green bars = upgrade pressure (HY tightening vs IG) · Red bars = downgrade pressure · Last 504 days")
+        else:
+            st.info("Credit quality migration unavailable — requires HY spread and IG spread data with ≥252 rows.")
+    except Exception as _cqm_e:
+        st.caption(f"Credit quality migration unavailable: {_cqm_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 41: Macro Surprise Index
+# =============================================================================
+with _analytics_sub41:
+    import plotly.graph_objects as _go_msi
+    st.header("Macro Surprise Index")
+    st.markdown(
+        "How is economic data coming in relative to recent trend? "
+        "Each indicator's z-score vs its 63-day rolling baseline approximates a **beat/miss** signal. "
+        "Positive composite = economy beating recent trend = credit-positive tailwind."
+    )
+    try:
+        _msi = load_macro_surprise_index(df)
+        if _msi.get("available"):
+            _msi_cur = _msi.get("current", {})
+            _msi_score = _msi_cur.get("surprise_composite_smooth")
+            _msi_regime = _msi_cur.get("surprise_regime", "—")
+            _msi_signal = _msi_cur.get("surprise_credit_signal", "—")
+            _msi_n = _msi_cur.get("n_indicators", 0)
+            _msi_mom = _msi.get("momentum")
+            _msi_interp = _msi.get("interpretation", "")
+
+            _ms1, _ms2, _ms3, _ms4 = st.columns(4)
+            _ms1.metric("Surprise Score", f"{_msi_score:.2f}" if _msi_score is not None else "—",
+                        delta=f"{_msi_mom:+.2f} vs 1M ago" if _msi_mom is not None else None,
+                        help="Positive = beating recent trend")
+            _ms2.metric("Macro Regime", _msi_regime)
+            _ms3.metric("Credit Signal", _msi_signal)
+            _ms4.metric("Indicators Used", _msi_n)
+
+            if _msi_interp:
+                st.info(_msi_interp)
+
+            # Per-indicator breakdown
+            _msi_ind_scores = _msi_cur.get("indicator_scores", {})
+            if _msi_ind_scores:
+                _ind_rows = [
+                    {"Indicator": k.replace("_", " ").title(),
+                     "Z-Score": f"{v:+.2f}" if v is not None and not pd.isna(v) else "—",
+                     "Signal": "Positive" if v and v > 0.3 else ("Negative" if v and v < -0.3 else "Neutral")}
+                    for k, v in _msi_ind_scores.items()
+                ]
+                st.dataframe(pd.DataFrame(_ind_rows), use_container_width=True, hide_index=True)
+
+            # Historical composite chart
+            _msi_series = _msi.get("signal_series")
+            if _msi_series is not None and len(_msi_series) > 0:
+                _msi_fig = _go_msi.Figure()
+                _msi_fig.add_trace(_go_msi.Scatter(
+                    x=list(_msi_series.index), y=list(_msi_series.values),
+                    mode="lines", name="Macro Surprise",
+                    line=dict(color="#3498db", width=2),
+                    fill="tozeroy",
+                    fillcolor="rgba(52,152,219,0.1)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Surprise: %{y:.2f}<extra></extra>",
+                ))
+                _msi_fig.add_hline(y=0, line_color="rgba(255,255,255,0.3)", line_width=1)
+                _msi_fig.add_hline(y=0.3, line_color="#27ae60", line_width=1, line_dash="dot")
+                _msi_fig.add_hline(y=-0.3, line_color="#e74c3c", line_width=1, line_dash="dot")
+                _msi_fig.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(title="Surprise Index (z-score)", showgrid=True,
+                               gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                )
+                st.plotly_chart(_msi_fig, use_container_width=True)
+                st.caption("10-day EMA smoothed · Green dashed = Positive threshold · Red dashed = Negative threshold")
+        else:
+            st.info("Macro surprise index unavailable — requires ≥2 macro indicator columns and ≥126 rows.")
+    except Exception as _msi_e:
+        st.caption(f"Macro surprise index unavailable: {_msi_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 42: Loan Market / CLO Stress Monitor
+# =============================================================================
+with _analytics_sub42:
+    import plotly.graph_objects as _go_lmm
+    st.header("Loan Market / CLO Stress Monitor")
+    st.markdown(
+        "**BKLN vs HYG divergence** as a proxy for CLO stress. "
+        "Leveraged loans (floating rate) and HY bonds price differently under stress. "
+        "When loans underperform HY bonds, CLO demand is falling — "
+        "a leading indicator for broader credit deterioration."
+    )
+    try:
+        _lmm = load_loan_market_monitor(df)
+        if _lmm.get("available"):
+            _lmm_snap = _lmm.get("snapshot", {})
+            _lmm_lead = _lmm.get("lead_signal", "—")
+            _lmm_interp = _lmm.get("interpretation", "")
+
+            if _lmm_snap.get("available"):
+                _lmm_regime = _lmm_snap.get("loan_market_regime", "—")
+                _lmm_ratio = _lmm_snap.get("bkln_hyg_ratio")
+                _lmm_chg = _lmm_snap.get("bkln_hyg_ratio_30d_chg")
+                _lmm_zscore = _lmm_snap.get("bkln_hyg_zscore_1y")
+                _lmm_clo = _lmm_snap.get("clo_stress_flag", False)
+                _lmm_asof = _lmm_snap.get("as_of", "—")
+
+                _lm1, _lm2, _lm3, _lm4 = st.columns(4)
+                _lm1.metric("BKLN/HYG Ratio", f"{_lmm_ratio:.4f}" if _lmm_ratio else "—",
+                            delta=f"{_lmm_chg:+.1f}% (30d)" if _lmm_chg is not None else None,
+                            delta_color="normal")
+                _lm2.metric("Loan Market Regime", _lmm_regime)
+                _lm3.metric("CLO Stress Flag", "⚠ ACTIVE" if _lmm_clo else "Clear")
+                _lm4.metric("Lead Signal", _lmm_lead)
+
+                if _lmm_clo:
+                    st.warning("CLO stress flag active — BKLN/HYG ratio is below 252d MA with elevated loan vol. Watch for spread contagion.")
+
+            if _lmm_interp:
+                st.info(_lmm_interp)
+
+            st.caption(f"Live data via yfinance · As of: {_lmm_snap.get('as_of', '—')}")
+            st.caption("BKLN = Invesco Senior Loan ETF · HYG = iShares HY Bond ETF · Ratio falling = loans underperforming")
+        else:
+            st.info("Loan market monitor unavailable — requires yfinance connection (BKLN, HYG).")
+    except Exception as _lmm_e:
+        st.caption(f"Loan market monitor unavailable: {_lmm_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 43: Regime Duration & Fatigue Clock
+# =============================================================================
+with _analytics_sub43:
+    import plotly.graph_objects as _go_rd
+    st.header("Regime Duration & Fatigue Clock")
+    st.markdown(
+        "How long has the current regime lasted, and how does that compare to history? "
+        "**Regime fatigue** = the duration percentile — if 85, this regime has lasted longer than "
+        "85% of historical instances of the same regime. Overdue regimes are fragile."
+    )
+    try:
+        _rd = load_regime_duration(df)
+        if _rd.get("available"):
+            _rd_spell = _rd.get("current_spell", {})
+            _rd_stats = _rd.get("duration_stats", {})
+            _rd_warn = _rd.get("warning")
+            _rd_interp = _rd.get("interpretation", "")
+            _rd_seq = _rd.get("regime_sequence", [])
+
+            _rd_regime = _rd_spell.get("regime", "—")
+            _rd_dur = _rd_spell.get("duration_days", 0)
+            _rd_fatigue = _rd_spell.get("fatigue_score")
+            _rd_age_cat = _rd_spell.get("age_category", "—")
+            _rd_start = _rd_spell.get("start_date", "—")
+            _rd_to_p90 = _rd_spell.get("days_to_p90")
+
+            _rd_age_color = {
+                "Young": "#27ae60", "Mature": "#3498db",
+                "Aging": "#f39c12", "Overdue": "#e74c3c",
+            }.get(_rd_age_cat, "#9aa0aa")
+
+            _rdc1, _rdc2, _rdc3, _rdc4 = st.columns(4)
+            _rdc1.metric("Current Regime", _rd_regime)
+            _rdc2.metric("Duration", f"{_rd_dur}d", delta=f"since {_rd_start}")
+            _rdc3.metric("Fatigue Score", f"{_rd_fatigue:.0f}th pct" if _rd_fatigue is not None else "—",
+                         help="Duration percentile vs historical spells of same regime")
+            _rdc4.metric("Age Category", _rd_age_cat,
+                         delta=f"{_rd_to_p90}d to Overdue" if _rd_to_p90 and _rd_to_p90 > 0 else None)
+
+            if _rd_warn:
+                st.warning(_rd_warn)
+            elif _rd_interp:
+                st.info(_rd_interp)
+
+            # Per-regime duration stats table
+            if _rd_stats:
+                _rd_stat_rows = []
+                for _rname, _rstat in _rd_stats.items():
+                    _rd_stat_rows.append({
+                        "Regime": _rname,
+                        "N Spells": _rstat.get("n_spells", 0),
+                        "Median (d)": f"{_rstat.get('median', 0):.0f}",
+                        "P25 (d)": f"{_rstat.get('p25', 0):.0f}",
+                        "P75 (d)": f"{_rstat.get('p75', 0):.0f}",
+                        "P90 (d)": f"{_rstat.get('p90', 0):.0f}",
+                        "Max (d)": f"{_rstat.get('max', 0):.0f}",
+                    })
+                st.dataframe(pd.DataFrame(_rd_stat_rows), use_container_width=True, hide_index=True)
+
+            # Spell duration bar chart
+            _rd_spells = _rd.get("all_spells")
+            if _rd_spells is not None and not _rd_spells.empty and "regime" in _rd_spells.columns:
+                with st.expander("All Historical Regime Spells"):
+                    _rd_colors = {
+                        "Risk-On": "#27ae60", "Neutral": "#3498db",
+                        "Caution": "#f39c12", "Risk-Off": "#e74c3c",
+                    }
+                    _rd_spell_fig = _go_rd.Figure()
+                    for _rname in _rd_spells["regime"].unique():
+                        _mask = _rd_spells["regime"] == _rname
+                        _rd_spell_fig.add_trace(_go_rd.Bar(
+                            x=list(range(_mask.sum())),
+                            y=list(_rd_spells.loc[_mask, "duration_days"]),
+                            name=_rname,
+                            marker_color=_rd_colors.get(_rname, "#9aa0aa"),
+                            hovertemplate=f"{_rname}: %{{y}}d<extra></extra>",
+                        ))
+                    _rd_spell_fig.update_layout(
+                        height=250, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                        barmode="overlay",
+                        yaxis=dict(title="Duration (trading days)", showgrid=True,
+                                   gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                        xaxis=dict(title="Spell #", showgrid=False, color="#6b7280"),
+                        legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    )
+                    st.plotly_chart(_rd_spell_fig, use_container_width=True)
+
+            # Recent regime sequence
+            if _rd_seq:
+                st.caption("Recent regime sequence: " + " → ".join(_rd_seq))
+        else:
+            st.info("Regime duration unavailable — requires `final_decision` column, ≥2 regimes observed, and ≥100 rows.")
+    except Exception as _rd_e:
+        st.caption(f"Regime duration unavailable: {_rd_e}")
 
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
