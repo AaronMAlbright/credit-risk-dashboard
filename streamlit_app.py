@@ -1441,8 +1441,12 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-    "Signal", "Charts", "Portfolio", "Backtest", "Analytics", "Models", "History", "Allocation", "⚙ Health"
+(tab1, tab2, tab3, tab4,
+ tab_credit, tab_macro, tab_risk, tab_siglab, tab_regime,
+ tab_models, tab7, tab8, tab9) = st.tabs([
+    "Signal", "Charts", "Portfolio", "Backtest",
+    "Credit Markets", "Rates & Macro", "Risk Monitors", "Signal Lab", "Regime",
+    "Models", "History", "Allocation", "⚙ Health",
 ])
 
 with tab1:
@@ -2967,61 +2971,77 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 73 sub-tabs
-    (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
-     _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
-     _analytics_sub9, _analytics_sub10, _analytics_sub11,
-     _analytics_sub12, _analytics_sub13, _analytics_sub14,
-     _analytics_sub15, _analytics_sub16, _analytics_sub17, _analytics_sub18,
-     _analytics_sub19, _analytics_sub20, _analytics_sub21, _analytics_sub22,
-     _analytics_sub23, _analytics_sub24, _analytics_sub25,
-     _analytics_sub26, _analytics_sub27, _analytics_sub28,
+with tab_credit:  # Credit Markets — 16 sub-tabs
+    (_analytics_sub19, _analytics_sub20, _analytics_sub21,
+     _analytics_sub24, _analytics_sub27, _analytics_sub28,
      _analytics_sub29, _analytics_sub30, _analytics_sub31,
-     _analytics_sub32, _analytics_sub33, _analytics_sub34,
-     _analytics_sub35, _analytics_sub36, _analytics_sub37,
-     _analytics_sub38, _analytics_sub39, _analytics_sub40,
-     _analytics_sub41, _analytics_sub42, _analytics_sub43,
-     _analytics_sub44, _analytics_sub45, _analytics_sub46,
-     _analytics_sub47, _analytics_sub48, _analytics_sub49,
-     _analytics_sub50, _analytics_sub51, _analytics_sub52,
-     _analytics_sub53, _analytics_sub54, _analytics_sub55,
-     _analytics_sub56, _analytics_sub57, _analytics_sub58,
-     _analytics_sub59, _analytics_sub60, _analytics_sub61,
-     _analytics_sub62, _analytics_sub63, _analytics_sub64,
-     _analytics_sub65, _analytics_sub66, _analytics_sub67,
-     _analytics_sub68, _analytics_sub69, _analytics_sub70,
-     _analytics_sub71, _analytics_sub72, _analytics_sub73) = st.tabs([
-        "Validation", "Attribution", "Timeline", "Sig Decay",
-        "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
-        "Regime Validity", "Failure Analysis",
-        "Contagion", "Analogs", "Persistence",
-        "Merton DD", "Frontier", "Kelly", "Granger", "Defaults",
-        "Fwd Sim", "CDX Proxy", "EQ-Credit Corr",
-        "Regime Returns", "Default Cycle", "Compare Dates",
-        "Corr Heatmap", "Spread Vol", "Fallen Angel",
+     _analytics_sub40, _analytics_sub42, _analytics_sub48,
+     _analytics_sub60, _analytics_sub61, _analytics_sub62,
+     _analytics_sub73) = st.tabs([
+        "Defaults", "Fwd Sim", "CDX Proxy",
+        "Default Cycle", "Spread Vol", "Fallen Angel",
         "Global Credit", "Corp Leverage", "Seasonality",
-        "Traffic Light", "Shock Sim", "Alert BT",
-        "PCA", "Regime Fcast", "Composite",
-        "X-Asset Mom", "Vol Regime", "Quality Migr",
-        "Macro Surprise", "Loan Market", "Regime Age",
-        "Deleveraging", "Inflation Regime", "Sector Stress",
-        "Put/Call", "Credit Basis", "Drawdown",
-        "Signal Move", "Risk Parity", "Tail Dependency",
-        "Fed Liquidity", "G4 Divergence", "Port Stress",
-        "AT1/CoCo", "Swap Spreads", "XCcy Basis",
-        "CRE Stress", "Issuance", "Distressed",
-        "CLO", "FCI", "Credit Impulse",
-        "ETF Disloc", "Sovereign", "Consumer Credit",
-        "Term Premium", "Curve Fly", "SLOOS",
-        "ETF Flows", "Corp Profits", "CDS PD",
+        "Quality Migr", "Loan Market", "Credit Basis",
+        "Issuance", "Distressed", "CLO", "CDS PD",
     ])
 
-with tab6:  # Models — 9 sub-tabs
+with tab_macro:  # Rates & Macro — 14 sub-tabs
+    (_analytics_sub23, _analytics_sub38, _analytics_sub41,
+     _analytics_sub45, _analytics_sub53, _analytics_sub54,
+     _analytics_sub57, _analytics_sub58, _analytics_sub63,
+     _analytics_sub64, _analytics_sub68, _analytics_sub69,
+     _analytics_sub70, _analytics_sub72) = st.tabs([
+        "Regime Returns", "X-Asset Mom", "Macro Surprise",
+        "Inflation Regime", "Fed Liquidity", "G4 Divergence",
+        "Swap Spreads", "XCcy Basis", "FCI",
+        "Credit Impulse", "Term Premium", "Curve Fly",
+        "SLOOS", "Corp Profits",
+    ])
+
+with tab_risk:  # Risk Monitors — 15 sub-tabs
+    (_analytics_sub6, _analytics_sub7, _analytics_sub12,
+     _analytics_sub39, _analytics_sub44, _analytics_sub46,
+     _analytics_sub47, _analytics_sub52, _analytics_sub55,
+     _analytics_sub56, _analytics_sub59, _analytics_sub65,
+     _analytics_sub66, _analytics_sub67, _analytics_sub71) = st.tabs([
+        "Tail Risk", "Stress", "Contagion",
+        "Vol Regime", "Deleveraging", "Sector Stress",
+        "Put/Call", "Tail Dependency", "Port Stress",
+        "AT1/CoCo", "CRE Stress", "ETF Disloc",
+        "Sovereign", "Consumer Credit", "ETF Flows",
+    ])
+
+with tab_siglab:  # Signal Lab — 12 sub-tabs
+    (_analytics_sub1, _analytics_sub2, _analytics_sub3,
+     _analytics_sub4, _analytics_sub5, _analytics_sub9,
+     _analytics_sub18, _analytics_sub22, _analytics_sub26,
+     _analytics_sub35, _analytics_sub37, _analytics_sub50) = st.tabs([
+        "Validation", "Attribution", "Timeline",
+        "Sig Decay", "Ortho", "Factors",
+        "Granger", "EQ-Credit Corr", "Corr Heatmap",
+        "PCA", "Composite", "Signal Move",
+    ])
+
+with tab_regime:  # Regime — 12 sub-tabs
+    (_analytics_sub8, _analytics_sub10, _analytics_sub11,
+     _analytics_sub13, _analytics_sub14, _analytics_sub25,
+     _analytics_sub32, _analytics_sub33, _analytics_sub34,
+     _analytics_sub36, _analytics_sub43, _analytics_sub49) = st.tabs([
+        "Performance", "Regime Validity", "Failure Analysis",
+        "Analogs", "Persistence", "Compare Dates",
+        "Traffic Light", "Shock Sim", "Alert BT",
+        "Regime Fcast", "Regime Age", "Drawdown",
+    ])
+
+with tab_models:  # Models — 13 sub-tabs
     (_models_sub1, _models_sub2, _models_sub3, _models_sub4,
      _models_sub5, _models_sub6, _models_sub7, _models_sub8,
-     _models_sub9) = st.tabs([
+     _models_sub9,
+     _analytics_sub15, _analytics_sub16, _analytics_sub17,
+     _analytics_sub51) = st.tabs([
         "Sensitivity", "Transitions", "Regimes", "Monte Carlo",
         "Sub-period", "Sizing", "Scenarios", "OOS Splits", "Thresholds",
+        "Merton DD", "Frontier", "Kelly", "Risk Parity",
     ])
 
 with _analytics_sub1:
