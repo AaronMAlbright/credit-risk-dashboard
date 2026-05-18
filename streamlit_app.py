@@ -2986,34 +2986,38 @@ with tab_credit:  # Credit Markets — 18 sub-tabs
         "EM Credit", "Carry BEven",
     ])
 
-with tab_macro:  # Rates & Macro — 16 sub-tabs
+with tab_macro:  # Rates & Macro — 19 sub-tabs
     (_analytics_sub23, _analytics_sub38, _analytics_sub41,
      _analytics_sub45, _analytics_sub53, _analytics_sub54,
      _analytics_sub57, _analytics_sub58, _analytics_sub63,
      _analytics_sub64, _analytics_sub68, _analytics_sub69,
      _analytics_sub70, _analytics_sub72,
-     _analytics_sub74, _analytics_sub75) = st.tabs([
+     _analytics_sub74, _analytics_sub75,
+     _analytics_sub81, _analytics_sub84, _analytics_sub85) = st.tabs([
         "Regime Returns", "X-Asset Mom", "Macro Surprise",
         "Inflation Regime", "Fed Liquidity", "G4 Divergence",
         "Swap Spreads", "XCcy Basis", "FCI",
         "Credit Impulse", "Term Premium", "Curve Fly",
         "SLOOS", "Corp Profits",
         "Recession Model", "Real Rates",
+        "Fed Sentiment", "Taylor Rule", "Macro Nowcast",
     ])
 
-with tab_risk:  # Risk Monitors — 17 sub-tabs
+with tab_risk:  # Risk Monitors — 20 sub-tabs
     (_analytics_sub6, _analytics_sub7, _analytics_sub12,
      _analytics_sub39, _analytics_sub44, _analytics_sub46,
      _analytics_sub47, _analytics_sub52, _analytics_sub55,
      _analytics_sub56, _analytics_sub59, _analytics_sub65,
      _analytics_sub66, _analytics_sub67, _analytics_sub71,
-     _analytics_sub76, _analytics_sub79) = st.tabs([
+     _analytics_sub76, _analytics_sub79,
+     _analytics_sub80, _analytics_sub82, _analytics_sub83) = st.tabs([
         "Tail Risk", "Stress", "Contagion",
         "Vol Regime", "Deleveraging", "Sector Stress",
         "Put/Call", "Tail Dependency", "Port Stress",
         "AT1/CoCo", "CRE Stress", "ETF Disloc",
         "Sovereign", "Consumer Credit", "ETF Flows",
         "MOVE Index", "VIX Term",
+        "Options Skew", "DV01", "CVaR",
     ])
 
 with tab_siglab:  # Signal Lab — 12 sub-tabs
@@ -12207,7 +12211,7 @@ with _analytics_sub78:
         "Low carry + long duration (IG) is vulnerable to even modest spread widening."
     )
     try:
-        _be78 = load_breakeven(df)
+        _be78 = load_carry_breakeven(df)
         if _be78.get("available"):
             _bec = _be78.get("current", {})
             _be78a, _be78b, _be78c, _be78d = st.columns(4)
@@ -12410,6 +12414,571 @@ with _analytics_sub79:
             st.info("VIX term structure unavailable — requires VIX and VIX3M columns (or yfinance fetch).")
     except Exception as _e79:
         st.caption(f"VIX term structure unavailable: {_e79}")
+
+
+# =============================================================================
+# BATCH 9 ANALYTICS: sub80–85
+# =============================================================================
+
+with _analytics_sub80:
+    import plotly.graph_objects as _go80
+    st.header("Options Skew — Tail Risk Pricing")
+    st.markdown(
+        "The **CBOE SKEW Index** measures how much more expensive OTM puts are relative to ATM options — "
+        "the market's implied probability of outlier S&P 500 moves. "
+        "Unlike VIX (which measures the level of near-term vol), SKEW measures the **shape** of the smile. "
+        "**Hidden danger regime**: High SKEW + Low VIX = market is complacent on the surface "
+        "but quietly pricing extreme left-tail events — historically one of the most dangerous configurations for credit."
+    )
+    try:
+        _sk80 = load_options_skew(df)
+        _snap80 = _sk80.get("snapshot", {})
+        _sk80a, _sk80b, _sk80c, _sk80d = st.columns(4)
+        _skew_lvl = _snap80.get("skew_level", float("nan"))
+        _vvix_lvl = _snap80.get("vvix", float("nan"))
+        _sk80a.metric("SKEW Level", f"{_skew_lvl:.1f}" if not pd.isna(_skew_lvl) else "—",
+                      help="Normal ≈ 100–115. Elevated > 130. Extreme > 150.")
+        _sk80b.metric("SKEW Regime", _snap80.get("skew_regime", "—"))
+        _sk80c.metric("VVIX (Vol-of-Vol)", f"{_vvix_lvl:.1f}" if not pd.isna(_vvix_lvl) else "—",
+                      help="> 100 typically precedes VIX spikes")
+        _sk80d.metric("Hidden Danger", "YES" if _snap80.get("hidden_danger") else "No",
+                      help="High SKEW + Low VIX — complacency with hidden tail risk")
+
+        if _snap80.get("hidden_danger"):
+            st.error("Hidden danger regime: High SKEW + Low VIX. Market is pricing extreme tails "
+                     "while surface vol remains suppressed. Historically precedes credit dislocations.")
+
+        if _sk80.get("interpretation"):
+            st.info(_sk80["interpretation"])
+
+        # Skew vs HY spread correlation callout
+        _corr_hy80 = _sk80.get("correlation_with_hy")
+        _corr_comp80 = _sk80.get("correlation_with_composite")
+        if _corr_hy80 is not None or _corr_comp80 is not None:
+            _sc80a, _sc80b = st.columns(2)
+            if _corr_hy80 is not None:
+                _sc80a.metric("SKEW vs HY Corr (1yr)", f"{_corr_hy80:+.2f}")
+            if _corr_comp80 is not None:
+                _sc80b.metric("SKEW vs Composite Corr (1yr)", f"{_corr_comp80:+.2f}")
+
+        # SKEW + VVIX time series
+        _sk80_df = _sk80.get("df")
+        if _sk80_df is not None and "skew_level" in _sk80_df.columns:
+            _sk80_plot = _sk80_df[["skew_level"]].dropna().tail(504).copy()
+            _sk80_plot.index = pd.to_datetime(_sk80_plot.index)
+            _fig80a = _go80.Figure()
+            _fig80a.add_trace(_go80.Scatter(
+                x=_sk80_plot.index, y=_sk80_plot["skew_level"],
+                name="SKEW Level", line=dict(color="#a78bfa", width=2),
+                hovertemplate="%{x|%Y-%m-%d}<br>SKEW: %{y:.1f}<extra></extra>",
+            ))
+            _fig80a.add_hline(y=115, line=dict(color="#f59e0b", dash="dash", width=1),
+                              annotation_text="Normal (115)",
+                              annotation_font=dict(color="#f59e0b", size=9))
+            _fig80a.add_hline(y=130, line=dict(color="#ef4444", dash="dash", width=1),
+                              annotation_text="Elevated (130)",
+                              annotation_font=dict(color="#ef4444", size=9))
+            _fig80a.add_hline(y=145, line=dict(color="#9b59b6", dash="dot", width=1),
+                              annotation_text="High (145)",
+                              annotation_font=dict(color="#9b59b6", size=9))
+            _fig80a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="SKEW Level"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig80a, use_container_width=True)
+
+            if "vvix" in _sk80_df.columns:
+                _vvix_plot = _sk80_df[["vvix"]].dropna().tail(504).copy()
+                _vvix_plot.index = pd.to_datetime(_vvix_plot.index)
+                _fig80b = _go80.Figure()
+                _fig80b.add_trace(_go80.Scatter(
+                    x=_vvix_plot.index, y=_vvix_plot["vvix"],
+                    name="VVIX", line=dict(color="#06b6d4", width=1.5),
+                    fill="tozeroy", fillcolor="rgba(6,182,212,0.08)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>VVIX: %{y:.1f}<extra></extra>",
+                ))
+                _fig80b.add_hline(y=100, line=dict(color="#ef4444", dash="dash", width=1),
+                                  annotation_text="Stress threshold (100)",
+                                  annotation_font=dict(color="#ef4444", size=9))
+                _fig80b.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="VVIX (Vol-of-Vol — precedes VIX spikes)",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="VVIX"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig80b, use_container_width=True)
+
+        # Hidden danger episodes table
+        _hd80 = _sk80.get("hidden_danger_episodes")
+        if _hd80 is not None and not _hd80.empty:
+            with st.expander(f"Hidden danger episodes ({len(_hd80)} found)"):
+                st.dataframe(_hd80, use_container_width=True, hide_index=True)
+                st.caption("Each episode: SKEW > 130 AND VIX < 18. "
+                           "hy_spread_change_5d shows subsequent 5-day HY spread move.")
+        elif not _sk80.get("available"):
+            st.info("Options skew unavailable — requires live SKEW/VVIX fetch via yfinance.")
+    except Exception as _e80:
+        st.caption(f"Options skew unavailable: {_e80}")
+
+
+with _analytics_sub81:
+    import plotly.graph_objects as _go81
+    st.header("Fed Communication Sentiment")
+    st.markdown(
+        "Scores each **FOMC post-meeting statement** 0–100 for monetary policy tone: "
+        "0 = very dovish · 50 = neutral · 100 = very hawkish. "
+        "Hawkish drift → tighter financial conditions → wider credit spreads. "
+        "Dovish pivot → risk-on rally → spread compression. "
+        "The **Taylor Rule** (see next tab) tells you where rates *should* be; "
+        "this module tells you what the Fed is *signaling* about where they're heading."
+    )
+    try:
+        _fs81 = load_fed_sentiment(df)
+        _cur81 = _fs81.get("current", {})
+        _fs81a, _fs81b, _fs81c, _fs81d = st.columns(4)
+        _score81 = _cur81.get("score")
+        _fs81a.metric("Sentiment Score", f"{_score81:.0f}/100" if _score81 is not None else "—",
+                      help="0 = very dovish, 50 = neutral, 100 = very hawkish")
+        _fs81b.metric("Tone", _cur81.get("label", "—"))
+        _fs81c.metric("Meeting Date", _cur81.get("date", "—") or "—")
+        _fs81d.metric("Trend (last 3)", _fs81.get("trend", "—"))
+
+        if _cur81.get("reasoning"):
+            st.info(f"**Reasoning:** {_cur81['reasoning']}")
+
+        if not _fs81.get("api_key_present"):
+            st.warning("ANTHROPIC_API_KEY not set — sentiment scoring requires LLM. "
+                       "Using cached history if available.")
+
+        # History bar chart
+        _hist81 = _fs81.get("history", [])
+        if _hist81:
+            import pandas as _pd81
+            _h81_df = _pd81.DataFrame(_hist81)
+            _h81_df["date"] = _pd81.to_datetime(_h81_df["date"], format="%Y%m%d", errors="coerce")
+            _h81_df = _h81_df.dropna(subset=["date", "score"]).sort_values("date")
+            _colors81 = [
+                "#ef4444" if s >= 65 else "#27ae60" if s <= 35 else "#f59e0b"
+                for s in _h81_df["score"]
+            ]
+            _fig81 = _go81.Figure()
+            _fig81.add_trace(_go81.Bar(
+                x=_h81_df["date"], y=_h81_df["score"],
+                marker_color=_colors81, name="FOMC Sentiment",
+                text=_h81_df["label"], textposition="outside",
+                hovertemplate="%{x|%Y-%m-%d}<br>Score: %{y:.0f}<br>%{text}<extra></extra>",
+            ))
+            _fig81.add_hline(y=50, line=dict(color="rgba(255,255,255,0.3)", dash="dash", width=1),
+                             annotation_text="Neutral (50)",
+                             annotation_font=dict(color="#9aa0aa", size=9))
+            _fig81.add_hrect(y0=65, y1=100, fillcolor="rgba(231,76,60,0.05)", line_width=0,
+                             annotation_text="Hawkish zone",
+                             annotation_font=dict(color="#e74c3c", size=9))
+            _fig81.add_hrect(y0=0, y1=35, fillcolor="rgba(39,174,96,0.05)", line_width=0,
+                             annotation_text="Dovish zone",
+                             annotation_font=dict(color="#27ae60", size=9))
+            _fig81.update_layout(
+                height=320, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=24),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="Sentiment Score (0–100)", range=[0, 110]),
+                xaxis=dict(showgrid=False, color="#6b7280", title="FOMC Meeting Date"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig81, use_container_width=True)
+            st.caption("Red = hawkish (≥ 65) · Amber = neutral (35–65) · Green = dovish (≤ 35). "
+                       "Credit spreads typically widen in hawkish regimes and tighten on dovish pivots.")
+
+            # Summary statistics
+            import numpy as _np81
+            _scores81 = [h["score"] for h in _hist81 if h.get("score") is not None]
+            if _scores81:
+                _s81a, _s81b, _s81c = st.columns(3)
+                _s81a.metric("Avg Score (history)", f"{_np81.mean(_scores81):.1f}")
+                _s81b.metric("Last 3 Meetings Avg", f"{_np81.mean(_scores81[-3:]):.1f}" if len(_scores81) >= 3 else "—")
+                _s81c.metric("Min / Max", f"{min(_scores81):.0f} / {max(_scores81):.0f}")
+        else:
+            st.info("No FOMC sentiment history available — requires ANTHROPIC_API_KEY and Fed statement access.")
+    except Exception as _e81:
+        st.caption(f"Fed sentiment unavailable: {_e81}")
+
+
+with _analytics_sub82:
+    import plotly.graph_objects as _go82
+    st.header("DV01 — Spread Sensitivity & P&L Scenarios")
+    st.markdown(
+        "**DV01** (Dollar Value of a Basis Point) measures the dollar P&L impact of a 1 bp change "
+        "in credit spreads across the portfolio. Based on current HY/IG weights and their respective "
+        "effective durations (HY ≈ 4yr, IG ≈ 7yr). "
+        "Use this to size positions, set stop-losses, and stress-test spread-widening scenarios."
+    )
+    try:
+        _dv82 = load_dv01(df)
+        if _dv82.get("available"):
+            _dvc = _dv82.get("current", {})
+            _dv82a, _dv82b, _dv82c, _dv82d = st.columns(4)
+            _dv01_val = _dvc.get("dv01", float("nan"))
+            _dur_val = _dvc.get("blended_duration", float("nan"))
+            _dv82a.metric("DV01 (per $1M)", f"${_dv01_val:,.0f}" if not pd.isna(_dv01_val) else "—",
+                          help="Dollar loss per 1 bp spread widening on $1M notional")
+            _dv82b.metric("Blended Duration", f"{_dur_val:.2f} yrs" if not pd.isna(_dur_val) else "—")
+            _dv82c.metric("HY Weight", f"{_dvc.get('hy_weight', 0):.0%}")
+            _dv82d.metric("IG Weight", f"{_dvc.get('ig_weight', 0):.0%}")
+
+            # P&L scenario metrics
+            _pnl82 = _dvc.get("pnl_scenarios", {})
+            if _pnl82:
+                st.subheader("P&L Scenarios (per $1M notional)")
+                _pnl82_cols = st.columns(len(_pnl82))
+                for _ci82, (_lbl82, _val82) in enumerate(
+                    [(k, v) for k, v in _pnl82.items() if v is not None and not pd.isna(v)]
+                ):
+                    _color82 = "inverse" if "widen" in _lbl82.lower() else "normal"
+                    _pnl82_cols[_ci82 % len(_pnl82_cols)].metric(
+                        f"Spread {_lbl82}", f"${_val82:,.0f}",
+                        delta_color=_color82,
+                    )
+
+            # Full scenario table
+            _scen82 = _dv82.get("scenario_table")
+            if _scen82 is not None and not _scen82.empty:
+                st.subheader("Full Spread Shock Scenario Table")
+                import pandas as _pd82
+                _scen82_fmt = _scen82.copy()
+                for _col82 in _scen82_fmt.select_dtypes(include=["float", "int"]).columns:
+                    if "pct" in _col82.lower() or "%" in _col82:
+                        _scen82_fmt[_col82] = _scen82_fmt[_col82].map(lambda x: f"{x:.1f}%")
+                    elif "pnl" in _col82.lower() or "$" in _col82:
+                        _scen82_fmt[_col82] = _scen82_fmt[_col82].map(lambda x: f"${x:,.0f}")
+                st.dataframe(_scen82_fmt, use_container_width=True, hide_index=True)
+                st.caption(f"Based on portfolio notional ${_dvc.get('portfolio_value', 1_000_000):,.0f}. "
+                           f"Blended duration {_dur_val:.2f}yr = {_dur_val:.2f}× price sensitivity per 100 bps of spread move.")
+
+            # DV01 history chart
+            _dv82_df = _dv82.get("df")
+            if _dv82_df is not None and "dv01_per_1m" in _dv82_df.columns:
+                _dv82_plot = _dv82_df[["dv01_per_1m"]].dropna().tail(504).copy()
+                _dv82_plot.index = pd.to_datetime(_dv82_plot.index)
+                _fig82 = _go82.Figure()
+                _fig82.add_trace(_go82.Scatter(
+                    x=_dv82_plot.index, y=_dv82_plot["dv01_per_1m"],
+                    name="DV01 per $1M", line=dict(color="#f59e0b", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>DV01: $%{y:,.0f}<extra></extra>",
+                ))
+                _fig82.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="DV01 Over Time (varies with portfolio duration)",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="DV01 per $1M ($)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig82, use_container_width=True)
+        else:
+            st.info("DV01 analysis unavailable — data frame is empty.")
+    except Exception as _e82:
+        st.caption(f"DV01 unavailable: {_e82}")
+
+
+with _analytics_sub83:
+    import plotly.graph_objects as _go83
+    st.header("CVaR — Conditional Value at Risk")
+    st.markdown(
+        "**CVaR** (Expected Shortfall) measures the average loss in the worst α% of scenarios — "
+        "more informative than VaR because it captures the severity of tail losses, not just the threshold. "
+        "Computed from daily portfolio returns, conditional on each credit regime, "
+        "using historical simulation (no parametric distribution assumptions). "
+        "**CVaR₉₅** = average of the worst 5% of return days · **CVaR₉₉** = worst 1%."
+    )
+    try:
+        _cv83 = load_cvar(df)
+        _cur83_regime = _cv83.get("current_regime", "Unknown")
+        _cv95 = _cv83.get("current_cvar_95", float("nan"))
+        _cv99 = _cv83.get("current_cvar_99", float("nan"))
+        _cv83a, _cv83b, _cv83c, _cv83d = st.columns(4)
+        _cv83a.metric("Current Regime", _cur83_regime)
+        _cv83b.metric("CVaR₉₅ (daily)", f"{_cv95:.2%}" if not pd.isna(_cv95) else "—",
+                      help="Average of worst 5% of days in current regime")
+        _cv83c.metric("CVaR₉₉ (daily)", f"{_cv99:.2%}" if not pd.isna(_cv99) else "—",
+                      help="Average of worst 1% of days in current regime")
+        _fp83 = _cv83.get("full_period", {})
+        _cv83d.metric("Full-Period CVaR₉₅", f"{_fp83.get('cvar_95', float('nan')):.2%}"
+                      if _fp83.get("cvar_95") and not pd.isna(_fp83.get("cvar_95", float("nan"))) else "—")
+
+        if not _cv83.get("available"):
+            st.warning("Strategy return series not found — using SP500 returns as proxy.")
+
+        # Regime-conditional CVaR table
+        _rs83 = _cv83.get("regime_stats")
+        if _rs83 is not None and not _rs83.empty:
+            st.subheader("CVaR by Regime")
+            import pandas as _pd83
+            _rs83_fmt = _rs83.copy()
+            for _col83 in _rs83_fmt.select_dtypes(include=["float"]).columns:
+                _rs83_fmt[_col83] = _rs83_fmt[_col83].map(lambda x: f"{x:.2%}" if abs(x) < 1 else f"{x:.1f}")
+            st.dataframe(_rs83_fmt, use_container_width=True)
+            st.caption("CVaR shows average loss on the worst days, conditional on the credit regime. "
+                       "Risk-off regimes produce materially worse tail outcomes.")
+
+        # Rolling CVaR chart
+        _rcvar83 = _cv83.get("rolling_cvar")
+        if _rcvar83 is not None and len(_rcvar83.dropna()) > 20:
+            _rcvar83 = _rcvar83.dropna()
+            _fig83a = _go83.Figure()
+            _fig83a.add_trace(_go83.Scatter(
+                x=_rcvar83.index, y=_rcvar83.values * 100,
+                name="Rolling CVaR₉₅ (252d, %)", line=dict(color="#ef4444", width=1.5),
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.08)",
+                hovertemplate="%{x|%Y-%m-%d}<br>CVaR₉₅: %{y:.2f}%<extra></extra>",
+            ))
+            _fig83a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                title=dict(text="Rolling 252-Day CVaR₉₅ (daily %)",
+                           font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                           color="#6b7280", title="CVaR₉₅ (%)"),
+                xaxis=dict(showgrid=False, color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig83a, use_container_width=True)
+
+        # Full-period vs OOS comparison
+        _oos83 = _cv83.get("oos_period", {})
+        if _fp83 and _oos83:
+            st.subheader("In-Sample vs Out-of-Sample Tail Risk")
+            _cmp83_cols = st.columns(2)
+            _cmp83_cols[0].metric("Full-Period CVaR₉₅", f"{_fp83.get('cvar_95', float('nan')):.2%}"
+                                  if _fp83.get("cvar_95") else "—")
+            _cmp83_cols[0].metric("Full-Period CVaR₉₉", f"{_fp83.get('cvar_99', float('nan')):.2%}"
+                                  if _fp83.get("cvar_99") else "—")
+            _cmp83_cols[1].metric("OOS CVaR₉₅ (post-2016)", f"{_oos83.get('cvar_95', float('nan')):.2%}"
+                                  if _oos83.get("cvar_95") else "—")
+            _cmp83_cols[1].metric("OOS CVaR₉₉ (post-2016)", f"{_oos83.get('cvar_99', float('nan')):.2%}"
+                                  if _oos83.get("cvar_99") else "—")
+    except Exception as _e83:
+        st.caption(f"CVaR unavailable: {_e83}")
+
+
+with _analytics_sub84:
+    import plotly.graph_objects as _go84
+    st.header("Taylor Rule — Monetary Policy Positioning")
+    st.markdown(
+        "The **Taylor Rule (1993)** estimates the appropriate Fed funds rate: "
+        "r = r\\* + π + 0.5(π − π\\*) + 0.5(y − y\\*). "
+        "A **positive policy gap** (actual rate > Taylor prescription) = policy is *overly restrictive* "
+        "— historically associated with credit spread widening, slowing loan growth, and rising default risk. "
+        "A **negative gap** = policy is accommodative relative to fundamentals."
+    )
+    try:
+        _tr84 = load_taylor(df)
+        if _tr84.get("available"):
+            _trc = _tr84["current"]
+            _tr84a, _tr84b, _tr84c, _tr84d = st.columns(4)
+            _tr84a.metric("Fed Funds Rate", f"{_trc.get('fed_funds', float('nan')):.2f}%")
+            _tr84b.metric("Taylor Rule Rate", f"{_trc.get('taylor_rate', float('nan')):.2f}%",
+                          help="Estimated neutral rate given inflation and output gap")
+            _tr84c.metric("Policy Gap", f"{_trc.get('policy_gap', 0):+.2f}pp",
+                          delta=f"{_trc.get('policy_gap', 0):+.2f}pp",
+                          delta_color="inverse",
+                          help="Actual − Taylor rate. Positive = too tight.")
+            _tr84d.metric("Policy Stance", _trc.get("stance", "—"))
+
+            # Policy gap history bar chart
+            if "df" in _tr84 and "policy_gap" in _tr84["df"].columns:
+                _tr84_df = _tr84["df"].copy()
+                _tr84_df["date"] = pd.to_datetime(_tr84_df["date"])
+                _fig84a = _go84.Figure()
+                _pg84 = _tr84_df["policy_gap"].fillna(0)
+                _fig84a.add_trace(_go84.Bar(
+                    x=_tr84_df["date"], y=_pg84,
+                    marker_color=["#ef4444" if v > 0 else "#27ae60" for v in _pg84],
+                    name="Policy Gap",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Policy Gap: %{y:+.2f}pp<extra></extra>",
+                ))
+                _fig84a.add_hline(y=0, line_color="rgba(255,255,255,0.25)", line_width=1)
+                _fig84a.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Actual − Taylor Rate (pp)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig84a, use_container_width=True)
+                st.caption("Red = policy tighter than Taylor Rule prescribes (restrictive) · "
+                           "Green = policy looser than prescribed (accommodative)")
+
+            # Fed funds vs Taylor rate overlay
+            if "df" in _tr84 and "fed_funds" in _tr84["df"].columns and "taylor_rate" in _tr84["df"].columns:
+                _tr84_df2 = _tr84["df"].copy()
+                _tr84_df2["date"] = pd.to_datetime(_tr84_df2["date"])
+                _fig84b = _go84.Figure()
+                _fig84b.add_trace(_go84.Scatter(
+                    x=_tr84_df2["date"], y=_tr84_df2["fed_funds"],
+                    name="Actual Fed Funds", line=dict(color="#4f8ef7", width=2),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Fed Funds: %{y:.2f}%<extra></extra>",
+                ))
+                _fig84b.add_trace(_go84.Scatter(
+                    x=_tr84_df2["date"], y=_tr84_df2["taylor_rate"],
+                    name="Taylor Rate", line=dict(color="#f59e0b", width=1.5, dash="dot"),
+                    hovertemplate="%{x|%Y-%m-%d}<br>Taylor Rate: %{y:.2f}%<extra></extra>",
+                ))
+                _fig84b.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=24, b=8),
+                    title=dict(text="Actual Fed Funds vs Taylor Rule Prescription",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Rate (%)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig84b, use_container_width=True)
+
+            # Credit implications table
+            st.subheader("Policy Gap → Credit Spread Implications")
+            import pandas as _pd84
+            _taylor_tbl = _pd84.DataFrame([
+                {"Policy Gap Range":   "< −2pp (very accommodative)", "HY Spread Impact": "Significant compression",  "Default Risk": "Low", "Posture": "Risk-on"},
+                {"Policy Gap Range":   "−2 to 0pp (accommodative)",   "HY Spread Impact": "Modest compression",       "Default Risk": "Low–Moderate", "Posture": "Risk-on"},
+                {"Policy Gap Range":   "0 to +2pp (mildly tight)",     "HY Spread Impact": "Stable / slight widening", "Default Risk": "Moderate", "Posture": "Neutral"},
+                {"Policy Gap Range":   "+2 to +4pp (restrictive)",     "HY Spread Impact": "Widening risk elevated",   "Default Risk": "Elevated", "Posture": "Defensive"},
+                {"Policy Gap Range":   "> +4pp (very restrictive)",    "HY Spread Impact": "Significant widening",     "Default Risk": "High", "Posture": "Risk-off"},
+            ])
+            st.dataframe(_taylor_tbl, use_container_width=True, hide_index=True)
+            _gap84 = _trc.get("policy_gap", 0)
+            st.caption(f"Current policy gap: **{_gap84:+.2f}pp** ({_trc.get('stance', '—')})")
+        else:
+            st.info("Taylor Rule unavailable — requires FEDFUNDS, CPIAUCSL / T10YIE, UNRATE in dataset.")
+    except Exception as _e84:
+        st.caption(f"Taylor Rule unavailable: {_e84}")
+
+
+with _analytics_sub85:
+    import plotly.graph_objects as _go85
+    st.header("Macro Nowcast")
+    st.markdown(
+        "Real-time GDP growth signal derived from a weighted composite of weekly/monthly indicators: "
+        "unemployment, initial claims, equity momentum, yield curve slope, and PMI. "
+        "Each indicator is 252-day z-scored and averaged into a **Nowcast Score 0–100**: "
+        "above 55 = expansion signal · below 45 = contraction signal. "
+        "Credit spreads tend to widen 1–2 quarters after the nowcast moves into contraction."
+    )
+    try:
+        _nc85 = load_macro_nowcast(df)
+        if _nc85.get("available"):
+            _ncc85 = _nc85["current"]
+            _nc85a, _nc85b, _nc85c, _nc85d = st.columns(4)
+            _nc85a.metric("Nowcast Score", f"{_ncc85.get('nowcast_score', 0):.1f}/100",
+                          delta=f"{_ncc85.get('nowcast_change_1m', 0):+.1f} 1M",
+                          help="0–100; above 55 = expansion, below 45 = contraction signal")
+            _nc85b.metric("Regime", _ncc85.get("nowcast_regime", "—"))
+            _nc85c.metric("Momentum", _nc85.get("momentum", "—"))
+            _nc85d.metric("Recession Prob", f"{_ncc85.get('nowcast_recession_prob', 0):.1%}")
+
+            _indicators85 = _ncc85.get("indicators_used", [])
+            if _indicators85:
+                st.caption(f"Indicators in model: **{', '.join(_indicators85)}**")
+
+            if _nc85.get("interpretation"):
+                st.info(_nc85["interpretation"])
+
+            # Nowcast score history
+            _nc85_hist = _nc85.get("historical")
+            if _nc85_hist is not None and not _nc85_hist.empty and "nowcast_score" in _nc85_hist.columns:
+                _nc85_hist = _nc85_hist.copy()
+                _nc85_hist.index = pd.to_datetime(_nc85_hist.index)
+                _fig85a = _go85.Figure()
+                _fig85a.add_trace(_go85.Scatter(
+                    x=_nc85_hist.index, y=_nc85_hist["nowcast_score"],
+                    name="Nowcast Score", line=dict(color="#27ae60", width=2),
+                    fill="tozeroy", fillcolor="rgba(39,174,96,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Nowcast: %{y:.1f}<extra></extra>",
+                ))
+                _fig85a.add_hline(y=55, line=dict(color="rgba(39,174,96,0.5)", dash="dash", width=1),
+                                  annotation_text="Expansion threshold (55)",
+                                  annotation_font=dict(color="#27ae60", size=9))
+                _fig85a.add_hline(y=45, line=dict(color="rgba(231,76,60,0.5)", dash="dash", width=1),
+                                  annotation_text="Contraction signal (45)",
+                                  annotation_font=dict(color="#e74c3c", size=9))
+                _fig85a.add_hrect(y0=0, y1=45, fillcolor="rgba(231,76,60,0.04)", line_width=0)
+                _fig85a.add_hrect(y0=55, y1=100, fillcolor="rgba(39,174,96,0.04)", line_width=0)
+                _fig85a.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Score (0–100)", range=[0, 100]),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig85a, use_container_width=True)
+
+                # Nowcast vs HY spread overlay (credit lead-lag)
+                if "hy_spread" in df.columns:
+                    _nc85_hy = _nc85_hist[["nowcast_score"]].join(
+                        df[["hy_spread"]].dropna(), how="inner"
+                    ).dropna().tail(504)
+                    if not _nc85_hy.empty:
+                        _fig85b = _go85.Figure()
+                        _fig85b.add_trace(_go85.Scatter(
+                            x=_nc85_hy.index, y=_nc85_hy["nowcast_score"],
+                            name="Nowcast Score", line=dict(color="#27ae60", width=1.5),
+                            yaxis="y1",
+                            hovertemplate="%{x|%Y-%m-%d}<br>Nowcast: %{y:.1f}<extra></extra>",
+                        ))
+                        _fig85b.add_trace(_go85.Scatter(
+                            x=_nc85_hy.index, y=_nc85_hy["hy_spread"],
+                            name="HY OAS (%)", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                            yaxis="y2",
+                            hovertemplate="%{x|%Y-%m-%d}<br>HY OAS: %{y:.2f}%<extra></extra>",
+                        ))
+                        _fig85b.update_layout(
+                            height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(color="#9aa0aa", size=11),
+                            margin=dict(l=8, r=8, t=24, b=8),
+                            title=dict(text="Nowcast Score vs HY Spread (falling nowcast leads widening)",
+                                       font=dict(size=12, color="#9aa0aa")),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                       color="#27ae60", title="Nowcast Score"),
+                            yaxis2=dict(overlaying="y", side="right", color="#ef4444",
+                                        title="HY OAS (%)", showgrid=False),
+                            xaxis=dict(showgrid=False, color="#6b7280"),
+                            legend=dict(orientation="h", y=1.10, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                        )
+                        st.plotly_chart(_fig85b, use_container_width=True)
+                        _nc_corr85 = float(_nc85_hy["nowcast_score"].corr(_nc85_hy["hy_spread"]))
+                        st.caption(f"Nowcast vs HY spread correlation (2yr): {_nc_corr85:+.2f}. "
+                                   f"{'Negative correlation expected: lower nowcast → wider spreads.' if _nc_corr85 < -0.2 else ''}")
+
+            # Regime implication table
+            st.subheader("Nowcast → Credit Regime Mapping")
+            import pandas as _pd85
+            _nc_tbl85 = _pd85.DataFrame([
+                {"Nowcast Score": "> 65",    "Macro Regime": "Strong expansion",   "HY Spread Direction": "Tightening", "Posture": "Risk-on"},
+                {"Nowcast Score": "55–65",   "Macro Regime": "Expansion",          "HY Spread Direction": "Stable/tightening", "Posture": "Risk-on"},
+                {"Nowcast Score": "45–55",   "Macro Regime": "Neutral/transition", "HY Spread Direction": "Stable", "Posture": "Neutral"},
+                {"Nowcast Score": "35–45",   "Macro Regime": "Contraction signal", "HY Spread Direction": "Widening risk", "Posture": "Defensive"},
+                {"Nowcast Score": "< 35",    "Macro Regime": "Contraction",        "HY Spread Direction": "Significant widening", "Posture": "Risk-off"},
+            ])
+            st.dataframe(_nc_tbl85, use_container_width=True, hide_index=True)
+            st.caption(f"Current nowcast: **{_ncc85.get('nowcast_score', 0):.1f}** ({_ncc85.get('nowcast_regime', '—')})")
+        else:
+            st.info("Macro nowcast unavailable — requires at least 2 indicators (unemployment/claims/SP500/yield curve).")
+    except Exception as _e85:
+        st.caption(f"Macro nowcast unavailable: {_e85}")
 
 
 # =============================================================================
