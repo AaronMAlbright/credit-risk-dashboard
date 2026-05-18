@@ -114,6 +114,12 @@ from src.regime_return_table import run_regime_return_analysis
 from src.default_cycle import run_default_cycle_analysis
 from src.carry_breakeven import run_breakeven_analysis
 from src.comparison_mode import get_available_dates, compare_dates, format_comparison_table
+from src.real_rates import run_real_rates_analysis
+from src.correlation_heatmap import run_correlation_heatmap_analysis
+from src.spread_volatility import run_spread_volatility_analysis
+from src.fallen_angel import run_fallen_angel_analysis
+from src.em_credit import run_em_credit_analysis
+from src.macro_nowcast import run_macro_nowcast
 
 st.set_page_config(
     page_title="Macro Credit Risk Dashboard",
@@ -625,6 +631,42 @@ def load_default_cycle(_df):
 def load_carry_breakeven(_df):
     """Compute carry breakeven analysis."""
     return run_breakeven_analysis(_df)
+
+
+@st.cache_data
+def load_real_rates(_df):
+    """Compute real rate decomposition (nominal - breakeven)."""
+    return run_real_rates_analysis(_df)
+
+
+@st.cache_data
+def load_correlation_heatmap(_df):
+    """Compute rolling 90d cross-asset correlation matrix."""
+    return run_correlation_heatmap_analysis(_df)
+
+
+@st.cache_data
+def load_spread_volatility(_df):
+    """Compute rolling HY/IG spread volatility and GARCH estimate."""
+    return run_spread_volatility_analysis(_df)
+
+
+@st.cache_data
+def load_fallen_angel(_df):
+    """Compute fallen angel risk (HY/IG ratio, BBB-BB differential)."""
+    return run_fallen_angel_analysis(_df)
+
+
+@st.cache_data(ttl=3600)
+def load_em_credit(_df):
+    """Run EM credit stress analysis (cached 1h — fetches live EMB/HYG data)."""
+    return run_em_credit_analysis(_df)
+
+
+@st.cache_data
+def load_macro_nowcast(_df):
+    """Compute macro GDP nowcast from weekly/monthly indicators."""
+    return run_macro_nowcast(_df)
 
 
 @st.cache_data
@@ -1640,6 +1682,132 @@ with tab1:
     except Exception as _skw_e:
         st.caption(f"Options skew unavailable: {_skw_e}")
 
+    # ── Real Rates Decomposition ──────────────────────────────────────────────
+    st.subheader("Real Rates: Nominal − Breakeven Inflation")
+    st.caption(
+        "**Real rates** = 10y nominal yield − 10y TIPS breakeven. Rising real rates tighten "
+        "financial conditions and are the primary transmission channel for credit stress. "
+        "Real rates above 2% have historically preceded HY spread widening. "
+        "Deeply negative real rates (<−1%) reflect financial repression — easy conditions for credit."
+    )
+    try:
+        _rr = load_real_rates(df)
+        if _rr.get("available"):
+            _rrc = _rr["current"]
+            _rr1, _rr2, _rr3, _rr4 = st.columns(4)
+            _rr1.metric("Real Rate (10y)", f"{_rrc.get('real_rate_10y', float('nan')):.2f}%",
+                        delta=f"{_rrc.get('real_rate_change_1m', 0):+.2f}pp 1M",
+                        delta_color="inverse")
+            _rr2.metric("Nominal 10y", f"{_rrc.get('yield_10y', float('nan')):.2f}%")
+            _rr3.metric("Breakeven Inflation", f"{_rrc.get('breakeven_10y', float('nan')):.2f}%")
+            _rr4.metric("Credit Signal", f"{_rrc.get('real_rate_credit_signal', 0):.0f}/100",
+                        help="Higher = tighter real rates = worse for credit")
+            if _rr.get("rising_flag"):
+                st.warning("Real rates rising rapidly — historically precedes HY spread widening by 4–8 weeks.")
+            st.caption(f"Regime: **{_rrc.get('real_rate_regime', '—')}** · {_rr.get('interpretation', '')}")
+            _rr_hist = _rr.get("historical")
+            if _rr_hist is not None and not _rr_hist.empty and "real_rate_10y" in _rr_hist.columns:
+                import plotly.graph_objects as _rrgo
+                _rr_fig = _rrgo.Figure()
+                _rr_fig.add_trace(_rrgo.Scatter(
+                    x=pd.to_datetime(_rr_hist.index), y=_rr_hist["real_rate_10y"],
+                    name="Real Rate (10y)", line=dict(color="#4f8ef7", width=2),
+                    fill="tozeroy", fillcolor="rgba(79,142,247,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Real Rate: %{y:.2f}%<extra></extra>",
+                ))
+                if "breakeven_10y" in _rr_hist.columns:
+                    _rr_fig.add_trace(_rrgo.Scatter(
+                        x=pd.to_datetime(_rr_hist.index), y=_rr_hist["breakeven_10y"],
+                        name="Breakeven Inflation", line=dict(color="#e67e22", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>Breakeven: %{y:.2f}%<extra></extra>",
+                    ))
+                _rr_fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _rr_fig.add_hline(y=2.0, line_color="rgba(231,76,60,0.4)", line_width=1,
+                                  annotation_text="Restrictive threshold",
+                                  annotation_font=dict(color="#e74c3c", size=10))
+                _rr_fig.update_layout(
+                    height=210, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="%"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_rr_fig, use_container_width=True)
+        else:
+            st.info("Real rates unavailable — requires yield_10y and breakeven_10y in dataset.")
+    except Exception as _rr_e:
+        st.caption(f"Real rates unavailable: {_rr_e}")
+
+    # ── EM Credit Stress ──────────────────────────────────────────────────────
+    st.subheader("EM Credit Stress (EMB/HYG)")
+    st.caption(
+        "**EM credit** often leads DM HY stress by 4–6 weeks. Dollar strength (DXY rising) tightens "
+        "financial conditions for EM dollar-debt borrowers. The EMB/HYG price ratio tracks EM vs US HY "
+        "relative performance — a falling ratio signals EM underperformance and global risk-off."
+    )
+    try:
+        _em = load_em_credit(df)
+        _em_snap = _em.get("snapshot", {})
+        _em_cur = _em.get("current", {})
+        _e1, _e2, _e3, _e4 = st.columns(4)
+        _e1.metric("EMB/HYG Ratio", f"{_em_cur.get('em_hyg_ratio', 0):.3f}" if _em_cur.get('em_hyg_ratio') else "—")
+        _e2.metric("30d Change", f"{(_em_cur.get('em_hyg_ratio_30d_chg') or 0)*100:+.1f}%")
+        _e3.metric("EM Signal", f"{_em_cur.get('em_vs_dm_signal', 0):.0f}/100",
+                   help="Higher = more EM stress vs DM")
+        _e4.metric("EM Regime", _em_snap.get("em_stress_regime", "—"))
+        if _em.get("lead_signal"):
+            st.warning(_em["lead_signal"])
+        if _em.get("interpretation"):
+            st.caption(_em["interpretation"])
+    except Exception as _em_e:
+        st.caption(f"EM credit unavailable: {_em_e}")
+
+    # ── Macro Nowcast ─────────────────────────────────────────────────────────
+    st.subheader("Macro Nowcast")
+    st.caption(
+        "Real-time GDP growth signal from weekly/monthly indicators: unemployment, initial claims, "
+        "equity momentum, yield curve slope, and PMI. Score 0–100: above 55 = expansion, below 45 = contraction signal."
+    )
+    try:
+        _nc = load_macro_nowcast(df)
+        if _nc.get("available"):
+            _ncc = _nc["current"]
+            _n1, _n2, _n3, _n4 = st.columns(4)
+            _n1.metric("Nowcast Score", f"{_ncc.get('nowcast_score', 0):.1f}/100",
+                       delta=f"{_ncc.get('nowcast_change_1m', 0):+.1f} 1M")
+            _n2.metric("Regime", _ncc.get("nowcast_regime", "—"))
+            _n3.metric("Momentum", _nc.get("momentum", "—"))
+            _n4.metric("Recession Prob", f"{_ncc.get('nowcast_recession_prob', 0):.1%}")
+            st.caption(f"Indicators: {', '.join(_ncc.get('indicators_used', []))} · {_nc.get('interpretation', '')}")
+            _nc_hist = _nc.get("historical")
+            if _nc_hist is not None and not _nc_hist.empty and "nowcast_score" in _nc_hist.columns:
+                import plotly.graph_objects as _ncgo
+                _nc_fig = _ncgo.Figure()
+                _nc_fig.add_trace(_ncgo.Scatter(
+                    x=pd.to_datetime(_nc_hist.index), y=_nc_hist["nowcast_score"],
+                    name="Nowcast Score", line=dict(color="#27ae60", width=2),
+                    fill="tozeroy", fillcolor="rgba(39,174,96,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Nowcast: %{y:.1f}<extra></extra>",
+                ))
+                _nc_fig.add_hline(y=55, line=dict(color="rgba(39,174,96,0.4)", dash="dash", width=1),
+                                  annotation_text="Expansion", annotation_font=dict(color="#27ae60", size=10))
+                _nc_fig.add_hline(y=45, line=dict(color="rgba(231,76,60,0.4)", dash="dash", width=1),
+                                  annotation_text="Contraction signal", annotation_font=dict(color="#e74c3c", size=10))
+                _nc_fig.update_layout(
+                    height=210, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Score (0-100)", range=[0, 100]),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_nc_fig, use_container_width=True)
+        else:
+            st.info("Macro nowcast unavailable — requires at least 2 indicators (unemployment, claims, SP500, yield curve).")
+    except Exception as _nc_e:
+        st.caption(f"Macro nowcast unavailable: {_nc_e}")
+
 with tab2:
     import plotly.graph_objects as _go
     from plotly.subplots import make_subplots as _make_subplots
@@ -2359,14 +2527,15 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab5:  # Analytics — 25 sub-tabs
+with tab5:  # Analytics — 28 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3, _analytics_sub4,
      _analytics_sub5, _analytics_sub6, _analytics_sub7, _analytics_sub8,
      _analytics_sub9, _analytics_sub10, _analytics_sub11,
      _analytics_sub12, _analytics_sub13, _analytics_sub14,
      _analytics_sub15, _analytics_sub16, _analytics_sub17, _analytics_sub18,
      _analytics_sub19, _analytics_sub20, _analytics_sub21, _analytics_sub22,
-     _analytics_sub23, _analytics_sub24, _analytics_sub25) = st.tabs([
+     _analytics_sub23, _analytics_sub24, _analytics_sub25,
+     _analytics_sub26, _analytics_sub27, _analytics_sub28) = st.tabs([
         "Validation", "Attribution", "Timeline", "Sig Decay",
         "Ortho", "Tail Risk", "Stress", "Performance", "Factors",
         "Regime Validity", "Failure Analysis",
@@ -2374,6 +2543,7 @@ with tab5:  # Analytics — 25 sub-tabs
         "Merton DD", "Frontier", "Kelly", "Granger", "Defaults",
         "Fwd Sim", "CDX Proxy", "EQ-Credit Corr",
         "Regime Returns", "Default Cycle", "Compare Dates",
+        "Corr Heatmap", "Spread Vol", "Fallen Angel",
     ])
 
 with tab6:  # Models — 9 sub-tabs
@@ -7868,3 +8038,223 @@ with _analytics_sub25:
             st.info("Comparison mode requires at least 2 dates with valid composite score data.")
     except Exception as _cmp_e:
         st.caption(f"Comparison mode unavailable: {_cmp_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 26: Cross-Asset Correlation Heatmap
+# =============================================================================
+with _analytics_sub26:
+    import plotly.graph_objects as _go_hm
+    st.header("Cross-Asset Correlation Heatmap")
+    st.markdown(
+        """
+        Rolling 90-day Pearson correlation matrix across equity, credit, rates, and volatility.
+        When all correlations spike toward ±1 during stress, diversification breaks down.
+        **Crisis regime** (avg abs correlation > 0.75) historically precedes sharp credit dislocations.
+        """
+    )
+    try:
+        _hm = load_correlation_heatmap(df)
+        if _hm.get("available"):
+            _hm_stress = _hm.get("stress", {})
+            _h1, _h2, _h3, _h4 = st.columns(4)
+            _h1.metric("Avg |Correlation|", f"{_hm_stress.get('avg_abs_correlation', 0):.3f}")
+            _h2.metric("Stress Regime", _hm_stress.get("stress_regime", "—"))
+            _h3.metric("Diversification Ratio", f"{_hm_stress.get('diversification_ratio', 0):.3f}",
+                       help="1 - avg|corr|. Higher = more diversification remaining")
+            _h4.metric("Signals", _hm.get("n_signals", 0))
+
+            _mx_pair = _hm_stress.get("max_pair")
+            _mn_pair = _hm_stress.get("min_pair")
+            if _mx_pair:
+                st.caption(f"Highest correlation: **{_mx_pair[0]} ↔ {_mx_pair[1]}** ({_mx_pair[2]:+.3f})")
+            if _mn_pair:
+                st.caption(f"Most diversifying: **{_mn_pair[0]} ↔ {_mn_pair[1]}** ({_mn_pair[2]:+.3f})")
+            if _hm.get("interpretation"):
+                st.info(_hm["interpretation"])
+
+            # Heatmap chart
+            _hm_mat = _hm.get("matrix_current")
+            if _hm_mat is not None and not _hm_mat.empty:
+                _hm_labels = list(_hm_mat.columns)
+                _hm_vals = _hm_mat.values.tolist()
+                _hm_fig = _go_hm.Figure(data=_go_hm.Heatmap(
+                    z=_hm_vals, x=_hm_labels, y=_hm_labels,
+                    colorscale="RdBu_r", zmid=0, zmin=-1, zmax=1,
+                    text=[[f"{v:.2f}" for v in row] for row in _hm_vals],
+                    texttemplate="%{text}",
+                    hovertemplate="%{y} ↔ %{x}<br>Corr: %{z:.3f}<extra></extra>",
+                ))
+                _hm_fig.update_layout(
+                    height=420, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    xaxis=dict(color="#6b7280"), yaxis=dict(color="#6b7280"),
+                )
+                st.plotly_chart(_hm_fig, use_container_width=True)
+
+            # Rolling avg correlation time series
+            _hm_roll = _hm.get("rolling_avg_corr")
+            if _hm_roll is not None and len(_hm_roll) > 0:
+                _hm_roll_fig = _go_hm.Figure()
+                _hm_roll_fig.add_trace(_go_hm.Scatter(
+                    x=pd.to_datetime(_hm_roll.index), y=_hm_roll.values,
+                    name="Avg |Corr|", line=dict(color="#9b59b6", width=2),
+                    fill="tozeroy", fillcolor="rgba(155,89,182,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Avg |Corr|: %{y:.3f}<extra></extra>",
+                ))
+                for _thresh, _col, _lbl in [(0.75, "#e74c3c", "Crisis"), (0.60, "#e67e22", "Stress"), (0.45, "#f39c12", "Elevated")]:
+                    _hm_roll_fig.add_hline(y=_thresh, line=dict(color=_col, dash="dash", width=1),
+                                           annotation_text=_lbl, annotation_font=dict(color=_col, size=9))
+                _hm_roll_fig.update_layout(
+                    height=180, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Avg |Corr|", range=[0, 1]),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_hm_roll_fig, use_container_width=True)
+        else:
+            st.info("Correlation heatmap unavailable — requires at least 4 signals (HY spread, IG spread, VIX, 10y yield, SP500).")
+    except Exception as _hm_e:
+        st.caption(f"Correlation heatmap unavailable: {_hm_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 27: Spread Volatility Monitor
+# =============================================================================
+with _analytics_sub27:
+    import plotly.graph_objects as _go_sv
+    st.header("Credit Spread Volatility Monitor")
+    st.markdown(
+        """
+        Rolling volatility of **daily HY and IG spread changes** — distinct from spread levels.
+        Rising spread vol while levels are flat is an early warning: markets are uncertain about direction.
+        A GARCH(1,1) model provides a conditional vol estimate that responds faster to recent shocks.
+        Regimes are percentile-ranked against a trailing 1-year window.
+        """
+    )
+    try:
+        _sv = load_spread_volatility(df)
+        if _sv.get("available"):
+            _svc = _sv.get("current", {})
+            _sv1, _sv2, _sv3, _sv4 = st.columns(4)
+            _sv1.metric("HY Spread Vol (21d)", f"{_svc.get('hy_spread_vol_21d', 0):.1f} bps/yr" if _svc.get('hy_spread_vol_21d') else "—")
+            _sv2.metric("HY Vol Regime", _svc.get("hy_vol_regime", "—"))
+            _sv3.metric("HY Vol Z-Score (1y)", f"{_svc.get('hy_vol_zscore_1y', 0):.2f}" if _svc.get('hy_vol_zscore_1y') is not None else "—")
+            _sv4.metric("Vol-of-Vol (63d)", f"{_sv.get('vol_of_vol', 0):.1f}" if _sv.get("vol_of_vol") else "—",
+                        help="Std of 21d vol over last 63 days")
+            if _sv.get("warning"):
+                st.warning(_sv["warning"])
+            if _sv.get("interpretation"):
+                st.caption(_sv["interpretation"])
+
+            _sv_hist = _sv.get("historical")
+            if _sv_hist is not None and not _sv_hist.empty:
+                _sv_fig = _go_sv.Figure()
+                if "hy_spread_vol_21d" in _sv_hist.columns:
+                    _sv_fig.add_trace(_go_sv.Scatter(
+                        x=pd.to_datetime(_sv_hist.index), y=_sv_hist["hy_spread_vol_21d"],
+                        name="HY Vol 21d", line=dict(color="#e74c3c", width=2),
+                        hovertemplate="%{x|%Y-%m-%d}<br>HY Vol 21d: %{y:.1f}<extra></extra>",
+                    ))
+                if "hy_spread_vol_63d" in _sv_hist.columns:
+                    _sv_fig.add_trace(_go_sv.Scatter(
+                        x=pd.to_datetime(_sv_hist.index), y=_sv_hist["hy_spread_vol_63d"],
+                        name="HY Vol 63d", line=dict(color="#e67e22", width=1.5, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>HY Vol 63d: %{y:.1f}<extra></extra>",
+                    ))
+                if "hy_spread_vol_garch" in _sv_hist.columns:
+                    _sv_fig.add_trace(_go_sv.Scatter(
+                        x=pd.to_datetime(_sv_hist.index), y=_sv_hist["hy_spread_vol_garch"],
+                        name="GARCH(1,1)", line=dict(color="#9b59b6", width=1.5, dash="dash"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>GARCH: %{y:.1f}<extra></extra>",
+                    ))
+                _sv_fig.update_layout(
+                    height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Spread Vol (bps/yr)"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_sv_fig, use_container_width=True)
+                st.caption("Annualised rolling std of daily spread changes (bps). GARCH(1,1): ω=5%×var, α=0.10, β=0.85.")
+        else:
+            st.info("Spread volatility unavailable — requires HY spread or IG spread data.")
+    except Exception as _sv_e:
+        st.caption(f"Spread volatility unavailable: {_sv_e}")
+
+# =============================================================================
+# ANALYTICS sub-tab 28: Fallen Angel Risk
+# =============================================================================
+with _analytics_sub28:
+    import plotly.graph_objects as _go_fa
+    st.header("Fallen Angel Risk Monitor")
+    st.markdown(
+        """
+        **Fallen angels** are bonds downgraded from IG (BBB) to HY — forced selling by IG-mandate funds
+        can create sharp spread widening. The **HY/IG spread ratio** (normally 3–4×) is the key cliff-edge signal.
+        When the ratio rises sharply, markets are pricing elevated downgrade risk.
+        BBB is the largest IG tranche; its downgrade wave in 2020 was the largest in history.
+        """
+    )
+    try:
+        _fa = load_fallen_angel(df)
+        if _fa.get("available"):
+            _fac = _fa.get("current", {})
+            _f1, _f2, _f3, _f4 = st.columns(4)
+            _f1.metric("HY/IG Ratio", f"{_fac.get('hy_ig_ratio', 0):.2f}×")
+            _f2.metric("Z-Score (1y)", f"{_fac.get('hy_ig_ratio_zscore', 0):.2f}")
+            _f3.metric("Fallen Angel Regime", _fac.get("fallen_angel_regime", "—"))
+            _f4.metric("Signal", f"{_fac.get('fallen_angel_signal', 0):.0f}/100")
+
+            if _fac.get("cliff_risk_flag"):
+                st.error("Cliff risk flag active — HY/IG ratio significantly above historical median. Elevated fallen angel risk.")
+            if _fa.get("warning"):
+                st.warning(_fa["warning"])
+
+            _bb_diff = _fac.get("bbb_bb_differential")
+            if _bb_diff is not None:
+                st.metric("BBB−BB Differential", f"{_bb_diff:.0f} bps",
+                          help="Fallen angel premium — what market charges for BBB-to-junk transition risk")
+
+            if _fa.get("interpretation"):
+                st.caption(_fa["interpretation"])
+
+            # Historical ratio chart
+            _fa_hist = _fa.get("historical")
+            if _fa_hist is not None and not _fa_hist.empty and "hy_ig_ratio" in _fa_hist.columns:
+                _fa_fig = _go_fa.Figure()
+                _fa_fig.add_trace(_go_fa.Scatter(
+                    x=pd.to_datetime(_fa_hist.index), y=_fa_hist["hy_ig_ratio"],
+                    name="HY/IG Ratio", line=dict(color="#e74c3c", width=2),
+                    fill="tozeroy", fillcolor="rgba(231,76,60,0.10)",
+                    hovertemplate="%{x|%Y-%m-%d}<br>HY/IG: %{y:.2f}×<extra></extra>",
+                ))
+                _fa_fig.add_hline(y=4.5, line=dict(color="rgba(230,126,34,0.5)", dash="dash", width=1),
+                                  annotation_text="Elevated (4.5×)", annotation_font=dict(color="#e67e22", size=10))
+                _fa_fig.add_hline(y=6.0, line=dict(color="rgba(231,76,60,0.5)", dash="dot", width=1),
+                                  annotation_text="Crisis (6.0×)", annotation_font=dict(color="#e74c3c", size=10))
+                _fa_fig.update_layout(
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11), margin=dict(l=8, r=8, t=8, b=8),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="HY/IG Spread Ratio"),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fa_fig, use_container_width=True)
+
+            # Historical extremes
+            _fa_ext = _fa.get("historical_extremes", {})
+            if _fa_ext:
+                _pct = _fa.get("percentile_current")
+                st.caption(
+                    f"Current ratio at **{_pct:.0f}th percentile** of history. "
+                    f"Historical peak: {_fa_ext.get('max_ratio', 0):.2f}× ({_fa_ext.get('max_ratio_date', '—')}). "
+                    f"Historical trough: {_fa_ext.get('min_ratio', 0):.2f}× ({_fa_ext.get('min_ratio_date', '—')})."
+                )
+        else:
+            st.info("Fallen angel monitor unavailable — requires both HY and IG spread data.")
+    except Exception as _fa_e:
+        st.caption(f"Fallen angel unavailable: {_fa_e}")
