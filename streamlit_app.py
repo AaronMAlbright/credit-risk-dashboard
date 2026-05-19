@@ -1295,7 +1295,7 @@ _ANALYTICS_VIEWS = {
         ("Spread Percentile", 100), ("Credit Cycle", 102),
         ("HY Momentum", 105), ("Credit Regime", 110),
         ("Credit Risk Score", 117), ("HY Lead-Lag", 130),
-        ("Spread Vol Regime", 136),
+        ("Spread Vol Regime", 136), ("Regime Spread Dist", 141),
     ],
     "Rates & Macro": [
         ("Regime Returns", 23), ("X-Asset Momentum", 38), ("Macro Surprise", 41),
@@ -1310,7 +1310,8 @@ _ANALYTICS_VIEWS = {
         ("Unemp Momentum", 109), ("NFCI Trend", 111), ("Labor Warning", 114),
         ("Treasury Score", 118), ("Spread Changes", 121),
         ("Breakeven Inflation", 122), ("10y Yield", 125),
-        ("Macro-Credit Corr", 138),
+        ("Macro-Credit Corr", 138), ("Credit Impulse Drill", 142),
+        ("Sahm Episodes", 143),
     ],
     "Risk Monitors": [
         ("Tail Risk", 6), ("Stress Test", 7), ("Contagion", 12),
@@ -1339,6 +1340,7 @@ _ANALYTICS_VIEWS = {
         ("Composite History", 126), ("Score Correlations", 128),
         ("Score Z-Scores", 129), ("Score Persistence", 132),
         ("Score Distributions", 135), ("Score Gradient", 137),
+        ("Forward Returns", 140), ("Score Momentum", 144),
     ],
     "Regime": [
         ("Performance", 8), ("Regime Validity", 10), ("Failure Analysis", 11),
@@ -18987,3 +18989,546 @@ if _active_sub == 139:
             st.info("Sub-score columns not found — run the full scoring pipeline.")
     except Exception as _e139:
         st.caption(f"Alert history: {_e139}")
+
+# ---------------------------------------------------------------------------
+# Batch 19 — sub140–sub144, m9
+# ---------------------------------------------------------------------------
+
+# sub140 — Forward Returns (Signal Lab)
+if _active_sub == 140:
+    try:
+        import plotly.graph_objects as _go140
+        import numpy as _np140
+        import pandas as _pd140
+        if "composite_risk_score_smooth" in df.columns and "hy_spread" in df.columns:
+            _comp140 = df["composite_risk_score_smooth"].dropna()
+            _hy140 = df["hy_spread"].dropna()
+            _sp500140 = df["sp500"].dropna() if "sp500" in df.columns else None
+            _horizons140 = [21, 63, 126]
+            _thresholds140 = [(50, "≥50 Alert", "#f59e0b"), (70, "≥70 High Alert", "#ef4444")]
+            st.markdown("#### Signal-to-Outcome: What Happens After Composite Crosses Thresholds?")
+            for _thresh, _label, _color in _thresholds140:
+                # Find crossing days: composite first hits threshold from below
+                _above = (_comp140 >= _thresh).astype(int)
+                _cross_days = _comp140.index[(_above.diff() == 1)]
+                if len(_cross_days) < 3:
+                    st.caption(f"{_label}: not enough crossing events.")
+                    continue
+                st.markdown(f"**{_label}** ({len(_cross_days)} crossing events)")
+                _fwd_hy = {h: [] for h in _horizons140}
+                _fwd_sp = {h: [] for h in _horizons140}
+                for _d in _cross_days:
+                    _idx = _hy140.index.searchsorted(_d)
+                    for h in _horizons140:
+                        if _idx + h < len(_hy140):
+                            _fwd_hy[h].append(float(_hy140.iloc[_idx + h] - _hy140.iloc[_idx]))
+                        if _sp500140 is not None:
+                            _idx_sp = _sp500140.index.searchsorted(_d)
+                            if _idx_sp + h < len(_sp500140):
+                                _fwd_sp[h].append(
+                                    float(_sp500140.iloc[_idx_sp + h] / _sp500140.iloc[_idx_sp] - 1) * 100
+                                )
+                # Box plots for HY forward change
+                _fig140 = _go140.Figure()
+                for h in _horizons140:
+                    if _fwd_hy[h]:
+                        _fig140.add_trace(_go140.Box(
+                            y=_fwd_hy[h], name=f"HY +{h}d",
+                            marker_color=_color,
+                            boxmean=True,
+                            hovertemplate=f"HY Δ at +{h}d: %{{y:+.0f}}bps<extra></extra>",
+                        ))
+                if _sp500140 is not None:
+                    for h in _horizons140:
+                        if _fwd_sp[h]:
+                            _fig140.add_trace(_go140.Box(
+                                y=_fwd_sp[h], name=f"SP500 +{h}d%",
+                                marker_color="#3b82f6",
+                                boxmean=True,
+                                hovertemplate=f"SP500 ret at +{h}d: %{{y:+.1f}}%<extra></extra>",
+                            ))
+                _fig140.add_hline(y=0, line_color="#4b5563", line_width=1)
+                _fig140.update_layout(
+                    height=270, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text=f"Forward Returns After {_label} Crossing — HY Δ (bps) and SP500 (%)",
+                               font=dict(size=12, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               zeroline=True, zerolinecolor="#4b5563"),
+                    xaxis=dict(color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig140, use_container_width=True)
+                # Summary table
+                _rows140 = []
+                for h in _horizons140:
+                    if _fwd_hy[h]:
+                        _arr = _np140.array(_fwd_hy[h])
+                        _rows140.append({
+                            "Horizon": f"+{h}d",
+                            "HY median Δ (bps)": round(float(_np140.median(_arr)), 0),
+                            "HY mean Δ (bps)": round(float(_np140.mean(_arr)), 0),
+                            "HY % positive": f"{(_arr > 0).mean()*100:.0f}%",
+                            "N": len(_arr),
+                        })
+                if _rows140:
+                    st.dataframe(_pd140.DataFrame(_rows140).set_index("Horizon"), use_container_width=True)
+            st.caption("Positive HY Δ = spreads widened (worse credit). Box: median line, mean cross, whiskers=1.5×IQR.")
+        else:
+            st.info("composite_risk_score_smooth or hy_spread not found — run the full scoring pipeline.")
+    except Exception as _e140:
+        st.caption(f"Forward returns: {_e140}")
+
+# sub141 — Regime-Conditional Spread Distribution (Credit Markets)
+if _active_sub == 141:
+    try:
+        import plotly.graph_objects as _go141
+        import numpy as _np141
+        if "composite_risk_score_smooth" in df.columns and "hy_spread" in df.columns:
+            _comp141 = df["composite_risk_score_smooth"].dropna()
+            _hy141 = df["hy_spread"].dropna()
+            _joined141 = _comp141.to_frame("comp").join(_hy141.to_frame("hy"), how="inner").dropna()
+            def _regime141(s):
+                if s < 25:  return "Low"
+                if s < 40:  return "Moderate"
+                if s < 55:  return "Elevated"
+                if s < 70:  return "High"
+                return "Extreme"
+            _joined141["regime"] = _joined141["comp"].apply(_regime141)
+            _REGIME_ORDER141 = ["Low", "Moderate", "Elevated", "High", "Extreme"]
+            _REGIME_COLORS141 = {"Low": "#10b981", "Moderate": "#3b82f6", "Elevated": "#f59e0b",
+                                  "High": "#ef4444", "Extreme": "#7f1d1d"}
+            # Box plots: HY spread by regime
+            _fig141a = _go141.Figure()
+            for reg in _REGIME_ORDER141:
+                _sub = _joined141[_joined141["regime"] == reg]["hy"]
+                if len(_sub) < 5:
+                    continue
+                _fig141a.add_trace(_go141.Box(
+                    y=_sub.values, name=reg,
+                    marker_color=_REGIME_COLORS141[reg],
+                    boxmean=True,
+                    hovertemplate=f"{reg}: %{{y:.0f}}bps<extra></extra>",
+                ))
+            _fig141a.update_layout(
+                height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="HY Spread Distribution by Composite Risk Regime", font=dict(size=12, color="#9aa0aa")),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="HY Spread (bps)"),
+                xaxis=dict(color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig141a, use_container_width=True)
+            # Summary stats table
+            import pandas as _pd141
+            _stats141 = []
+            for reg in _REGIME_ORDER141:
+                _sub = _joined141[_joined141["regime"] == reg]["hy"]
+                if len(_sub) < 3:
+                    continue
+                _stats141.append({
+                    "Regime": reg,
+                    "N days": len(_sub),
+                    "% of history": f"{len(_sub)/len(_joined141)*100:.0f}%",
+                    "Median HY (bps)": round(float(_sub.median()), 0),
+                    "Mean HY (bps)": round(float(_sub.mean()), 0),
+                    "P25": round(float(_sub.quantile(0.25)), 0),
+                    "P75": round(float(_sub.quantile(0.75)), 0),
+                    "Max": round(float(_sub.max()), 0),
+                })
+            if _stats141:
+                st.dataframe(_pd141.DataFrame(_stats141).set_index("Regime"), use_container_width=True)
+            # VIX conditional distribution
+            if "vix" in df.columns:
+                _vix141 = df["vix"].dropna()
+                _joined141b = _comp141.to_frame("comp").join(_vix141.to_frame("vix"), how="inner").dropna()
+                _joined141b["regime"] = _joined141b["comp"].apply(_regime141)
+                _fig141b = _go141.Figure()
+                for reg in _REGIME_ORDER141:
+                    _sub = _joined141b[_joined141b["regime"] == reg]["vix"]
+                    if len(_sub) < 5:
+                        continue
+                    _fig141b.add_trace(_go141.Box(
+                        y=_sub.values, name=reg,
+                        marker_color=_REGIME_COLORS141[reg],
+                        boxmean=True,
+                        hovertemplate=f"{reg} VIX: %{{y:.1f}}<extra></extra>",
+                    ))
+                _fig141b.update_layout(
+                    height=230, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="VIX Distribution by Composite Risk Regime", font=dict(size=11, color="#9aa0aa")),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="VIX"),
+                    xaxis=dict(color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig141b, use_container_width=True)
+            st.caption("Low <25 · Moderate 25-40 · Elevated 40-55 · High 55-70 · Extreme >70. Box = IQR, mean cross shown.")
+        else:
+            st.info("composite_risk_score_smooth or hy_spread not found — run the full scoring pipeline.")
+    except Exception as _e141:
+        st.caption(f"Regime spread dist: {_e141}")
+
+# sub142 — Credit Impulse Drill (Rates & Macro)
+if _active_sub == 142:
+    try:
+        import plotly.graph_objects as _go142
+        import numpy as _np142
+        if "credit_impulse" in df.columns:
+            _ci142 = df["credit_impulse"].dropna()
+            _hy142 = df["hy_spread"].dropna() if "hy_spread" in df.columns else None
+            # Time series with regime shading
+            def _ci_regime(v):
+                if _np142.isnan(v): return "Unknown"
+                if v < -20: return "Strong Easing"
+                if v < -5:  return "Easing"
+                if v < 5:   return "Neutral"
+                if v < 20:  return "Tightening"
+                return "Strong Tightening"
+            _ci_reg_colors = {"Strong Easing": "#10b981", "Easing": "#3b82f6",
+                               "Neutral": "#6b7280", "Tightening": "#f59e0b",
+                               "Strong Tightening": "#ef4444", "Unknown": "#4b5563"}
+            _fig142a = _go142.Figure()
+            _fig142a.add_trace(_go142.Scatter(
+                x=_ci142.index, y=_ci142.values,
+                mode="lines", line=dict(color="#8b5cf6", width=1.2),
+                fill="tozeroy", fillcolor="rgba(139,92,246,0.08)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:+.1f}bps<extra></extra>",
+            ))
+            _fig142a.add_hline(y=0, line_color="#4b5563", line_width=1)
+            _fig142a.add_hline(y=20, line_color="#ef4444", line_width=1, line_dash="dot",
+                               annotation_text="Strong Tight", annotation_font=dict(color="#ef4444", size=8))
+            _fig142a.add_hline(y=-20, line_color="#10b981", line_width=1, line_dash="dot",
+                               annotation_text="Strong Ease", annotation_font=dict(color="#10b981", size=8))
+            _fig142a.update_layout(
+                height=250, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="Credit Impulse (ΔHY 30d − ΔHY 30d prior): Acceleration/Deceleration of Spread Change",
+                           font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Credit Impulse (bps)"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig142a, use_container_width=True)
+            # Current regime
+            _curr_ci = float(_ci142.iloc[-1])
+            _curr_ci_reg = _ci_regime(_curr_ci)
+            st.caption(f"Current: **{_curr_ci:+.1f} bps** — Regime: **{_curr_ci_reg}**. "
+                       "Positive = spread widening is accelerating. Negative = widening is decelerating (or tightening).")
+            # Lead-lag: impulse vs HY level
+            if _hy142 is not None:
+                _lags142 = list(range(-21, 22, 3))
+                _corrs142 = []
+                for lag in _lags142:
+                    _ci_shifted = _ci142.shift(-lag)
+                    _j = _ci_shifted.to_frame("ci").join(_hy142.to_frame("hy"), how="inner").dropna()
+                    _corrs142.append(float(_j["ci"].corr(_j["hy"])) if len(_j) > 20 else _np142.nan)
+                _fig142b = _go142.Figure()
+                _fig142b.add_trace(_go142.Scatter(
+                    x=_lags142, y=_corrs142,
+                    mode="lines+markers",
+                    line=dict(color="#8b5cf6", width=1.5),
+                    marker=dict(size=5, color="#8b5cf6"),
+                    hovertemplate="Lag %{x}d: corr=%{y:.2f}<extra></extra>",
+                ))
+                _fig142b.add_hline(y=0, line_color="#4b5563", line_width=1)
+                _fig142b.add_vline(x=0, line_color="#6b7280", line_width=1, line_dash="dot")
+                _fig142b.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Credit Impulse Lead-Lag vs HY Spread Level (negative lag = impulse leads HY)",
+                               font=dict(size=11, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Lag (days) — negative = impulse leads"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Correlation"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig142b, use_container_width=True)
+                # Distribution
+                _fig142c = _go142.Figure()
+                _fig142c.add_trace(_go142.Histogram(
+                    x=_ci142.values, nbinsx=50,
+                    marker_color="#8b5cf6", opacity=0.6,
+                    hovertemplate="Impulse %{x:.0f}bps: %{y} days<extra></extra>",
+                ))
+                _curr_pct142 = float((_ci142 < _curr_ci).mean() * 100)
+                _fig142c.add_vline(x=_curr_ci, line_color="#ffffff", line_width=2,
+                                   annotation_text=f"Now: {_curr_ci:+.0f} ({_curr_pct142:.0f}th pct)",
+                                   annotation_font=dict(color="#ffffff", size=9))
+                _fig142c.add_vline(x=0, line_color="#6b7280", line_width=1, line_dash="dot")
+                _fig142c.update_layout(
+                    height=180, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Credit Impulse Distribution (full history)", font=dict(size=11, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Impulse (bps)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig142c, use_container_width=True)
+        else:
+            st.info("credit_impulse column not found — run the feature pipeline.")
+    except Exception as _e142:
+        st.caption(f"Credit impulse drill: {_e142}")
+
+# sub143 — Sahm Episodes (Rates & Macro)
+if _active_sub == 143:
+    try:
+        import plotly.graph_objects as _go143
+        import numpy as _np143
+        import pandas as _pd143
+        if "sahm_like" in df.columns:
+            _sahm143 = df["sahm_like"].dropna()
+            _unemp143 = df["unemployment"].dropna() if "unemployment" in df.columns else None
+            _SAHM_TRIGGER = 0.50  # Claudia Sahm's threshold
+            # Time series with trigger line and shading
+            _fig143a = _go143.Figure()
+            _fig143a.add_trace(_go143.Scatter(
+                x=_sahm143.index, y=_sahm143.values,
+                mode="lines", name="Sahm-like",
+                line=dict(color="#f59e0b", width=1.5),
+                fill="tozeroy", fillcolor="rgba(245,158,11,0.08)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.2f}pp<extra></extra>",
+            ))
+            _fig143a.add_hline(y=_SAHM_TRIGGER, line_color="#ef4444", line_width=1.5, line_dash="dash",
+                               annotation_text="Sahm Trigger (0.50pp)", annotation_position="top left",
+                               annotation_font=dict(color="#ef4444", size=9))
+            _fig143a.add_hline(y=0.25, line_color="#f59e0b", line_width=1, line_dash="dot",
+                               annotation_text="Watch (0.25pp)", annotation_font=dict(color="#f59e0b", size=8))
+            # Shade trigger episodes
+            _above143 = _sahm143 >= _SAHM_TRIGGER
+            _in_ep143 = False
+            _ep_s143 = None
+            for _d, _v in _above143.items():
+                if _v and not _in_ep143:
+                    _in_ep143 = True; _ep_s143 = _d
+                elif not _v and _in_ep143:
+                    _in_ep143 = False
+                    _fig143a.add_vrect(x0=_ep_s143, x1=_d, fillcolor="rgba(239,68,68,0.1)",
+                                       layer="below", line_width=0)
+            if _in_ep143:
+                _fig143a.add_vrect(x0=_ep_s143, x1=_sahm143.index[-1],
+                                   fillcolor="rgba(239,68,68,0.1)", layer="below", line_width=0)
+            _fig143a.update_layout(
+                height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="Sahm-like Indicator: Unemployment Rise from 12m Low (red = trigger zone)",
+                           font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="pp above 12m low"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig143a, use_container_width=True)
+            # Episode table
+            _episodes143 = []
+            _in_ep143 = False; _ep_s143 = None; _ep_peak = 0.0
+            for _d, _v in _sahm143.items():
+                if _v >= _SAHM_TRIGGER and not _in_ep143:
+                    _in_ep143 = True; _ep_s143 = _d; _ep_peak = _v
+                elif _v >= _SAHM_TRIGGER and _in_ep143:
+                    _ep_peak = max(_ep_peak, _v)
+                elif _v < _SAHM_TRIGGER and _in_ep143:
+                    _in_ep143 = False
+                    _episodes143.append({"Start": str(_ep_s143.date()), "End": str(_d.date()),
+                                          "Duration (days)": (_d - _ep_s143).days, "Peak": round(_ep_peak, 2)})
+                    _ep_peak = 0.0
+            if _in_ep143:
+                _episodes143.append({"Start": str(_ep_s143.date()), "End": "ongoing",
+                                      "Duration (days)": (_sahm143.index[-1] - _ep_s143).days,
+                                      "Peak": round(_ep_peak, 2)})
+            if _episodes143:
+                st.markdown("**Trigger Episodes (Sahm ≥ 0.50pp)**")
+                st.dataframe(_pd143.DataFrame(_episodes143).set_index("Start"), use_container_width=True)
+            else:
+                st.info("No Sahm trigger episodes found in the dataset.")
+            # Sahm vs unemployment level dual axis
+            if _unemp143 is not None:
+                _j143 = _sahm143.to_frame("sahm").join(_unemp143.to_frame("unemp"), how="inner").dropna()
+                _fig143b = _go143.Figure()
+                _fig143b.add_trace(_go143.Scatter(
+                    x=_j143.index, y=_j143["sahm"],
+                    mode="lines", name="Sahm-like",
+                    line=dict(color="#f59e0b", width=1.2),
+                    hovertemplate="Sahm: %{y:.2f}pp<extra></extra>",
+                    yaxis="y1",
+                ))
+                _fig143b.add_trace(_go143.Scatter(
+                    x=_j143.index, y=_j143["unemp"],
+                    mode="lines", name="Unemployment Rate",
+                    line=dict(color="#6b7280", width=1.0, dash="dot"),
+                    hovertemplate="UNRATE: %{y:.1f}%<extra></extra>",
+                    yaxis="y2",
+                ))
+                _fig143b.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Sahm-like vs Unemployment Rate", font=dict(size=11, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Sahm (pp)"),
+                    yaxis2=dict(overlaying="y", side="right", color="#6b7280", title="UNRATE (%)", showgrid=False),
+                    legend=dict(orientation="h", y=-0.3, x=0, font=dict(size=9)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig143b, use_container_width=True)
+            _curr_sahm = float(_sahm143.iloc[-1])
+            _sahm_pct143 = float((_sahm143 < _curr_sahm).mean() * 100)
+            st.caption(
+                f"Current: **{_curr_sahm:.2f}pp** ({_sahm_pct143:.0f}th historical percentile). "
+                f"{'🔴 TRIGGERED — recession signal historically reliable with ≤1 false positive since 1970.' if _curr_sahm >= 0.50 else ('🟡 Watch zone — approaching trigger.' if _curr_sahm >= 0.25 else '🟢 Below watch threshold.')}"
+            )
+        else:
+            st.info("sahm_like column not found — run the feature pipeline.")
+    except Exception as _e143:
+        st.caption(f"Sahm episodes: {_e143}")
+
+# sub144 — Score Momentum vs Level (Signal Lab)
+if _active_sub == 144:
+    try:
+        import plotly.graph_objects as _go144
+        import numpy as _np144
+        import pandas as _pd144
+        if "composite_risk_score_smooth" in df.columns and "hy_spread" in df.columns:
+            _comp144 = df["composite_risk_score_smooth"].dropna()
+            _hy144 = df["hy_spread"].dropna()
+            _j144 = _comp144.to_frame("score").join(_hy144.to_frame("hy"), how="inner").dropna()
+            _j144["score_21d_chg"] = _j144["score"].diff(21)
+            _j144["hy_fwd_21d"] = _j144["hy"].diff(21).shift(-21)  # forward 21d HY change
+            _j144 = _j144.dropna()
+            # Quadrant analysis: high level vs rising momentum
+            _med_score = float(_j144["score"].median())
+            _med_chg = float(_j144["score_21d_chg"].median())
+            _j144["quadrant"] = _j144.apply(
+                lambda r: (
+                    "High+Rising" if r["score"] >= _med_score and r["score_21d_chg"] >= _med_chg
+                    else ("High+Falling" if r["score"] >= _med_score
+                          else ("Low+Rising" if r["score_21d_chg"] >= _med_chg else "Low+Falling"))
+                ), axis=1
+            )
+            _QUAD_COLORS = {"High+Rising": "#ef4444", "High+Falling": "#f59e0b",
+                            "Low+Rising": "#8b5cf6", "Low+Falling": "#10b981"}
+            # Scatter: score level vs score 21d change, colored by forward HY change
+            _fig144a = _go144.Figure()
+            for quad, color in _QUAD_COLORS.items():
+                _sub = _j144[_j144["quadrant"] == quad]
+                if len(_sub) < 3:
+                    continue
+                _fig144a.add_trace(_go144.Scatter(
+                    x=_sub["score"], y=_sub["score_21d_chg"],
+                    mode="markers",
+                    marker=dict(
+                        color=_sub["hy_fwd_21d"],
+                        colorscale=[[0, "#1e40af"], [0.5, "#f59e0b"], [1, "#dc2626"]],
+                        size=3, opacity=0.5,
+                        cmin=-50, cmax=50,
+                        showscale=(quad == list(_QUAD_COLORS.keys())[0]),
+                        colorbar=dict(title="Fwd HY Δ<br>(bps)", titlefont=dict(color="#9aa0aa", size=8),
+                                      tickfont=dict(color="#9aa0aa", size=8)) if quad == list(_QUAD_COLORS.keys())[0] else None,
+                    ),
+                    name=quad,
+                    hovertemplate=f"{quad}<br>Score: %{{x:.0f}} · Δ21d: %{{y:+.1f}} · Fwd HY: %{{marker.color:+.0f}}bps<extra></extra>",
+                ))
+            _fig144a.add_vline(x=_med_score, line_color="#6b7280", line_width=1, line_dash="dot")
+            _fig144a.add_hline(y=_med_chg, line_color="#6b7280", line_width=1, line_dash="dot")
+            _fig144a.update_layout(
+                height=310, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="Score Level vs 21d Momentum — Dot color = forward 21d HY Δ (bps)",
+                           font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Score Level"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="21d Score Change", zeroline=True, zerolinecolor="#4b5563"),
+                legend=dict(orientation="h", y=-0.3, x=0, font=dict(size=9)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig144a, use_container_width=True)
+            # Quadrant forward HY stats
+            _quad_rows = []
+            for quad in _QUAD_COLORS:
+                _sub = _j144[_j144["quadrant"] == quad]["hy_fwd_21d"].dropna()
+                if len(_sub) < 5:
+                    continue
+                _quad_rows.append({
+                    "Quadrant": quad,
+                    "N": len(_sub),
+                    "Median Fwd HY Δ (bps)": round(float(_sub.median()), 0),
+                    "Mean Fwd HY Δ (bps)": round(float(_sub.mean()), 0),
+                    "% Positive (widening)": f"{(_sub > 0).mean()*100:.0f}%",
+                })
+            if _quad_rows:
+                st.markdown("**Quadrant Summary: Forward 21d HY Spread Change**")
+                st.dataframe(_pd144.DataFrame(_quad_rows).set_index("Quadrant"), use_container_width=True)
+                st.caption(
+                    "High+Rising = high score AND accelerating → strongest widening signal. "
+                    "High+Falling = elevated but improving → mean reversion. "
+                    "Low+Rising = watch — momentum turning. "
+                    "Low+Falling = benign. Dots left of median = momentum dominates level; right = level dominates."
+                )
+        else:
+            st.info("composite_risk_score_smooth or hy_spread not found — run the full scoring pipeline.")
+    except Exception as _e144:
+        st.caption(f"Score momentum vs level: {_e144}")
+
+# m9 — Thresholds (Models)
+if _active_sub == "m9":
+    try:
+        import plotly.graph_objects as _go_m9
+        import numpy as _np_m9
+        from src.threshold_robustness import run_threshold_robustness, DEFAULT_THRESHOLDS, SHIFT_GRID
+        st.header("Threshold Robustness")
+        st.caption(
+            "Tests how sensitive the strategy's key metrics are to small shifts in "
+            "composite score thresholds. A robust model should degrade gracefully — "
+            "not collapse — when thresholds move ±5–10 pts."
+        )
+        with st.spinner("Running threshold grid..."):
+            _th_result = run_threshold_robustness(df)
+        if not _th_result or _th_result.get("error"):
+            st.info(f"Threshold robustness unavailable: {_th_result.get('error', 'check pipeline')}")
+        else:
+            _th_df = _th_result.get("grid")
+            if _th_df is not None and not _th_df.empty:
+                st.subheader("Threshold Sensitivity Grid")
+                _sharpe_col = [c for c in _th_df.columns if "sharpe" in c.lower()]
+                _return_col = [c for c in _th_df.columns if "return" in c.lower() or "cagr" in c.lower()]
+                _dd_col = [c for c in _th_df.columns if "drawdown" in c.lower() or "dd" in c.lower()]
+                st.dataframe(
+                    _th_df.style.background_gradient(
+                        subset=_sharpe_col if _sharpe_col else _th_df.select_dtypes("number").columns[:1],
+                        cmap="RdYlGn", axis=0
+                    ).format(precision=2),
+                    use_container_width=True,
+                )
+                # Heatmap of Sharpe if pivot-able
+                if _sharpe_col and "caution_threshold" in _th_df.columns and "risk_off_threshold" in _th_df.columns:
+                    try:
+                        _pivot = _th_df.pivot(index="caution_threshold", columns="risk_off_threshold",
+                                              values=_sharpe_col[0])
+                        _fig_m9 = _go_m9.Figure(data=_go_m9.Heatmap(
+                            z=_pivot.values.tolist(),
+                            x=[str(c) for c in _pivot.columns],
+                            y=[str(i) for i in _pivot.index],
+                            colorscale="RdYlGn",
+                            text=[[f"{v:.2f}" if not _np_m9.isnan(v) else "" for v in row]
+                                  for row in _pivot.values.tolist()],
+                            texttemplate="%{text}",
+                            hovertemplate="Caution %{y} / RiskOff %{x}: Sharpe=%{z:.2f}<extra></extra>",
+                        ))
+                        _fig_m9.update_layout(
+                            height=320, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                            title=dict(text="Sharpe Heatmap: Caution vs Risk-Off Threshold", font=dict(size=12, color="#9aa0aa")),
+                            xaxis=dict(color="#6b7280", title="Risk-Off Threshold"),
+                            yaxis=dict(color="#6b7280", title="Caution Threshold"),
+                            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                        )
+                        st.plotly_chart(_fig_m9, use_container_width=True)
+                    except Exception:
+                        pass
+            _summary = _th_result.get("summary")
+            if _summary:
+                st.subheader("Robustness Summary")
+                st.json(_summary)
+            st.caption(f"Default thresholds: {DEFAULT_THRESHOLDS}. Grid shifts tested: {SHIFT_GRID}.")
+    except Exception as _e_m9:
+        st.caption(f"Threshold robustness: {_e_m9}")
