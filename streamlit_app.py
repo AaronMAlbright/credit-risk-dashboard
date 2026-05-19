@@ -2978,7 +2978,7 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab_credit:  # Credit Markets — 25 sub-tabs
+with tab_credit:  # Credit Markets — 26 sub-tabs
     (_analytics_sub19, _analytics_sub20, _analytics_sub21,
      _analytics_sub24, _analytics_sub27, _analytics_sub28,
      _analytics_sub29, _analytics_sub30, _analytics_sub31,
@@ -2988,7 +2988,7 @@ with tab_credit:  # Credit Markets — 25 sub-tabs
      _analytics_sub87, _analytics_sub89,
      _analytics_sub100, _analytics_sub102,
      _analytics_sub105, _analytics_sub110,
-     _analytics_sub117) = st.tabs([
+     _analytics_sub117, _analytics_sub130) = st.tabs([
         "Defaults", "Fwd Sim", "CDX Proxy",
         "Default Cycle", "Spread Vol", "Fallen Angel",
         "Global Credit", "Corp Leverage", "Seasonality",
@@ -2998,7 +2998,7 @@ with tab_credit:  # Credit Markets — 25 sub-tabs
         "Credit Momentum", "Quality Curve",
         "Spread Pctile", "Credit Cycle",
         "HY Momentum", "Credit Regime",
-        "Credit Risk Score",
+        "Credit Risk Score", "HY Lead-Lag",
     ])
 
 with tab_macro:  # Rates & Macro — 32 sub-tabs
@@ -3031,7 +3031,7 @@ with tab_macro:  # Rates & Macro — 32 sub-tabs
         "Breakeven", "10y Yield",
     ])
 
-with tab_risk:  # Risk Monitors — 33 sub-tabs
+with tab_risk:  # Risk Monitors — 34 sub-tabs
     (_analytics_sub6, _analytics_sub7, _analytics_sub12,
      _analytics_sub39, _analytics_sub44, _analytics_sub46,
      _analytics_sub47, _analytics_sub52, _analytics_sub55,
@@ -3043,7 +3043,8 @@ with tab_risk:  # Risk Monitors — 33 sub-tabs
      _analytics_sub95, _analytics_sub96, _analytics_sub97,
      _analytics_sub98, _analytics_sub99,
      _analytics_sub107, _analytics_sub112, _analytics_sub113,
-     _analytics_sub119, _analytics_sub124, _analytics_sub127) = st.tabs([
+     _analytics_sub119, _analytics_sub124, _analytics_sub127,
+     _analytics_sub133) = st.tabs([
         "Tail Risk", "Stress", "Contagion",
         "Vol Regime", "Deleveraging", "Sector Stress",
         "Put/Call", "Tail Dependency", "Port Stress",
@@ -3056,9 +3057,10 @@ with tab_risk:  # Risk Monitors — 33 sub-tabs
         "EQ-Credit Div", "Shock Monitor",
         "Liquidity Score", "VIX Momentum", "FX/Commodity",
         "Enh Funding", "Equity Returns", "VIX Context",
+        "Drawdown Anatomy",
     ])
 
-with tab_siglab:  # Signal Lab — 21 sub-tabs
+with tab_siglab:  # Signal Lab — 24 sub-tabs
     (_analytics_sub1, _analytics_sub2, _analytics_sub3,
      _analytics_sub4, _analytics_sub5, _analytics_sub9,
      _analytics_sub18, _analytics_sub22, _analytics_sub26,
@@ -3067,7 +3069,8 @@ with tab_siglab:  # Signal Lab — 21 sub-tabs
      _analytics_sub101, _analytics_sub108,
      _analytics_sub115, _analytics_sub116,
      _analytics_sub120, _analytics_sub123,
-     _analytics_sub126) = st.tabs([
+     _analytics_sub126, _analytics_sub128,
+     _analytics_sub129, _analytics_sub132) = st.tabs([
         "Validation", "Attribution", "Timeline",
         "Sig Decay", "Ortho", "Factors",
         "Granger", "EQ-Credit Corr", "Corr Heatmap",
@@ -3076,18 +3079,21 @@ with tab_siglab:  # Signal Lab — 21 sub-tabs
         "Score Velocity", "X-Asset Div",
         "Complacency", "Macro Risk Score",
         "Mean Reversion", "Score Consensus",
-        "Composite History",
+        "Composite History", "Score Corr",
+        "Score Z-Scores", "Score Persist",
     ])
 
-with tab_regime:  # Regime — 12 sub-tabs
+with tab_regime:  # Regime — 13 sub-tabs
     (_analytics_sub8, _analytics_sub10, _analytics_sub11,
      _analytics_sub13, _analytics_sub14, _analytics_sub25,
      _analytics_sub32, _analytics_sub33, _analytics_sub34,
-     _analytics_sub36, _analytics_sub43, _analytics_sub49) = st.tabs([
+     _analytics_sub36, _analytics_sub43, _analytics_sub49,
+     _analytics_sub131) = st.tabs([
         "Performance", "Regime Validity", "Failure Analysis",
         "Analogs", "Persistence", "Compare Dates",
         "Traffic Light", "Shock Sim", "Alert BT",
         "Regime Fcast", "Regime Age", "Drawdown",
+        "Recession Analog",
     ])
 
 with tab_models:  # Models — 13 sub-tabs
@@ -18241,3 +18247,527 @@ with _analytics_sub127:
             st.info("VIX column not found — run the feature pipeline.")
     except Exception as _e127:
         st.caption(f"VIX context: {_e127}")
+
+# ---------------------------------------------------------------------------
+# Batch 17 — sub128–sub133
+# ---------------------------------------------------------------------------
+
+# sub128 — Score Correlations (tab_siglab)
+with _analytics_sub128:
+    try:
+        import plotly.graph_objects as _go128
+        from src.regime_attribution import SCORE_COLS, DISPLAY_NAMES
+        _sc128_cols = [v for v in SCORE_COLS.values() if v in df.columns]
+        if len(_sc128_cols) >= 2:
+            _sc128_df = df[_sc128_cols].dropna(how="all")
+            _sc128_labels = [DISPLAY_NAMES.get(k, k) for k, v in SCORE_COLS.items() if v in _sc128_cols]
+            # Rolling 252d correlation (last available snapshot)
+            _corr128 = _sc128_df.rolling(252, min_periods=63).corr().dropna(how="all")
+            # Take the most recent correlation slice
+            _last_date128 = _corr128.index.get_level_values(0).max()
+            _corr_latest = _corr128.loc[_last_date128]
+            # Reindex to align labels
+            _corr_mat = _corr_latest.reindex(index=_sc128_cols, columns=_sc128_cols)
+            _mat_vals = _corr_mat.values.tolist()
+            _fig128a = _go128.Figure(data=_go128.Heatmap(
+                z=_mat_vals,
+                x=_sc128_labels, y=_sc128_labels,
+                colorscale=[
+                    [0.0, "#1e40af"], [0.5, "#1a1f2e"], [1.0, "#dc2626"]
+                ],
+                zmin=-1, zmax=1,
+                text=[[f"{v:.2f}" if v is not None else "" for v in row] for row in _mat_vals],
+                texttemplate="%{text}",
+                hovertemplate="%{y} vs %{x}: %{z:.2f}<extra></extra>",
+            ))
+            _fig128a.update_layout(
+                height=380, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="Sub-Score Rolling 252d Correlation Matrix (current)", font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(color="#6b7280", tickangle=-30),
+                yaxis=dict(color="#6b7280"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig128a, use_container_width=True)
+            # Rolling correlation of each score vs composite over time
+            if "composite_risk_score_smooth" in df.columns:
+                _fig128b = _go128.Figure()
+                _comp128 = df["composite_risk_score_smooth"]
+                _colors128 = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#64748b","#ec4899"]
+                for i, (col, label) in enumerate(zip(_sc128_cols, _sc128_labels)):
+                    _roll_corr = df[col].rolling(252, min_periods=63).corr(_comp128).dropna()
+                    _fig128b.add_trace(_go128.Scatter(
+                        x=_roll_corr.index, y=_roll_corr.values,
+                        mode="lines", name=label,
+                        line=dict(color=_colors128[i % len(_colors128)], width=1.2),
+                        hovertemplate=f"{label}<br>%{{x|%Y-%m-%d}}: %{{y:.2f}}<extra></extra>",
+                    ))
+                _fig128b.add_hline(y=0, line_color="#4b5563", line_width=1, line_dash="dot")
+                _fig128b.update_layout(
+                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Rolling 252d Corr: Each Sub-Score vs Composite", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Correlation"),
+                    legend=dict(orientation="h", y=-0.3, x=0, font=dict(size=9)),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig128b, use_container_width=True)
+            st.caption("Red = high positive correlation; Blue = negative. Sub-scores that de-correlate signal divergent market stress.")
+        else:
+            st.info("Need at least 2 sub-score columns — run the full scoring pipeline.")
+    except Exception as _e128:
+        st.caption(f"Score correlations: {_e128}")
+
+# sub129 — Score Z-Scores (tab_siglab)
+with _analytics_sub129:
+    try:
+        import plotly.graph_objects as _go129
+        import numpy as _np129
+        from src.regime_attribution import SCORE_COLS, DISPLAY_NAMES
+        _sc129_cols = [v for v in SCORE_COLS.values() if v in df.columns]
+        if _sc129_cols:
+            _fig129a = _go129.Figure()
+            _colors129 = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#64748b","#ec4899"]
+            _current_zscores = {}
+            for i, (k, v) in enumerate(SCORE_COLS.items()):
+                if v not in df.columns:
+                    continue
+                _s = df[v].dropna()
+                if len(_s) < 63:
+                    continue
+                _roll = _s.rolling(252, min_periods=63)
+                _z = (_s - _roll.mean()) / _roll.std(ddof=1).replace(0, _np129.nan)
+                _label = DISPLAY_NAMES.get(k, k)
+                _fig129a.add_trace(_go129.Scatter(
+                    x=_z.index, y=_z.values,
+                    mode="lines", name=_label,
+                    line=dict(color=_colors129[i % len(_colors129)], width=1.2),
+                    hovertemplate=f"{_label}<br>%{{x|%Y-%m-%d}}: %{{y:.2f}}σ<extra></extra>",
+                ))
+                _current_zscores[_label] = float(_z.iloc[-1]) if _z.notna().any() else None
+            # Reference bands
+            for _lvl, _col in [(2.0, "rgba(220,38,38,0.15)"), (-2.0, "rgba(37,99,235,0.15)")]:
+                _fig129a.add_hline(y=_lvl, line_color="#4b5563", line_width=1, line_dash="dot")
+            _fig129a.update_layout(
+                height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="Sub-Score Z-Scores vs Rolling 252d History", font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Z-Score (σ)", zeroline=True, zerolinecolor="#4b5563"),
+                legend=dict(orientation="h", y=-0.35, x=0, font=dict(size=9)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig129a, use_container_width=True)
+            # Current z-score snapshot bar chart
+            if _current_zscores:
+                _z_labels = list(_current_zscores.keys())
+                _z_vals = [v if v is not None else 0.0 for v in _current_zscores.values()]
+                _z_bar_colors = ["#ef4444" if v > 1.0 else ("#f59e0b" if v > 0.0 else "#3b82f6") for v in _z_vals]
+                _fig129b = _go129.Figure()
+                _fig129b.add_trace(_go129.Bar(
+                    x=_z_labels, y=_z_vals,
+                    marker_color=_z_bar_colors,
+                    text=[f"{v:+.2f}σ" for v in _z_vals], textposition="auto",
+                    hovertemplate="%{x}: %{y:+.2f}σ<extra></extra>",
+                ))
+                _fig129b.add_hline(y=0, line_color="#4b5563", line_width=1)
+                _fig129b.add_hline(y=2, line_color="#dc2626", line_width=1, line_dash="dash")
+                _fig129b.add_hline(y=-2, line_color="#1d4ed8", line_width=1, line_dash="dash")
+                _fig129b.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Current Z-Score Snapshot — Which Scores Are Anomalous?", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(color="#6b7280", tickangle=-20),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Z-Score (σ)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig129b, use_container_width=True)
+            st.caption(">+2σ = historically elevated; <−2σ = historically suppressed. Dotted lines at ±2σ.")
+        else:
+            st.info("Sub-score columns not found — run the full scoring pipeline.")
+    except Exception as _e129:
+        st.caption(f"Score z-scores: {_e129}")
+
+# sub130 — HY Lead-Lag (tab_credit)
+with _analytics_sub130:
+    try:
+        import plotly.graph_objects as _go130
+        import numpy as _np130
+        from src.regime_attribution import SCORE_COLS, DISPLAY_NAMES
+        if "hy_spread" in df.columns:
+            _hy130 = df["hy_spread"].dropna()
+            _hy_chg130 = _hy130.diff(21)   # 1M change in HY
+            _lags130 = [0, 5, 10, 21, 42]  # lag in trading days
+            _sc130_available = [(k, v) for k, v in SCORE_COLS.items() if v in df.columns]
+            if _sc130_available:
+                _results130 = {}
+                for k, v in _sc130_available:
+                    _score_chg = df[v].diff(21).dropna()
+                    _corrs = []
+                    for lag in _lags130:
+                        # score leads HY by `lag` days => shift score forward by lag
+                        _aligned = _score_chg.shift(-lag).align(_hy_chg130, join="inner")
+                        _s, _h = _aligned
+                        _valid = _s.dropna().align(_h.dropna(), join="inner")
+                        if len(_valid[0]) > 30:
+                            _corr_val = float(_valid[0].corr(_valid[1]))
+                        else:
+                            _corr_val = _np130.nan
+                        _corrs.append(_corr_val)
+                    _results130[DISPLAY_NAMES.get(k, k)] = _corrs
+                # Heatmap of lag vs score
+                _rl130 = list(_results130.keys())
+                _corr_grid = [list(_results130[s]) for s in _rl130]
+                _fig130a = _go130.Figure(data=_go130.Heatmap(
+                    z=_corr_grid,
+                    x=[f"+{lag}d" for lag in _lags130],
+                    y=_rl130,
+                    colorscale=[[0.0, "#1e40af"], [0.5, "#1a1f2e"], [1.0, "#dc2626"]],
+                    zmin=-1, zmax=1,
+                    text=[[f"{v:.2f}" if not _np130.isnan(v) else "" for v in row] for row in _corr_grid],
+                    texttemplate="%{text}",
+                    hovertemplate="%{y} at lag %{x}: corr=%{z:.2f}<extra></extra>",
+                ))
+                _fig130a.update_layout(
+                    height=350, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                    title=dict(text="Score→HY Lead-Lag Correlation (score change leads HY change by N days)", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(color="#6b7280", title="Score leads HY by"),
+                    yaxis=dict(color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig130a, use_container_width=True)
+                # Best lag per score bar chart
+                _best_lags = {}
+                for name, corrs in _results130.items():
+                    _best_idx = int(_np130.nanargmax([abs(c) for c in corrs]))
+                    _best_lags[name] = (_lags130[_best_idx], corrs[_best_idx])
+                _fig130b = _go130.Figure()
+                _bl_names = list(_best_lags.keys())
+                _bl_vals = [v[1] for v in _best_lags.values()]
+                _bl_lags = [v[0] for v in _best_lags.values()]
+                _fig130b.add_trace(_go130.Bar(
+                    x=_bl_names, y=_bl_vals,
+                    marker_color=["#ef4444" if v > 0 else "#3b82f6" for v in _bl_vals],
+                    text=[f"lag={lag}d<br>r={corr:.2f}" for lag, corr in zip(_bl_lags, _bl_vals)],
+                    textposition="auto", textfont=dict(size=9),
+                    hovertemplate="%{x}<br>Best lag: %{text}<extra></extra>",
+                ))
+                _fig130b.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Best Lead Correlation per Score (max |corr| across lags)", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(color="#6b7280", tickangle=-20),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Correlation"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig130b, use_container_width=True)
+                st.caption("Red = positive correlation (score rise → HY widening). Lag = how many days score leads HY. Higher |corr| = stronger leading relationship.")
+            else:
+                st.info("Sub-score columns not found — run the full scoring pipeline.")
+        else:
+            st.info("hy_spread not found in dataset.")
+    except Exception as _e130:
+        st.caption(f"HY lead-lag: {_e130}")
+
+# sub131 — Recession Analog (tab_regime)
+with _analytics_sub131:
+    try:
+        import plotly.graph_objects as _go131
+        import pandas as _pd131
+        if "composite_risk_score_smooth" in df.columns and "hy_spread" in df.columns:
+            _comp131 = df["composite_risk_score_smooth"].dropna()
+            _hy131 = df["hy_spread"].dropna()
+            # Define approximate recession-onset anchor dates
+            _analogs131 = {
+                "2001 (Tech bust)": "2001-03-01",
+                "2008 (GFC)":       "2008-09-01",
+                "2020 (COVID)":     "2020-02-15",
+            }
+            _window131 = 252  # ±1yr around onset
+            _fig131a = _go131.Figure()
+            _colors131 = {"2001 (Tech bust)": "#f59e0b", "2008 (GFC)": "#ef4444", "2020 (COVID)": "#10b981"}
+            for name, dt_str in _analogs131.items():
+                try:
+                    _anchor = _pd131.Timestamp(dt_str)
+                    _mask = (_comp131.index >= _anchor - _pd131.Timedelta(days=_window131)) & \
+                            (_comp131.index <= _anchor + _pd131.Timedelta(days=_window131))
+                    _slice = _comp131[_mask]
+                    if len(_slice) > 10:
+                        _x_rel = [(_d - _anchor).days for _d in _slice.index]
+                        _fig131a.add_trace(_go131.Scatter(
+                            x=_x_rel, y=_slice.values,
+                            mode="lines", name=name,
+                            line=dict(color=_colors131.get(name, "#9aa0aa"), width=1.5),
+                            hovertemplate=f"{name}<br>Day %{{x}}: %{{y:.0f}}<extra></extra>",
+                        ))
+                except Exception:
+                    pass
+            # Current trajectory (last 252 days)
+            _now131 = _comp131.index[-1]
+            _curr_mask = _comp131.index >= (_now131 - _pd131.Timedelta(days=_window131))
+            _curr_slice = _comp131[_curr_mask]
+            if len(_curr_slice) > 10:
+                _x_curr = [(_d - _now131).days for _d in _curr_slice.index]
+                _fig131a.add_trace(_go131.Scatter(
+                    x=_x_curr, y=_curr_slice.values,
+                    mode="lines", name="Current",
+                    line=dict(color="#ffffff", width=2.0, dash="dot"),
+                    hovertemplate="Current<br>Day %{x}: %{y:.0f}<extra></extra>",
+                ))
+            _fig131a.add_vline(x=0, line_color="#6b7280", line_width=1, line_dash="dash",
+                               annotation_text="Onset", annotation_position="top left",
+                               annotation_font=dict(color="#6b7280", size=9))
+            _fig131a.update_layout(
+                height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="Composite Score: Recession-Onset Analogs (±1yr window)", font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Days relative to recession onset"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Composite Score", range=[0, 100]),
+                legend=dict(orientation="h", y=-0.3, x=0, font=dict(size=9)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig131a, use_container_width=True)
+            # Same for HY spread
+            _fig131b = _go131.Figure()
+            for name, dt_str in _analogs131.items():
+                try:
+                    _anchor = _pd131.Timestamp(dt_str)
+                    _mask = (_hy131.index >= _anchor - _pd131.Timedelta(days=_window131)) & \
+                            (_hy131.index <= _anchor + _pd131.Timedelta(days=_window131))
+                    _slice = _hy131[_mask]
+                    if len(_slice) > 10:
+                        # Index to 100 at onset
+                        _anchor_val = _slice[_slice.index >= _anchor].iloc[0] if len(_slice[_slice.index >= _anchor]) else _np130.nan
+                        _x_rel = [(_d - _anchor).days for _d in _slice.index]
+                        _fig131b.add_trace(_go131.Scatter(
+                            x=_x_rel, y=_slice.values,
+                            mode="lines", name=name,
+                            line=dict(color=_colors131.get(name, "#9aa0aa"), width=1.5),
+                            hovertemplate=f"{name}<br>Day %{{x}}: %{{y:.0f}}bps<extra></extra>",
+                        ))
+                except Exception:
+                    pass
+            # Current HY
+            _curr_hy = _hy131[_hy131.index >= (_now131 - _pd131.Timedelta(days=_window131))]
+            if len(_curr_hy) > 10:
+                _x_hy_curr = [(_d - _now131).days for _d in _curr_hy.index]
+                _fig131b.add_trace(_go131.Scatter(
+                    x=_x_hy_curr, y=_curr_hy.values,
+                    mode="lines", name="Current",
+                    line=dict(color="#ffffff", width=2.0, dash="dot"),
+                    hovertemplate="Current<br>Day %{x}: %{y:.0f}bps<extra></extra>",
+                ))
+            _fig131b.add_vline(x=0, line_color="#6b7280", line_width=1, line_dash="dash")
+            _fig131b.update_layout(
+                height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="HY Spread: Recession-Onset Analogs (±1yr window)", font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Days relative to recession onset"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="HY Spread (bps)"),
+                legend=dict(orientation="h", y=-0.35, x=0, font=dict(size=9)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig131b, use_container_width=True)
+            st.caption("Anchor = recession/crisis onset date. White dot = current trajectory. Compare shape and pace vs prior episodes.")
+        else:
+            st.info("Composite score or HY spread not found — run the full scoring pipeline.")
+    except Exception as _e131:
+        st.caption(f"Recession analog: {_e131}")
+
+# sub132 — Score Persistence (tab_siglab)
+with _analytics_sub132:
+    try:
+        import plotly.graph_objects as _go132
+        import numpy as _np132
+        from src.regime_attribution import SCORE_COLS, DISPLAY_NAMES
+        _sc132_cols = [(k, v) for k, v in SCORE_COLS.items() if v in df.columns]
+        if _sc132_cols:
+            _lags132 = [1, 5, 21, 63]
+            _autocorrs = {}
+            for k, v in _sc132_cols:
+                _s = df[v].dropna()
+                if len(_s) < 126:
+                    continue
+                _label = DISPLAY_NAMES.get(k, k)
+                _acs = []
+                for lag in _lags132:
+                    _s_lag = _s.shift(lag)
+                    _valid = _s.align(_s_lag, join="inner")
+                    _combined = _valid[0].dropna().align(_valid[1].dropna(), join="inner")
+                    if len(_combined[0]) > 20:
+                        _ac = float(_combined[0].corr(_combined[1]))
+                    else:
+                        _ac = _np132.nan
+                    _acs.append(_ac)
+                _autocorrs[_label] = _acs
+            if _autocorrs:
+                _names132 = list(_autocorrs.keys())
+                _fig132a = _go132.Figure(data=_go132.Heatmap(
+                    z=[list(_autocorrs[n]) for n in _names132],
+                    x=[f"Lag {lag}d" for lag in _lags132],
+                    y=_names132,
+                    colorscale=[[0.0, "#1e40af"], [0.5, "#1a1f2e"], [1.0, "#dc2626"]],
+                    zmin=0, zmax=1,
+                    text=[[f"{v:.2f}" if not _np132.isnan(v) else "" for v in _autocorrs[n]] for n in _names132],
+                    texttemplate="%{text}",
+                    hovertemplate="%{y} at %{x}: %{z:.2f}<extra></extra>",
+                ))
+                _fig132a.update_layout(
+                    height=300, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                    title=dict(text="Score Autocorrelation by Lag (persistence = high autocorr)", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(color="#6b7280"),
+                    yaxis=dict(color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig132a, use_container_width=True)
+                # Bar chart: autocorr at 21d lag per score (persistence summary)
+                _pers_vals = [_autocorrs[n][2] for n in _names132]  # index 2 = 21d lag
+                _fig132b = _go132.Figure()
+                _fig132b.add_trace(_go132.Bar(
+                    x=_names132, y=_pers_vals,
+                    marker_color=["#3b82f6" if v > 0.7 else ("#f59e0b" if v > 0.5 else "#ef4444") for v in _pers_vals],
+                    text=[f"{v:.2f}" if not _np132.isnan(v) else "N/A" for v in _pers_vals],
+                    textposition="auto",
+                    hovertemplate="%{x}: autocorr(21d)=%{y:.2f}<extra></extra>",
+                ))
+                _fig132b.add_hline(y=0.7, line_color="#3b82f6", line_width=1, line_dash="dash",
+                                   annotation_text="Sticky (0.7)", annotation_font=dict(color="#3b82f6", size=8))
+                _fig132b.add_hline(y=0.5, line_color="#f59e0b", line_width=1, line_dash="dash",
+                                   annotation_text="Moderate (0.5)", annotation_font=dict(color="#f59e0b", size=8))
+                _fig132b.update_layout(
+                    height=210, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                    title=dict(text="21-Day Autocorrelation — Which Scores Are Stickiest?", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(color="#6b7280", tickangle=-20),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Autocorr(21d)", range=[0, 1]),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig132b, use_container_width=True)
+                st.caption("Blue >0.7 = sticky/persistent signal. Red <0.5 = mean-reverting/noisy. Sticky scores confirm regime; noisy scores provide contrast signals.")
+            else:
+                st.info("Insufficient history to compute autocorrelations (need 126+ observations).")
+        else:
+            st.info("Sub-score columns not found — run the full scoring pipeline.")
+    except Exception as _e132:
+        st.caption(f"Score persistence: {_e132}")
+
+# sub133 — Drawdown Anatomy (tab_risk)
+with _analytics_sub133:
+    try:
+        import plotly.graph_objects as _go133
+        import numpy as _np133
+        import pandas as _pd133
+        if "sp500_drawdown" in df.columns and "hy_spread" in df.columns:
+            _dd133 = df["sp500_drawdown"].dropna()
+            _hy133 = df["hy_spread"].dropna()
+            _dd_thresh = -0.10  # -10% drawdown = significant episode
+            # Identify drawdown episodes (contiguous periods below threshold)
+            _in_dd = (_dd133 < _dd_thresh).astype(int)
+            _dd_ep = []
+            _in_episode = False
+            _ep_start = None
+            for _d, _v in _in_dd.items():
+                if _v and not _in_episode:
+                    _in_episode = True
+                    _ep_start = _d
+                elif not _v and _in_episode:
+                    _in_episode = False
+                    _dd_ep.append((_ep_start, _d))
+            if _in_episode:
+                _dd_ep.append((_ep_start, _dd133.index[-1]))
+            # Full history: SP500 drawdown + HY spread dual axis
+            _fig133a = _go133.Figure()
+            _fig133a.add_trace(_go133.Scatter(
+                x=_dd133.index, y=(_dd133.values * 100),
+                mode="lines", name="SP500 Drawdown (%)",
+                line=dict(color="#ef4444", width=1.2),
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.08)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.1f}%<extra></extra>",
+                yaxis="y1",
+            ))
+            # Shade drawdown episodes
+            for (ep_s, ep_e) in _dd_ep:
+                _fig133a.add_vrect(x0=ep_s, x1=ep_e, fillcolor="rgba(239,68,68,0.07)",
+                                   layer="below", line_width=0)
+            _fig133a.add_trace(_go133.Scatter(
+                x=_hy133.index, y=_hy133.values,
+                mode="lines", name="HY Spread (bps)",
+                line=dict(color="#f59e0b", width=1.0),
+                hovertemplate="HY: %{y:.0f}bps<extra></extra>",
+                yaxis="y2",
+            ))
+            _fig133a.add_hline(y=-10.0, line_color="#6b7280", line_width=1, line_dash="dot",
+                               annotation_text="-10%", annotation_font=dict(color="#6b7280", size=8))
+            _fig133a.add_hline(y=-20.0, line_color="#9b1c1c", line_width=1, line_dash="dot",
+                               annotation_text="-20%", annotation_font=dict(color="#9b1c1c", size=8))
+            _fig133a.update_layout(
+                height=280, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="SP500 Drawdown vs HY Spread (red shading = drawdown episodes ≥10%)", font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Drawdown (%)"),
+                yaxis2=dict(overlaying="y", side="right", color="#f59e0b",
+                            title="HY Spread (bps)", showgrid=False),
+                legend=dict(orientation="h", y=-0.3, x=0, font=dict(size=9)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig133a, use_container_width=True)
+            # Drawdown episode depth vs HY spread at trough
+            if _dd_ep:
+                _ep_depths = []
+                _ep_hy_at_trough = []
+                _ep_durations = []
+                _ep_labels = []
+                for ep_s, ep_e in _dd_ep:
+                    _ep_dd = _dd133[ep_s:ep_e]
+                    _depth = float(_ep_dd.min() * 100)
+                    _trough_date = _ep_dd.idxmin()
+                    _hy_at_trough = float(_hy133.reindex([_trough_date], method="nearest").iloc[0]) if len(_hy133) else _np133.nan
+                    _dur = (ep_e - ep_s).days
+                    _ep_depths.append(_depth)
+                    _ep_hy_at_trough.append(_hy_at_trough)
+                    _ep_durations.append(_dur)
+                    _ep_labels.append(str(ep_s.date()))
+                _fig133b = _go133.Figure()
+                _fig133b.add_trace(_go133.Scatter(
+                    x=_ep_depths, y=_ep_hy_at_trough,
+                    mode="markers+text",
+                    marker=dict(
+                        color=_ep_durations,
+                        colorscale="RdYlGn_r",
+                        size=[max(6, min(18, d // 10)) for d in _ep_durations],
+                        colorbar=dict(title="Duration (days)", titlefont=dict(color="#9aa0aa", size=9),
+                                      tickfont=dict(color="#9aa0aa", size=8)),
+                        showscale=True,
+                    ),
+                    text=_ep_labels,
+                    textposition="top center", textfont=dict(size=8, color="#9aa0aa"),
+                    hovertemplate="Drawdown: %{x:.1f}%<br>HY at trough: %{y:.0f}bps<br>Duration: %{marker.color}d<extra></extra>",
+                ))
+                _fig133b.update_layout(
+                    height=250, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=60),
+                    title=dict(text="Episode Anatomy: Drawdown Depth vs HY Spread at Trough (size=duration)", font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Drawdown Depth (%)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="HY Spread at Trough (bps)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig133b, use_container_width=True)
+                st.caption(f"Found {len(_dd_ep)} episodes with SP500 drawdown ≥10%. Larger dot = longer episode. Color scale: green=short, red=long duration.")
+            else:
+                st.info("No drawdown episodes ≥10% found in the dataset.")
+        else:
+            st.info("sp500_drawdown or hy_spread not found — run the feature pipeline.")
+    except Exception as _e133:
+        st.caption(f"Drawdown anatomy: {_e133}")
