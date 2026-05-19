@@ -1300,6 +1300,7 @@ _ANALYTICS_VIEWS = {
         ("Spread Dispersion", 151), ("Carry Decomp", 156),
         ("Credit Cycle Clock", 157), ("Spread Velocity", 158),
         ("Risk Appetite", 163), ("Carry Efficiency", 164),
+        ("HY Term Structure", 172), ("Credit Diffusion", 174),
     ],
     "Rates & Macro": [
         ("Regime Returns", 23), ("X-Asset Momentum", 38), ("Macro Surprise", 41),
@@ -1333,7 +1334,7 @@ _ANALYTICS_VIEWS = {
         ("Enhanced Funding", 119), ("Equity Returns", 124),
         ("VIX Context", 127), ("Drawdown Anatomy", 133), ("Alert History", 139),
         ("Vol of Vol", 148), ("Corr Regime", 154),
-        ("Tail Skew", 167),
+        ("Tail Skew", 167), ("Vol Clustering", 170),
     ],
     "Signal Lab": [
         ("Validation", 1), ("Attribution", 2), ("Timeline", 3),
@@ -1351,7 +1352,8 @@ _ANALYTICS_VIEWS = {
         ("Seasonality", 147), ("Score Ensemble", 150),
         ("Score Bootstrap CI", 153), ("Score Calendar", 159),
         ("Factor Corr Scan", 160), ("Score Lead-Lag", 162),
-        ("Score Drawdown", 165),
+        ("Score Drawdown", 165), ("Factor Decomp", 169),
+        ("Score Inflection", 173),
     ],
     "Regime": [
         ("Performance", 8), ("Regime Validity", 10), ("Failure Analysis", 11),
@@ -1360,7 +1362,7 @@ _ANALYTICS_VIEWS = {
         ("Regime Forecast", 36), ("Regime Age", 43), ("Drawdown", 49),
         ("Recession Analog", 131), ("Transition Matrix", 134),
         ("Regime Dwell", 155), ("Macro Scorecard", 166),
-        ("Quant Analogs", 168),
+        ("Quant Analogs", 168), ("Stress Probability", 171),
     ],
     "Models": [
         ("Sensitivity", "m1"), ("Transitions", "m2"), ("Regimes", "m3"),
@@ -21502,3 +21504,520 @@ if _active_sub == 168:
                 )
     except Exception as _e168:
         st.caption(f"Quant analogs: {_e168}")
+
+if _active_sub == 169:
+    try:
+        import plotly.graph_objects as _go169
+        import numpy as _np169
+        import pandas as _pd169
+        _df169 = df.copy() if "df" in dir() else None
+        _sub_cols169 = [c for c in [
+            "macro_risk_score_smooth", "credit_market_risk_score_smooth",
+            "complacency_score_smooth", "liquidity_regime_score_smooth",
+            "treasury_stress_score_smooth", "fx_commodity_score_smooth",
+            "enhanced_funding_stress_score_smooth", "cross_asset_divergence_score_smooth",
+            "mean_reversion_score_smooth",
+        ] if _df169 is not None and c in _df169.columns]
+        _has169 = len(_sub_cols169) >= 3
+        if not _has169:
+            st.info("At least 3 sub-score columns required.")
+        else:
+            st.subheader("Score Factor Decomposition")
+            st.caption("How much did each sub-score contribute to the 21-day change in the composite? Equal-weighted composite means each sub-score's 21d change contributes 1/N of the total composite change. Waterfall chart shows which channels drove the composite higher or lower.")
+            _data169 = _df169[_sub_cols169].tail(63).dropna(how="all")
+            _n169 = len(_sub_cols169)
+            _weight169 = 1.0 / _n169
+            # 21d change in each sub-score
+            _chg169 = {}
+            for _c169 in _sub_cols169:
+                _s169 = _df169[_c169].dropna()
+                if len(_s169) >= 22:
+                    _chg169[_c169] = float(_s169.iloc[-1]) - float(_s169.iloc[-22])
+                else:
+                    _chg169[_c169] = float("nan")
+            _contrib169 = {k: v * _weight169 for k, v in _chg169.items() if not _np169.isnan(v)}
+            _total169 = sum(_contrib169.values())
+            _labels169 = [k.replace("_score_smooth", "").replace("_risk", "").replace("_", " ").title()
+                          for k in _contrib169]
+            _vals169 = list(_contrib169.values())
+            # Sort by absolute contribution
+            _order169 = sorted(range(len(_vals169)), key=lambda i: abs(_vals169[i]), reverse=True)
+            _labels169 = [_labels169[i] for i in _order169]
+            _vals169 = [_vals169[i] for i in _order169]
+            # Waterfall
+            _running169 = 0.0
+            _bases169 = []
+            for v in _vals169:
+                _bases169.append(_running169)
+                _running169 += v
+            _colors169 = ["#22c55e" if v < 0 else "#ef4444" for v in _vals169]
+            _fig169 = _go169.Figure()
+            _fig169.add_trace(_go169.Bar(
+                x=_labels169 + ["Total Δ"],
+                y=_vals169 + [_total169],
+                base=_bases169 + [0],
+                marker_color=_colors169 + ["#6366f1"],
+                text=[f"{v:+.1f}" for v in _vals169] + [f"{_total169:+.1f}"],
+                textposition="outside"
+            ))
+            _fig169.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig169.update_layout(
+                title="21-Day Sub-Score Contribution to Composite Change",
+                height=380, yaxis_title="Points",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False, xaxis=dict(tickangle=-25)
+            )
+            st.plotly_chart(_fig169, use_container_width=True)
+            # Summary table
+            _tbl169 = _pd169.DataFrame({
+                "Sub-score": _labels169,
+                "21d Raw Change": [round(_chg169[list(_contrib169.keys())[_order169[i]]], 1) for i in range(len(_labels169))],
+                "Contribution (pts)": [round(v, 2) for v in _vals169],
+            })
+            st.dataframe(_tbl169, use_container_width=True, hide_index=True)
+            _top_driver169 = _labels169[0] if _labels169 else "—"
+            st.caption(
+                f"Composite 21d change: **{_total169:+.1f} pts** · "
+                f"Top driver: **{_top_driver169}** ({_vals169[0]:+.1f} pts). "
+                f"Equal weight {_weight169:.1%} per sub-score."
+            )
+    except Exception as _e169:
+        st.caption(f"Factor decomp: {_e169}")
+
+if _active_sub == 170:
+    try:
+        import plotly.graph_objects as _go170
+        import numpy as _np170
+        import pandas as _pd170
+        _df170 = df.copy() if "df" in dir() else None
+        _has170 = (_df170 is not None
+                   and "vix" in _df170.columns
+                   and "hy_spread" in _df170.columns
+                   and "sp500_return_30d" in _df170.columns)
+        if not _has170:
+            st.info("vix, hy_spread, sp500_return_30d required.")
+        else:
+            st.subheader("Volatility Regime Clustering")
+            st.caption("Four-quadrant regime classification using VIX level and HY spread level as axes. Quadrants identify distinct vol-credit states: Low-Low (calm), High-Low (equity stress only), Low-High (credit stress only), High-High (systemic stress). Time series shows how the market has moved across quadrants.")
+            _j170 = _df170[["vix", "hy_spread", "sp500_return_30d"]].dropna().tail(1260)
+            # Classify by VIX and HY percentile relative to 5Y history
+            _vix_med170 = float(_j170["vix"].median())
+            _hy_med170 = float(_j170["hy_spread"].median())
+            def _cluster170(row):
+                hi_vix = row["vix"] > _vix_med170
+                hi_hy = row["hy_spread"] > _hy_med170
+                if not hi_vix and not hi_hy: return "Calm"
+                if hi_vix and not hi_hy: return "Equity Stress"
+                if not hi_vix and hi_hy: return "Credit Stress"
+                return "Systemic Stress"
+            _j170["cluster"] = _j170.apply(_cluster170, axis=1)
+            _cluster_colors170 = {
+                "Calm": "#22c55e", "Equity Stress": "#f59e0b",
+                "Credit Stress": "#8b5cf6", "Systemic Stress": "#ef4444"
+            }
+            # Scatter
+            _fig170a = _go170.Figure()
+            for _cl170, _cc170 in _cluster_colors170.items():
+                _s170 = _j170[_j170["cluster"] == _cl170]
+                _fig170a.add_trace(_go170.Scatter(
+                    x=_s170["vix"], y=_s170["hy_spread"],
+                    mode="markers", marker=dict(color=_cc170, size=4, opacity=0.5),
+                    name=_cl170
+                ))
+            _cur170 = _j170.iloc[-1]
+            _fig170a.add_trace(_go170.Scatter(
+                x=[_cur170["vix"]], y=[_cur170["hy_spread"]],
+                mode="markers+text", marker=dict(color="white", size=12, symbol="star"),
+                text=["Now"], textposition="top center", name="Current"
+            ))
+            _fig170a.add_vline(x=_vix_med170, line_dash="dash", line_color="#4b5563")
+            _fig170a.add_hline(y=_hy_med170, line_dash="dash", line_color="#4b5563")
+            _fig170a.update_layout(
+                title="Vol-Credit Regime Quadrants (5Y)",
+                height=380, xaxis_title="VIX", yaxis_title="HY Spread (bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(_fig170a, use_container_width=True)
+            # Regime time series (colored area)
+            _cluster_enc170 = {"Calm": 0, "Equity Stress": 1, "Credit Stress": 2, "Systemic Stress": 3}
+            _cl_series170 = _j170["cluster"].map(_cluster_enc170)
+            _fig170b = _go170.Figure()
+            for _cl170b, _enc170b in _cluster_enc170.items():
+                _mask170 = _cl_series170 == _enc170b
+                _fig170b.add_trace(_go170.Scatter(
+                    x=_j170.index[_mask170], y=[_enc170b] * _mask170.sum(),
+                    mode="markers", marker=dict(color=_cluster_colors170[_cl170b], size=5),
+                    name=_cl170b
+                ))
+            _fig170b.update_layout(
+                title="Regime Over Time",
+                height=200,
+                yaxis=dict(tickvals=[0,1,2,3],
+                           ticktext=["Calm","EQ Stress","Credit Stress","Systemic"]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig170b, use_container_width=True)
+            _cur_cl170 = str(_cur170["cluster"])
+            _cl_dist170 = _j170["cluster"].value_counts()
+            st.caption(
+                f"Current regime: **{_cur_cl170}** · "
+                + " · ".join(f"{k}: {v}d ({v/len(_j170)*100:.0f}%)" for k, v in _cl_dist170.items())
+            )
+    except Exception as _e170:
+        st.caption(f"Vol clustering: {_e170}")
+
+if _active_sub == 171:
+    try:
+        import plotly.graph_objects as _go171
+        import numpy as _np171
+        import pandas as _pd171
+        _df171 = df.copy() if "df" in dir() else None
+        _has171 = (_df171 is not None
+                   and "composite_risk_score_smooth" in _df171.columns
+                   and "hy_spread" in _df171.columns)
+        if not _has171:
+            st.info("composite_risk_score_smooth and hy_spread required.")
+        else:
+            st.subheader("Stress Probability Forecast")
+            st.caption("Empirical probability of entering high-stress territory (composite score >70 or HY spread in top quartile) at forward horizons of 21, 63, and 126 days, conditioned on the current score bucket. Based on historical base rates — how often did similar starting conditions lead to stress?")
+            _comp171 = _df171["composite_risk_score_smooth"].dropna()
+            _hy171 = _df171["hy_spread"].dropna()
+            _hy_q75171 = float(_hy171.quantile(0.75))
+            # Define stress: score > 70 OR HY > 75th pct
+            _stress171 = (_comp171 > 70) | (_hy171.reindex(_comp171.index).ffill() > _hy_q75171)
+            # Current bucket
+            _cur_score171 = float(_comp171.iloc[-1])
+            def _bucket171(s):
+                if s < 30: return "Low (<30)"
+                elif s < 50: return "Moderate (30-50)"
+                elif s < 70: return "Elevated (50-70)"
+                else: return "High (>70)"
+            _cur_bucket171 = _bucket171(_cur_score171)
+            _horizons171 = [21, 63, 126]
+            _rows171 = []
+            for _bkt171 in ["Low (<30)", "Moderate (30-50)", "Elevated (50-70)", "High (>70)"]:
+                _row171 = {"Score Bucket": _bkt171}
+                _in_bucket171 = _comp171.apply(_bucket171) == _bkt171
+                _in_idx171 = _comp171.index[_in_bucket171]
+                for _h171 in _horizons171:
+                    _probs171 = []
+                    for _dt171 in _in_idx171:
+                        try:
+                            _loc171 = _stress171.index.get_loc(_dt171)
+                            if _loc171 + _h171 < len(_stress171):
+                                _future171 = _stress171.iloc[_loc171+1:_loc171+_h171+1]
+                                _probs171.append(int(_future171.any()))
+                        except Exception:
+                            pass
+                    _row171[f"P(stress) +{_h171}d"] = (
+                        f"{_np171.mean(_probs171):.0%} (n={len(_probs171)})"
+                        if _probs171 else "—"
+                    )
+                _rows171.append(_row171)
+            _prob_df171 = _pd171.DataFrame(_rows171)
+            # Highlight current bucket
+            st.markdown(f"**Current bucket: {_cur_bucket171}** (composite score {_cur_score171:.1f})")
+            st.dataframe(_prob_df171, use_container_width=True, hide_index=True)
+            # Bar chart for current bucket only
+            _cur_row171 = [r for r in _rows171 if r["Score Bucket"] == _cur_bucket171]
+            if _cur_row171:
+                _cr171 = _cur_row171[0]
+                _bar_vals171 = []
+                _bar_labs171 = []
+                for _h171 in _horizons171:
+                    _v171 = _cr171.get(f"P(stress) +{_h171}d", "—")
+                    if _v171 != "—":
+                        try:
+                            _bar_vals171.append(float(_v171.split("%")[0]) / 100)
+                            _bar_labs171.append(f"+{_h171}d")
+                        except Exception:
+                            pass
+                if _bar_vals171:
+                    _fig171 = _go171.Figure()
+                    _fig171.add_trace(_go171.Bar(
+                        x=_bar_labs171, y=_bar_vals171,
+                        marker_color=["#ef4444" if v > 0.5 else "#f59e0b" if v > 0.3 else "#22c55e"
+                                      for v in _bar_vals171],
+                        text=[f"{v:.0%}" for v in _bar_vals171],
+                        textposition="outside"
+                    ))
+                    _fig171.update_layout(
+                        title=f"Stress Probability from '{_cur_bucket171}'",
+                        height=260, yaxis_title="Probability", yaxis=dict(range=[0, 1]),
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#9aa0aa"),
+                        hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                        showlegend=False
+                    )
+                    st.plotly_chart(_fig171, use_container_width=True)
+            st.caption("Stress defined as composite score >70 OR HY spread above historical 75th percentile.")
+    except Exception as _e171:
+        st.caption(f"Stress probability: {_e171}")
+
+if _active_sub == 172:
+    try:
+        import plotly.graph_objects as _go172
+        import numpy as _np172
+        import pandas as _pd172
+        _df172 = df.copy() if "df" in dir() else None
+        _cols172 = ["hy_change_5d", "hy_change_30d", "hy_change_90d"]
+        _has172 = _df172 is not None and all(c in _df172.columns for c in _cols172)
+        if not _has172:
+            st.info("hy_change_5d, hy_change_30d, hy_change_90d required.")
+        else:
+            st.subheader("HY Momentum Term Structure")
+            st.caption("The 'term structure' of HY spread momentum: 5d, 30d, and 90d changes plotted together reveal whether short-term or long-term credit momentum dominates. An upward-sloping structure (5d > 30d > 90d) = recent stress spike. Downward slope = long-term widening, short-term stabilizing.")
+            _j172 = _df172[_cols172].dropna().tail(504)
+            _fig172a = _go172.Figure()
+            for _col172, _name172, _color172 in [
+                ("hy_change_5d", "5d Change", "#ef4444"),
+                ("hy_change_30d", "30d Change", "#f59e0b"),
+                ("hy_change_90d", "90d Change", "#6366f1"),
+            ]:
+                _fig172a.add_trace(_go172.Scatter(
+                    x=_j172.index, y=_j172[_col172],
+                    name=_name172, line=dict(color=_color172, width=1.5)
+                ))
+            _fig172a.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig172a.update_layout(
+                title="HY Spread Momentum at 5d / 30d / 90d (bps)",
+                height=320, yaxis_title="Change (bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(_fig172a, use_container_width=True)
+            # Term structure steepness: 5d minus 90d
+            _steep172 = _j172["hy_change_5d"] - _j172["hy_change_90d"]
+            _fig172b = _go172.Figure()
+            _fig172b.add_trace(_go172.Scatter(
+                x=_steep172.index, y=_steep172.values,
+                fill="tozeroy",
+                fillcolor=["rgba(239,68,68,0.1)" if v > 0 else "rgba(34,197,94,0.1)"][0],
+                line=dict(color="#f59e0b", width=1.5), name="5d − 90d"
+            ))
+            _fig172b.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig172b.update_layout(
+                title="Term Structure Steepness: 5d Minus 90d Change (bps)",
+                height=220, yaxis_title="Bps",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig172b, use_container_width=True)
+            # Current snapshot bar
+            _cur172 = _j172.iloc[-1]
+            _horizons_172 = [5, 30, 90]
+            _cur_vals172 = [float(_cur172["hy_change_5d"]), float(_cur172["hy_change_30d"]), float(_cur172["hy_change_90d"])]
+            _fig172c = _go172.Figure()
+            _fig172c.add_trace(_go172.Bar(
+                x=[f"{h}d" for h in _horizons_172], y=_cur_vals172,
+                marker_color=["#ef4444" if v > 0 else "#22c55e" for v in _cur_vals172],
+                text=[f"{v:+.0f}" for v in _cur_vals172], textposition="outside"
+            ))
+            _fig172c.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig172c.update_layout(
+                title="Current HY Momentum Term Structure",
+                height=240, yaxis_title="Bps",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig172c, use_container_width=True)
+            _shape172 = ("Upward (recent spike)" if _cur_vals172[0] > _cur_vals172[2] + 5
+                         else ("Downward (long-term pressure)" if _cur_vals172[0] < _cur_vals172[2] - 5
+                               else "Flat"))
+            st.caption(
+                f"Current: 5d={_cur_vals172[0]:+.0f} · 30d={_cur_vals172[1]:+.0f} · 90d={_cur_vals172[2]:+.0f} bps · "
+                f"Structure: **{_shape172}**."
+            )
+    except Exception as _e172:
+        st.caption(f"HY term structure: {_e172}")
+
+if _active_sub == 173:
+    try:
+        import plotly.graph_objects as _go173
+        import numpy as _np173
+        import pandas as _pd173
+        _df173 = df.copy() if "df" in dir() else None
+        _has173 = (_df173 is not None
+                   and "composite_risk_score_smooth" in _df173.columns
+                   and "hy_spread" in _df173.columns)
+        if not _has173:
+            st.info("composite_risk_score_smooth and hy_spread required.")
+        else:
+            st.subheader("Score Inflection Point Detector")
+            st.caption("Second derivative of the composite score: when it crosses zero from negative to positive, the score's rate-of-change is accelerating upward (stress building). Crossing from positive to negative = deceleration (potential peak). These inflection points historically precede credit spread regime shifts by 2–4 weeks.")
+            _comp173 = _df173["composite_risk_score_smooth"].dropna()
+            _d1_173 = _comp173.diff(5).rolling(3).mean()   # smoothed 1st deriv
+            _d2_173 = _d1_173.diff(5).rolling(3).mean()    # smoothed 2nd deriv
+            # Detect zero crossings in d2
+            _sign173 = _np173.sign(_d2_173.dropna().values)
+            _crossings173 = []
+            _d2_idx173 = _d2_173.dropna().index
+            for _i173 in range(1, len(_sign173)):
+                if _sign173[_i173 - 1] < 0 and _sign173[_i173] >= 0:
+                    _crossings173.append((_d2_idx173[_i173], "Acceleration"))
+                elif _sign173[_i173 - 1] > 0 and _sign173[_i173] <= 0:
+                    _crossings173.append((_d2_idx173[_i173], "Deceleration"))
+            _fig173 = _go173.Figure()
+            _fig173.add_trace(_go173.Scatter(
+                x=_comp173.index, y=_comp173.values,
+                line=dict(color="#6366f1", width=2), name="Composite Score"
+            ))
+            for _dt173, _typ173 in _crossings173[-30:]:
+                _fig173.add_vline(
+                    x=_dt173, line_dash="dot",
+                    line_color="#ef4444" if _typ173 == "Acceleration" else "#22c55e",
+                    annotation_text=_typ173[0], annotation_position="top"
+                )
+            _fig173.add_hline(y=50, line_dash="dash", line_color="#9aa0aa")
+            _fig173.update_layout(
+                title="Composite Score with Inflection Points (last 30 crossings)",
+                height=340, yaxis_title="Score (0–100)", yaxis=dict(range=[0, 100]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig173, use_container_width=True)
+            # 2nd derivative chart
+            _fig173b = _go173.Figure()
+            _fig173b.add_trace(_go173.Scatter(
+                x=_d2_173.index, y=_d2_173.values,
+                fill="tozeroy", fillcolor="rgba(99,102,241,0.1)",
+                line=dict(color="#6366f1", width=1), name="2nd Derivative"
+            ))
+            _fig173b.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig173b.update_layout(
+                title="Score Second Derivative (positive = accelerating upward)",
+                height=200, yaxis_title="d²Score/dt²",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig173b, use_container_width=True)
+            # Forward HY outcomes at acceleration crossings
+            _hy173 = _df173["hy_spread"]
+            _accel_outcomes173 = []
+            for _dt173, _typ173 in _crossings173:
+                if _typ173 != "Acceleration":
+                    continue
+                try:
+                    _loc173 = _hy173.index.get_loc(_dt173)
+                    if _loc173 + 21 < len(_hy173):
+                        _fwd173 = float(_hy173.iloc[_loc173 + 21]) - float(_hy173.iloc[_loc173])
+                        _accel_outcomes173.append(_fwd173)
+                except Exception:
+                    pass
+            _cur_d2173 = float(_d2_173.iloc[-1]) if _d2_173.notna().any() else float("nan")
+            _last_type173 = _crossings173[-1][1] if _crossings173 else "Unknown"
+            _last_dt173 = str(_crossings173[-1][0].date()) if _crossings173 else "—"
+            if _accel_outcomes173:
+                _med_fwd173 = float(_np173.median(_accel_outcomes173))
+                st.caption(
+                    f"Current 2nd derivative: **{_cur_d2173:.2f}** · Last inflection: **{_last_type173}** on {_last_dt173}. "
+                    f"After acceleration crossings: median 21d HY Δ = **{_med_fwd173:+.0f} bps** "
+                    f"(n={len(_accel_outcomes173)})."
+                )
+            else:
+                st.caption(f"Current 2nd derivative: **{_cur_d2173:.2f}** · Last inflection: {_last_type173} ({_last_dt173}).")
+    except Exception as _e173:
+        st.caption(f"Score inflection: {_e173}")
+
+if _active_sub == 174:
+    try:
+        import plotly.graph_objects as _go174
+        import numpy as _np174
+        import pandas as _pd174
+        _df174 = df.copy() if "df" in dir() else None
+        _indicators174 = [
+            ("hy_spread", "HY Spread", True),           # above MA = stress
+            ("vix", "VIX", True),
+            ("nfci", "NFCI", True),
+            ("unemployment", "Unemployment", True),
+            ("sahm_like", "Sahm-like", True),
+            ("hy_change_30d", "HY 30d Change", True),
+            ("sp500_return_30d", "SP500 30d Return", False),  # below MA = stress
+            ("sp500_drawdown", "SP500 Drawdown", True),
+            ("real_yield_proxy", "Real Yield", True),
+            ("nfci_change_90d", "NFCI Trend", True),
+        ]
+        _avail174 = [(c, n, d) for c, n, d in _indicators174
+                     if _df174 is not None and c in _df174.columns]
+        if len(_avail174) < 3:
+            st.info("At least 3 indicator columns required.")
+        else:
+            st.subheader("Credit Conditions Diffusion Index")
+            st.caption("Breadth-based credit conditions index: count of indicators above (or below, for inverted signals) their own 63-day moving average. High diffusion = broad deterioration across multiple channels simultaneously. Low diffusion = improvement is broad-based. Unlike level indicators, diffusion captures momentum breadth.")
+            _ma_window174 = 63
+            _results174 = []
+            for _col174, _name174, _high_is_bad174 in _avail174:
+                _s174 = _df174[_col174].dropna()
+                _ma174 = _s174.rolling(_ma_window174).mean()
+                _j174 = _s174.to_frame("v").join(_ma174.to_frame("ma"), how="inner").dropna()
+                if _high_is_bad174:
+                    _above174 = (_j174["v"] > _j174["ma"]).astype(int)
+                else:
+                    _above174 = (_j174["v"] < _j174["ma"]).astype(int)
+                _results174.append(_above174.rename(_name174))
+            _diff_df174 = _pd174.concat(_results174, axis=1).dropna(how="all")
+            _diffusion174 = _diff_df174.sum(axis=1)
+            _n_avail174 = len(_avail174)
+            _diffusion_pct174 = _diffusion174 / _n_avail174 * 100
+            _fig174 = _go174.Figure()
+            _fig174.add_trace(_go174.Scatter(
+                x=_diffusion_pct174.index, y=_diffusion_pct174.values,
+                fill="tozeroy",
+                fillcolor="rgba(239,68,68,0.1)",
+                line=dict(color="#ef4444", width=1.5), name="Diffusion %"
+            ))
+            _fig174.add_hline(y=70, line_dash="dash", line_color="#ef4444",
+                              annotation_text="Broad deterioration (70%)", annotation_position="right")
+            _fig174.add_hline(y=30, line_dash="dash", line_color="#22c55e",
+                              annotation_text="Broad improvement (30%)", annotation_position="right")
+            _fig174.add_hline(y=50, line_color="#9aa0aa", line_width=0.5)
+            _fig174.update_layout(
+                title=f"Credit Conditions Diffusion Index (% of {_n_avail174} indicators deteriorating vs 63d MA)",
+                height=340, yaxis_title="% Deteriorating", yaxis=dict(range=[0, 100]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig174, use_container_width=True)
+            # Current breakdown table
+            _cur_row174 = {}
+            for _col174, _name174, _high174 in _avail174:
+                _s174b = _df174[_col174].dropna()
+                _ma174b = _s174b.rolling(_ma_window174).mean().dropna()
+                if len(_ma174b) > 0:
+                    _v174 = float(_s174b.iloc[-1])
+                    _m174 = float(_ma174b.iloc[-1])
+                    _bad174 = (_v174 > _m174) if _high174 else (_v174 < _m174)
+                    _cur_row174[_name174] = "⬆ Stress" if _bad174 else "⬇ OK"
+            _tbl174 = _pd174.DataFrame.from_dict(
+                _cur_row174, orient="index", columns=["vs 63d MA"]).reset_index()
+            _tbl174.columns = ["Indicator", "Status"]
+            st.dataframe(_tbl174, use_container_width=True, hide_index=True)
+            _cur_diff174 = float(_diffusion_pct174.iloc[-1]) if _diffusion_pct174.notna().any() else float("nan")
+            _n_stress174 = int(round(_cur_diff174 / 100 * _n_avail174)) if not _np174.isnan(_cur_diff174) else 0
+            _breadth174 = ("Broad Deterioration" if _cur_diff174 > 70 else
+                           ("Improving Breadth" if _cur_diff174 < 30 else "Mixed"))
+            st.caption(
+                f"Current diffusion: **{_cur_diff174:.0f}%** ({_n_stress174}/{_n_avail174} indicators deteriorating) — **{_breadth174}**."
+            )
+    except Exception as _e174:
+        st.caption(f"Credit diffusion: {_e174}")
