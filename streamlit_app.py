@@ -1302,6 +1302,7 @@ _ANALYTICS_VIEWS = {
         ("Credit Cycle Clock", 157), ("Spread Velocity", 158),
         ("Risk Appetite", 163), ("Carry Efficiency", 164),
         ("HY Term Structure", 172), ("Credit Diffusion", 174),
+        ("BBB Cliff Risk", 175),
     ],
     "Rates & Macro": [
         ("Overview", "ov_rm"),
@@ -1320,6 +1321,7 @@ _ANALYTICS_VIEWS = {
         ("Macro-Credit Corr", 138), ("Credit Impulse Drill", 142),
         ("Sahm Episodes", 143), ("Real Yield Episodes", 145),
         ("Credit-Labor Div", 152), ("Liquidity-Credit", 161),
+        ("Initial Claims", 176), ("Oil-Credit", 177),
     ],
     "Risk Monitors": [
         ("Overview", "ov_risk"),
@@ -1338,6 +1340,7 @@ _ANALYTICS_VIEWS = {
         ("VIX Context", 127), ("Drawdown Anatomy", 133), ("Alert History", 139),
         ("Vol of Vol", 148), ("Corr Regime", 154),
         ("Tail Skew", 167), ("Vol Clustering", 170),
+        ("STLFSI", 178), ("MOVE-VIX Ratio", 179), ("X-Asset Corr", 180),
     ],
     "Signal Lab": [
         ("Overview", "ov_sl"),
@@ -22356,3 +22359,465 @@ if _active_sub == "ov_mod":
         st.info("14 sub-views covering model validation, scenario analysis, and portfolio construction.")
     except Exception as _e_ov_mod:
         st.caption(f"Models overview: {_e_ov_mod}")
+
+if _active_sub == 175:
+    try:
+        import plotly.graph_objects as _go175
+        import numpy as _np175
+        import pandas as _pd175
+        _df175 = df.copy() if "df" in dir() else None
+        _has175 = (_df175 is not None
+                   and "bbb_ig_ratio" in _df175.columns
+                   and "hy_spread" in _df175.columns)
+        if not _has175:
+            st.info("bbb_ig_ratio and hy_spread required.")
+        else:
+            st.subheader("BBB Cliff Risk Monitor")
+            st.caption("BBB-rated debt sits one notch above junk. When BBB/IG spread ratios surge, fallen angel risk rises — forced selling as bonds drop to HY triggers wave widening. This view tracks BBB stress relative to IG and HY as an early warning of credit quality deterioration cascades.")
+            _ratio175 = _df175["bbb_ig_ratio"].dropna()
+            _hy175 = _df175["hy_spread"].dropna()
+            _j175 = _ratio175.to_frame("ratio").join(_hy175.to_frame("hy"), how="inner").dropna().tail(1260)
+            _ratio_pct175 = _ratio175.rolling(252).rank(pct=True) * 100
+            _c1, _c2, _c3, _c4 = st.columns(4)
+            _cur_ratio175 = float(_ratio175.iloc[-1])
+            _cur_rpct175 = float(_ratio_pct175.iloc[-1]) if _ratio_pct175.notna().any() else float("nan")
+            _cur_hy175 = float(_hy175.iloc[-1])
+            _c1.metric("BBB/IG Ratio", f"{_cur_ratio175:.2f}")
+            _c2.metric("Ratio Percentile", f"{_cur_rpct175:.0f}th" if not _np175.isnan(_cur_rpct175) else "—",
+                       delta_color="inverse")
+            _c3.metric("HY OAS", f"{_cur_hy175:.0f} bps")
+            _cliff_risk = "Elevated" if _cur_rpct175 > 70 else ("Moderate" if _cur_rpct175 > 40 else "Low")
+            _c4.metric("Cliff Risk", _cliff_risk,
+                       delta_color="inverse" if _cliff_risk == "Elevated" else "off")
+            st.divider()
+            _fig175 = _go175.Figure()
+            _fig175.add_trace(_go175.Scatter(
+                x=_j175.index, y=_j175["ratio"],
+                name="BBB/IG Ratio", line=dict(color="#f59e0b", width=2)))
+            _fig175.add_trace(_go175.Scatter(
+                x=_ratio_pct175.tail(1260).index,
+                y=_ratio_pct175.tail(1260).values / 100 * float(_j175["ratio"].max()),
+                name="Percentile (scaled)", line=dict(color="#6366f1", width=1, dash="dot"),
+                yaxis="y2"))
+            _fig175.update_layout(
+                title="BBB/IG Spread Ratio (5Y)",
+                height=300,
+                yaxis=dict(title="Ratio"),
+                yaxis2=dict(title="Percentile (scaled)", overlaying="y", side="right"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)"))
+            st.plotly_chart(_fig175, use_container_width=True)
+            # Scatter: BBB/IG ratio vs HY
+            _fig175b = _go175.Figure()
+            _fig175b.add_trace(_go175.Scatter(
+                x=_j175["ratio"], y=_j175["hy"],
+                mode="markers", marker=dict(color="#f59e0b", size=3, opacity=0.4),
+                name="History"))
+            _fig175b.add_trace(_go175.Scatter(
+                x=[_cur_ratio175], y=[_cur_hy175],
+                mode="markers+text", marker=dict(color="white", size=12, symbol="star"),
+                text=["Now"], textposition="top center", name="Current"))
+            _fig175b.update_layout(
+                title="BBB/IG Ratio vs HY Spread (5Y)",
+                height=280, xaxis_title="BBB/IG Ratio", yaxis_title="HY Spread (bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False)
+            st.plotly_chart(_fig175b, use_container_width=True)
+            st.caption(
+                f"BBB/IG ratio at **{_cur_ratio175:.2f}** ({_cur_rpct175:.0f}th pct vs 252d history). "
+                "Rising ratio = BBB stress outpacing IG; watch for fallen angel acceleration above 80th pct.")
+    except Exception as _e175:
+        st.caption(f"BBB cliff risk: {_e175}")
+
+if _active_sub == 176:
+    try:
+        import plotly.graph_objects as _go176
+        import numpy as _np176
+        import pandas as _pd176
+        _df176 = df.copy() if "df" in dir() else None
+        _has176 = (_df176 is not None
+                   and "initial_claims" in _df176.columns
+                   and "hy_spread" in _df176.columns)
+        if not _has176:
+            st.info("initial_claims and hy_spread required.")
+        else:
+            st.subheader("Initial Claims — Credit Leading Indicator")
+            st.caption("Weekly initial jobless claims are the earliest available labor market signal. Claims typically lead HY spread widening by 4–8 weeks as rising layoffs foreshadow deteriorating credit quality. This view tracks the claims-credit relationship and flags when claims are breaking out of their normal range.")
+            _claims176 = _df176["initial_claims"].dropna()
+            _hy176 = _df176["hy_spread"].dropna()
+            _j176 = _claims176.to_frame("claims").join(_hy176.to_frame("hy"), how="inner").dropna().tail(1260)
+            _claims_ma176 = _j176["claims"].rolling(13).mean()  # 13-week MA
+            _claims_z176 = ((_j176["claims"] - _claims_ma176) /
+                            (_j176["claims"].rolling(52).std() + 1e-9))
+            _fig176 = _go176.Figure()
+            _fig176.add_trace(_go176.Scatter(
+                x=_j176.index, y=_j176["claims"] / 1000,
+                name="Initial Claims (k)", line=dict(color="#8b5cf6", width=1.5)))
+            _fig176.add_trace(_go176.Scatter(
+                x=_claims_ma176.index, y=_claims_ma176.values / 1000,
+                name="13-week MA", line=dict(color="#f59e0b", width=1.5, dash="dot")))
+            _fig176.update_layout(
+                title="Initial Jobless Claims (thousands)",
+                height=280, yaxis_title="Claims (000s)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)"))
+            st.plotly_chart(_fig176, use_container_width=True)
+            # Dual-axis: claims z-score vs HY
+            _fig176b = _go176.Figure()
+            _fig176b.add_trace(_go176.Scatter(
+                x=_j176.index, y=_j176["hy"],
+                name="HY Spread (bps)", line=dict(color="#ef4444", width=1.5)))
+            _fig176b.add_trace(_go176.Scatter(
+                x=_claims_z176.index, y=_claims_z176.values,
+                name="Claims Z-score", line=dict(color="#8b5cf6", width=1.5, dash="dot"),
+                yaxis="y2"))
+            _fig176b.add_hline(y=0, line_color="#9aa0aa", line_width=0.5, yref="y2")
+            _fig176b.update_layout(
+                title="HY Spread vs Claims Z-score (claims leads by ~6 weeks)",
+                height=300,
+                yaxis=dict(title="HY Spread (bps)"),
+                yaxis2=dict(title="Claims Z-score", overlaying="y", side="right"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)"))
+            st.plotly_chart(_fig176b, use_container_width=True)
+            # Forward correlation at 6-week lag
+            _fwd_hy176 = _j176["hy"].diff(30).shift(-30)
+            _j176b = _claims_z176.to_frame("cz").join(_fwd_hy176.to_frame("fwd"), how="inner").dropna()
+            _lead_corr176 = float(_j176b["cz"].corr(_j176b["fwd"]))
+            _cur_cz176 = float(_claims_z176.iloc[-1]) if _claims_z176.notna().any() else float("nan")
+            _cur_claims176 = float(_claims176.iloc[-1])
+            _claims_signal176 = "Elevated" if not _np176.isnan(_cur_cz176) and _cur_cz176 > 1 else (
+                "Rising" if not _np176.isnan(_cur_cz176) and _cur_cz176 > 0.3 else "Normal")
+            st.caption(
+                f"Current claims: **{_cur_claims176:,.0f}** (z={_cur_cz176:.2f} vs 52w baseline) — {_claims_signal176}. "
+                f"30d lead correlation with HY widening: **{_lead_corr176:.2f}**.")
+    except Exception as _e176:
+        st.caption(f"Initial claims: {_e176}")
+
+if _active_sub == 177:
+    try:
+        import plotly.graph_objects as _go177
+        import numpy as _np177
+        import pandas as _pd177
+        _df177 = df.copy() if "df" in dir() else None
+        _has177 = (_df177 is not None
+                   and "oil_wti" in _df177.columns
+                   and "hy_spread" in _df177.columns)
+        if not _has177:
+            st.info("oil_wti and hy_spread required.")
+        else:
+            st.subheader("Oil-Credit Nexus")
+            st.caption("WTI crude oil price changes and HY credit spreads are tightly linked through the energy sector's large HY market share (~15% of index). Oil shocks widen HY via energy defaults; oil rallies compress energy-sector spreads. This view tracks the oil-credit relationship and identifies divergence periods.")
+            _oil177 = _df177["oil_wti"].dropna()
+            _hy177 = _df177["hy_spread"].dropna()
+            _j177 = _oil177.to_frame("oil").join(_hy177.to_frame("hy"), how="inner").dropna().tail(1260)
+            _oil_ret177 = _j177["oil"].pct_change(21)
+            _hy_chg177 = _j177["hy"].diff(21)
+            _roll_corr177 = _oil_ret177.rolling(63).corr(_hy_chg177)
+            # Dual axis: oil vs HY
+            _fig177 = _go177.Figure()
+            _fig177.add_trace(_go177.Scatter(
+                x=_j177.index, y=_j177["hy"],
+                name="HY Spread (bps)", line=dict(color="#ef4444", width=1.5)))
+            _fig177.add_trace(_go177.Scatter(
+                x=_j177.index, y=_j177["oil"],
+                name="WTI ($/bbl)", line=dict(color="#22c55e", width=1.5, dash="dot"),
+                yaxis="y2"))
+            _fig177.update_layout(
+                title="HY Spread vs WTI Oil (5Y)",
+                height=300,
+                yaxis=dict(title="HY Spread (bps)"),
+                yaxis2=dict(title="WTI ($/bbl)", overlaying="y", side="right"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)"))
+            st.plotly_chart(_fig177, use_container_width=True)
+            # Rolling correlation
+            _fig177b = _go177.Figure()
+            _fig177b.add_trace(_go177.Scatter(
+                x=_roll_corr177.index, y=_roll_corr177.values,
+                fill="tozeroy", fillcolor="rgba(99,102,241,0.1)",
+                line=dict(color="#6366f1", width=1.5)))
+            _fig177b.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig177b.update_layout(
+                title="Rolling 63d Correlation: Oil Returns vs HY Spread Change",
+                height=220, yaxis_title="Correlation", yaxis=dict(range=[-1, 1]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False)
+            st.plotly_chart(_fig177b, use_container_width=True)
+            # Scatter with quadrant
+            _fig177c = _go177.Figure()
+            _j177c = _oil_ret177.to_frame("oil_r").join(_hy_chg177.to_frame("hy_c"), how="inner").dropna()
+            _fig177c.add_trace(_go177.Scatter(
+                x=_j177c["oil_r"] * 100, y=_j177c["hy_c"],
+                mode="markers", marker=dict(color="#6366f1", size=3, opacity=0.35),
+                name="History"))
+            _cur_oil_r177 = float(_oil_ret177.iloc[-1]) * 100 if _oil_ret177.notna().any() else float("nan")
+            _cur_hy_c177 = float(_hy_chg177.iloc[-1]) if _hy_chg177.notna().any() else float("nan")
+            _fig177c.add_trace(_go177.Scatter(
+                x=[_cur_oil_r177], y=[_cur_hy_c177],
+                mode="markers+text", marker=dict(color="white", size=12, symbol="star"),
+                text=["Now"], textposition="top center"))
+            _fig177c.add_vline(x=0, line_color="#9aa0aa", line_width=0.5)
+            _fig177c.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig177c.update_layout(
+                title="21d Oil Return vs 21d HY Change",
+                height=280, xaxis_title="Oil 21d Return (%)", yaxis_title="HY 21d Change (bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False)
+            st.plotly_chart(_fig177c, use_container_width=True)
+            _cur_corr177 = float(_roll_corr177.iloc[-1]) if _roll_corr177.notna().any() else float("nan")
+            _cur_oil177 = float(_oil177.iloc[-1])
+            _oil_regime177 = "Rising" if not _np177.isnan(_cur_oil_r177) and _cur_oil_r177 > 5 else (
+                "Falling" if not _np177.isnan(_cur_oil_r177) and _cur_oil_r177 < -5 else "Stable")
+            st.caption(
+                f"WTI: **${_cur_oil177:.1f}/bbl** ({_oil_regime177}). "
+                f"63d oil-HY correlation: **{_cur_corr177:.2f}** "
+                f"({'negative = inverse relationship' if not _np177.isnan(_cur_corr177) and _cur_corr177 < 0 else 'positive = co-movement'}).")
+    except Exception as _e177:
+        st.caption(f"Oil-credit: {_e177}")
+
+if _active_sub == 178:
+    try:
+        import plotly.graph_objects as _go178
+        import numpy as _np178
+        import pandas as _pd178
+        _df178 = df.copy() if "df" in dir() else None
+        _has178 = _df178 is not None and "stlfsi" in _df178.columns
+        if not _has178:
+            st.info("stlfsi column required.")
+        else:
+            st.subheader("St. Louis Fed Financial Stress Index (STLFSI)")
+            st.caption("The STLFSI measures financial stress across 18 weekly data series including interest rates, yield spreads, and other indicators. Values above zero indicate above-average financial stress. This view compares STLFSI to NFCI and HY spreads to triangulate the current stress regime.")
+            _stl178 = _df178["stlfsi"].dropna()
+            _nfci178 = _df178["nfci"].dropna() if "nfci" in _df178.columns else None
+            _hy178 = _df178["hy_spread"].dropna()
+            _c1, _c2, _c3, _c4 = st.columns(4)
+            _cur_stl178 = float(_stl178.iloc[-1])
+            _stl_pct178 = float((_stl178 < _cur_stl178).mean() * 100)
+            _stl_regime178 = ("Crisis" if _cur_stl178 > 2 else
+                              ("Stressed" if _cur_stl178 > 1 else
+                               ("Elevated" if _cur_stl178 > 0 else "Normal")))
+            _c1.metric("STLFSI", f"{_cur_stl178:.3f}")
+            _c2.metric("Percentile", f"{_stl_pct178:.0f}th", delta_color="inverse")
+            _c3.metric("Regime", _stl_regime178,
+                       delta_color="inverse" if _stl_regime178 in ("Stressed", "Crisis") else "off")
+            if _nfci178 is not None:
+                _cur_nfci178 = float(_nfci178.iloc[-1])
+                _c4.metric("NFCI", f"{_cur_nfci178:.3f}")
+            st.divider()
+            _fig178 = _go178.Figure()
+            _stl_tail178 = _stl178.tail(504)
+            _fig178.add_trace(_go178.Scatter(
+                x=_stl_tail178.index, y=_stl_tail178.values,
+                name="STLFSI", line=dict(color="#ef4444", width=2),
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.08)"))
+            if _nfci178 is not None:
+                _fig178.add_trace(_go178.Scatter(
+                    x=_nfci178.tail(504).index, y=_nfci178.tail(504).values,
+                    name="NFCI", line=dict(color="#6366f1", width=1.5, dash="dot"),
+                    yaxis="y2"))
+            _fig178.add_hline(y=0, line_dash="dash", line_color="#9aa0aa",
+                              annotation_text="Normal boundary")
+            _fig178.add_hline(y=1, line_dash="dash", line_color="#f59e0b",
+                              annotation_text="Stress (1.0)")
+            _fig178.update_layout(
+                title="STLFSI & NFCI — Last 2 Years",
+                height=320,
+                yaxis=dict(title="STLFSI"),
+                yaxis2=dict(title="NFCI", overlaying="y", side="right") if _nfci178 is not None else {},
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)"))
+            st.plotly_chart(_fig178, use_container_width=True)
+            # STLFSI vs HY scatter
+            _j178 = _stl178.to_frame("stl").join(_hy178.to_frame("hy"), how="inner").dropna().tail(1260)
+            _fig178b = _go178.Figure()
+            _fig178b.add_trace(_go178.Scatter(
+                x=_j178["stl"], y=_j178["hy"],
+                mode="markers", marker=dict(color="#6366f1", size=3, opacity=0.4)))
+            _fig178b.add_trace(_go178.Scatter(
+                x=[_cur_stl178], y=[float(_hy178.iloc[-1])],
+                mode="markers+text", marker=dict(color="white", size=12, symbol="star"),
+                text=["Now"], textposition="top center"))
+            _fig178b.add_vline(x=0, line_color="#9aa0aa", line_width=0.5)
+            _fig178b.update_layout(
+                title="STLFSI vs HY Spread (5Y scatter)",
+                height=260, xaxis_title="STLFSI", yaxis_title="HY Spread (bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False)
+            st.plotly_chart(_fig178b, use_container_width=True)
+            _stl_hy_corr178 = float(_j178["stl"].corr(_j178["hy"]))
+            st.caption(
+                f"STLFSI **{_cur_stl178:.3f}** ({_stl_regime178}, {_stl_pct178:.0f}th pct). "
+                f"STLFSI-HY correlation: {_stl_hy_corr178:.2f}. "
+                "Values >0 = above-average financial stress across 18 market indicators.")
+    except Exception as _e178:
+        st.caption(f"STLFSI: {_e178}")
+
+if _active_sub == 179:
+    try:
+        import plotly.graph_objects as _go179
+        import numpy as _np179
+        import pandas as _pd179
+        _df179 = df.copy() if "df" in dir() else None
+        _has179 = (_df179 is not None
+                   and "move_index" in _df179.columns
+                   and "vix" in _df179.columns)
+        if not _has179:
+            st.info("move_index and vix required.")
+        else:
+            st.subheader("MOVE/VIX Divergence — Rates vs Equity Vol")
+            st.caption("The MOVE/VIX ratio measures whether bond market volatility is elevated relative to equity volatility. High ratio = rates markets pricing more risk than equities (rate risk dominates). Low ratio = equity stress dominates. Divergence episodes historically precede credit repricing as one market catches up to the other.")
+            _move179 = _df179["move_index"].dropna()
+            _vix179 = _df179["vix"].dropna()
+            _j179 = _move179.to_frame("move").join(_vix179.to_frame("vix"), how="inner").dropna().tail(1260)
+            _ratio179 = _j179["move"] / _j179["vix"]
+            _ratio_pct179 = _ratio179.rolling(252).rank(pct=True) * 100
+            _fig179 = _go179.Figure()
+            _fig179.add_trace(_go179.Scatter(
+                x=_ratio179.index, y=_ratio179.values,
+                name="MOVE/VIX", line=dict(color="#6366f1", width=2),
+                fill="tozeroy", fillcolor="rgba(99,102,241,0.08)"))
+            _med_ratio179 = float(_ratio179.median())
+            _fig179.add_hline(y=_med_ratio179, line_dash="dash", line_color="#9aa0aa",
+                              annotation_text=f"Median ({_med_ratio179:.1f})")
+            _p80_ratio179 = float(_ratio179.quantile(0.8))
+            _fig179.add_hline(y=_p80_ratio179, line_dash="dash", line_color="#f59e0b",
+                              annotation_text=f"80th pct ({_p80_ratio179:.1f})")
+            _fig179.update_layout(
+                title="MOVE / VIX Ratio (rates vol relative to equity vol)",
+                height=300, yaxis_title="Ratio",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False)
+            st.plotly_chart(_fig179, use_container_width=True)
+            # MOVE and VIX together
+            _fig179b = _go179.Figure()
+            _fig179b.add_trace(_go179.Scatter(
+                x=_j179.index, y=_j179["move"],
+                name="MOVE", line=dict(color="#f59e0b", width=1.5)))
+            _fig179b.add_trace(_go179.Scatter(
+                x=_j179.index, y=_j179["vix"],
+                name="VIX", line=dict(color="#ef4444", width=1.5, dash="dot"),
+                yaxis="y2"))
+            _fig179b.update_layout(
+                title="MOVE vs VIX (5Y)",
+                height=240,
+                yaxis=dict(title="MOVE"),
+                yaxis2=dict(title="VIX", overlaying="y", side="right"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)"))
+            st.plotly_chart(_fig179b, use_container_width=True)
+            _cur_ratio179 = float(_ratio179.iloc[-1])
+            _cur_rpct179 = float(_ratio_pct179.iloc[-1]) if _ratio_pct179.notna().any() else float("nan")
+            _cur_move179 = float(_move179.iloc[-1])
+            _cur_vix179 = float(_vix179.iloc[-1])
+            _dom179 = ("Rates-dominated stress" if _cur_rpct179 > 70
+                       else ("Equity-dominated stress" if _cur_rpct179 < 30 else "Balanced"))
+            st.caption(
+                f"MOVE: **{_cur_move179:.0f}** · VIX: **{_cur_vix179:.1f}** · "
+                f"Ratio: **{_cur_ratio179:.2f}** ({_cur_rpct179:.0f}th pct) — {_dom179}.")
+    except Exception as _e179:
+        st.caption(f"MOVE-VIX ratio: {_e179}")
+
+if _active_sub == 180:
+    try:
+        import plotly.graph_objects as _go180
+        import numpy as _np180
+        import pandas as _pd180
+        _df180 = df.copy() if "df" in dir() else None
+        _corr_cols180 = [c for c in [
+            "vix", "hy_spread", "ig_spread", "sp500_return_5d",
+            "yield_10y", "spread", "nfci", "oil_wti", "move_index",
+        ] if _df180 is not None and c in _df180.columns]
+        _has180 = _df180 is not None and len(_corr_cols180) >= 4
+        if not _has180:
+            st.info("At least 4 of: vix, hy_spread, ig_spread, sp500_return_5d, yield_10y, spread, nfci, oil_wti, move_index.")
+        else:
+            st.subheader("Cross-Asset Correlation Snapshot")
+            st.caption("Current 63-day pairwise correlation matrix vs the long-run baseline (full history). Red = correlations spiking above baseline (contagion). Blue = correlations falling below baseline (decoupling). When many pairs spike positive simultaneously, systemic stress is broadening.")
+            _tail180 = _df180[_corr_cols180].dropna().tail(63)
+            _full180 = _df180[_corr_cols180].dropna()
+            _cur_corr180 = _tail180.corr()
+            _base_corr180 = _full180.corr()
+            _delta_corr180 = _cur_corr180 - _base_corr180
+            _short_labels180 = [c.replace("_spread", "").replace("_return_5d", " ret").replace("_", " ").upper()
+                                 for c in _corr_cols180]
+            _c1_180, _c2_180 = st.columns(2)
+            with _c1_180:
+                _fig180a = _go180.Figure(data=_go180.Heatmap(
+                    z=_cur_corr180.values,
+                    x=_short_labels180, y=_short_labels180,
+                    colorscale=[[0, "#1d4ed8"], [0.5, "#1e1b4b"], [1, "#7f1d1d"]],
+                    zmid=0, zmin=-1, zmax=1,
+                    colorbar=dict(title="Corr", len=0.6),
+                    text=_np180.round(_cur_corr180.values, 2),
+                    texttemplate="%{text:.2f}"
+                ))
+                _fig180a.update_layout(
+                    title="Current 63d Correlations",
+                    height=350,
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10),
+                    margin=dict(t=40, b=20))
+                st.plotly_chart(_fig180a, use_container_width=True)
+            with _c2_180:
+                _fig180b = _go180.Figure(data=_go180.Heatmap(
+                    z=_delta_corr180.values,
+                    x=_short_labels180, y=_short_labels180,
+                    colorscale=[[0, "#166534"], [0.5, "#1e1b4b"], [1, "#7f1d1d"]],
+                    zmid=0, zmin=-0.5, zmax=0.5,
+                    colorbar=dict(title="Δ Corr", len=0.6),
+                    text=_np180.round(_delta_corr180.values, 2),
+                    texttemplate="%{text:.2f}"
+                ))
+                _fig180b.update_layout(
+                    title="Change vs Full-History Baseline",
+                    height=350,
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10),
+                    margin=dict(t=40, b=20))
+                st.plotly_chart(_fig180b, use_container_width=True)
+            # Biggest movers
+            _delta_vals180 = []
+            for i, c1 in enumerate(_corr_cols180):
+                for j, c2 in enumerate(_corr_cols180):
+                    if j <= i: continue
+                    _delta_vals180.append({
+                        "Pair": f"{_short_labels180[i]} / {_short_labels180[j]}",
+                        "Current Corr": round(float(_cur_corr180.iloc[i, j]), 2),
+                        "Baseline Corr": round(float(_base_corr180.iloc[i, j]), 2),
+                        "Δ": round(float(_delta_corr180.iloc[i, j]), 2),
+                    })
+            _delta_df180 = (_pd180.DataFrame(_delta_vals180)
+                            .sort_values("Δ", key=_np180.abs, ascending=False)
+                            .head(8).reset_index(drop=True))
+            st.markdown("**Biggest Correlation Shifts (current vs baseline)**")
+            st.dataframe(_delta_df180, use_container_width=True, hide_index=True)
+            _n_spike180 = int((_delta_df180["Δ"] > 0.15).sum())
+            st.caption(
+                f"{_n_spike180} pairs with correlation >0.15 above baseline — "
+                f"{'elevated contagion risk' if _n_spike180 >= 3 else 'normal cross-asset structure'}. "
+                f"Using {len(_corr_cols180)} assets over 63 trading days.")
+    except Exception as _e180:
+        st.caption(f"Cross-asset correlation: {_e180}")
