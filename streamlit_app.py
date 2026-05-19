@@ -1298,6 +1298,7 @@ _ANALYTICS_VIEWS = {
         ("Spread Vol Regime", 136), ("Regime Spread Dist", 141),
         ("Credit Beta", 146), ("HY Multi-Horizon", 149),
         ("Spread Dispersion", 151), ("Carry Decomp", 156),
+        ("Credit Cycle Clock", 157), ("Spread Velocity", 158),
     ],
     "Rates & Macro": [
         ("Regime Returns", 23), ("X-Asset Momentum", 38), ("Macro Surprise", 41),
@@ -1314,7 +1315,7 @@ _ANALYTICS_VIEWS = {
         ("Breakeven Inflation", 122), ("10y Yield", 125),
         ("Macro-Credit Corr", 138), ("Credit Impulse Drill", 142),
         ("Sahm Episodes", 143), ("Real Yield Episodes", 145),
-        ("Credit-Labor Div", 152),
+        ("Credit-Labor Div", 152), ("Liquidity-Credit", 161),
     ],
     "Risk Monitors": [
         ("Tail Risk", 6), ("Stress Test", 7), ("Contagion", 12),
@@ -1346,7 +1347,8 @@ _ANALYTICS_VIEWS = {
         ("Score Distributions", 135), ("Score Gradient", 137),
         ("Forward Returns", 140), ("Score Momentum", 144),
         ("Seasonality", 147), ("Score Ensemble", 150),
-        ("Score Bootstrap CI", 153),
+        ("Score Bootstrap CI", 153), ("Score Calendar", 159),
+        ("Factor Corr Scan", 160), ("Score Lead-Lag", 162),
     ],
     "Regime": [
         ("Performance", 8), ("Regime Validity", 10), ("Failure Analysis", 11),
@@ -20503,3 +20505,470 @@ if _active_sub == 156:
                 )
     except Exception as _e156:
         st.caption(f"Credit carry decomp: {_e156}")
+
+if _active_sub == 157:
+    try:
+        import plotly.graph_objects as _go157
+        import numpy as _np157
+        import pandas as _pd157
+        _df157 = df.copy() if "df" in dir() else None
+        _has157 = (_df157 is not None
+                   and "hy_spread" in _df157.columns
+                   and "hy_change_90d" in _df157.columns)
+        if not _has157:
+            st.info("hy_spread and hy_change_90d required.")
+        else:
+            st.subheader("Credit Cycle Clock")
+            st.caption("Phase-space plot tracing the credit cycle: X-axis = HY level (stress), Y-axis = 90d change in HY (momentum). The path over the last 252 days reveals cycle position — Tightening (upper-left→lower-left), Recovery (lower-left), Widening (lower-right→upper-right), Stress (upper-right).")
+            _hy157 = _df157["hy_spread"].dropna()
+            _mom157 = _df157["hy_change_90d"].dropna()
+            _j157 = _hy157.to_frame("hy").join(_mom157.to_frame("mom"), how="inner").dropna().tail(504)
+            _path157 = _j157.tail(252)
+            _n157 = len(_path157)
+            _alphas157 = _np157.linspace(0.15, 1.0, _n157)
+            _fig157 = _go157.Figure()
+            # Full history scatter (faded)
+            _fig157.add_trace(_go157.Scatter(
+                x=_j157["hy"], y=_j157["mom"],
+                mode="markers", marker=dict(color="#374151", size=3),
+                name="History (2Y)", showlegend=True
+            ))
+            # Animated path — last 252d colored by recency
+            for _i157 in range(max(0, _n157 - 50), _n157 - 1):
+                _a157 = _alphas157[_i157]
+                _fig157.add_trace(_go157.Scatter(
+                    x=_path157["hy"].iloc[_i157:_i157+2],
+                    y=_path157["mom"].iloc[_i157:_i157+2],
+                    mode="lines",
+                    line=dict(color=f"rgba(99,102,241,{_a157:.2f})", width=2),
+                    showlegend=False
+                ))
+            # Current position
+            _fig157.add_trace(_go157.Scatter(
+                x=[_path157["hy"].iloc[-1]], y=[_path157["mom"].iloc[-1]],
+                mode="markers+text",
+                marker=dict(color="white", size=12, symbol="circle"),
+                text=["Now"], textposition="top center",
+                name="Current"
+            ))
+            # Quadrant lines
+            _hy_med157 = float(_j157["hy"].median())
+            _fig157.add_vline(x=_hy_med157, line_dash="dash", line_color="#4b5563",
+                              annotation_text="Median HY")
+            _fig157.add_hline(y=0, line_dash="dash", line_color="#4b5563")
+            # Quadrant labels
+            _hy_max157 = float(_j157["hy"].quantile(0.9))
+            _mom_max157 = float(_j157["mom"].quantile(0.85))
+            _mom_min157 = float(_j157["mom"].quantile(0.15))
+            for _txt157, _x157, _y157 in [
+                ("Recovery", _hy_med157 * 0.6, _mom_min157 * 0.6),
+                ("Stress Build", _hy_max157 * 0.9, _mom_max157 * 0.6),
+                ("Tightening", _hy_med157 * 0.6, _mom_max157 * 0.5),
+                ("Stress Peak", _hy_max157 * 0.9, _mom_min157 * 0.6),
+            ]:
+                _fig157.add_annotation(
+                    x=_x157, y=_y157, text=_txt157,
+                    showarrow=False, font=dict(color="#6b7280", size=10)
+                )
+            _fig157.update_layout(
+                title="Credit Cycle Phase-Space (252d path)",
+                height=450, xaxis_title="HY Spread Level (bps)",
+                yaxis_title="90d HY Change (bps, momentum)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(_fig157, use_container_width=True)
+            _cur_hy157 = float(_path157["hy"].iloc[-1])
+            _cur_mom157 = float(_path157["mom"].iloc[-1])
+            _cycle_quad157 = ("Stress" if _cur_hy157 > _hy_med157 and _cur_mom157 > 0 else
+                              ("Deteriorating" if _cur_hy157 <= _hy_med157 and _cur_mom157 > 0 else
+                               ("Recovery" if _cur_hy157 <= _hy_med157 and _cur_mom157 <= 0 else "Tightening")))
+            st.caption(
+                f"Current: HY {_cur_hy157:.0f} bps, 90d momentum {_cur_mom157:+.0f} bps → **{_cycle_quad157}** phase."
+            )
+    except Exception as _e157:
+        st.caption(f"Credit cycle clock: {_e157}")
+
+if _active_sub == 158:
+    try:
+        import plotly.graph_objects as _go158
+        import numpy as _np158
+        import pandas as _pd158
+        _df158 = df.copy() if "df" in dir() else None
+        _has158 = _df158 is not None and "hy_change_5d" in _df158.columns
+        if not _has158:
+            st.info("hy_change_5d required.")
+        else:
+            st.subheader("Spread Compression Velocity")
+            st.caption("Acceleration of HY spread changes: the rate of change of the 5-day change (second derivative). Positive velocity = widening is speeding up; negative = tightening gaining pace. Extreme readings identify turning points and momentum exhaustion.")
+            _mom158 = _df158["hy_change_5d"].dropna()
+            _vel158 = _mom158.diff(5)  # 5d change in the 5d change = acceleration
+            _vel_z158 = _vel158.rolling(252).apply(
+                lambda x: (x.iloc[-1] - x.mean()) / (x.std() + 1e-9), raw=False)
+            _pct158 = _vel158.rolling(252).rank(pct=True) * 100
+            _fig158a = _go158.Figure()
+            _fig158a.add_trace(_go158.Bar(
+                x=_vel158.tail(252).index,
+                y=_vel158.tail(252).values,
+                marker_color=_np158.where(_vel158.tail(252).values > 0, "#ef4444", "#22c55e"),
+                name="Spread Velocity"
+            ))
+            _fig158a.update_layout(
+                title="HY Spread Change Acceleration (last 252d)",
+                height=300, yaxis_title="Δ(5d change) in bps",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig158a, use_container_width=True)
+            _fig158b = _go158.Figure()
+            _fig158b.add_trace(_go158.Scatter(
+                x=_pct158.tail(252).index, y=_pct158.tail(252).values,
+                line=dict(color="#f59e0b", width=1.5),
+                fill="tozeroy", fillcolor="rgba(245,158,11,0.08)"
+            ))
+            _fig158b.add_hline(y=80, line_dash="dash", line_color="#ef4444",
+                               annotation_text="Extreme widening pace")
+            _fig158b.add_hline(y=20, line_dash="dash", line_color="#22c55e",
+                               annotation_text="Extreme tightening pace")
+            _fig158b.update_layout(
+                title="Velocity Percentile (vs 252d history)",
+                height=240, yaxis_title="Percentile", yaxis=dict(range=[0, 100]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig158b, use_container_width=True)
+            _cur_vel158 = float(_vel158.iloc[-1]) if _vel158.notna().any() else float("nan")
+            _cur_pct158 = float(_pct158.iloc[-1]) if _pct158.notna().any() else float("nan")
+            if not _np158.isnan(_cur_vel158):
+                _vdir158 = "accelerating wider" if _cur_vel158 > 0 else "accelerating tighter"
+                st.caption(
+                    f"Current velocity: **{_cur_vel158:+.1f} bps** ({_cur_pct158:.0f}th pct) — "
+                    f"spreads are {_vdir158}."
+                )
+    except Exception as _e158:
+        st.caption(f"Spread velocity: {_e158}")
+
+if _active_sub == 159:
+    try:
+        import plotly.graph_objects as _go159
+        import numpy as _np159
+        import pandas as _pd159
+        _df159 = df.copy() if "df" in dir() else None
+        _has159 = _df159 is not None and "composite_risk_score_smooth" in _df159.columns
+        if not _has159:
+            st.info("composite_risk_score_smooth required.")
+        else:
+            st.subheader("Score Calendar Heatmap")
+            st.caption("Monthly average composite risk score by year and month. Dark red = high stress; dark green = low stress. Reveals seasonal patterns and year-over-year changes at a glance.")
+            _comp159 = _df159["composite_risk_score_smooth"].dropna()
+            _cal159 = _comp159.to_frame("score")
+            _cal159["year"] = _cal159.index.year
+            _cal159["month"] = _cal159.index.month
+            _pivot159 = _cal159.groupby(["year", "month"])["score"].mean().unstack(level=1)
+            _pivot159.columns = [_pd159.Timestamp(2000, m, 1).strftime("%b") for m in _pivot159.columns]
+            _fig159 = _go159.Figure(data=_go159.Heatmap(
+                z=_pivot159.values,
+                x=list(_pivot159.columns),
+                y=[str(y) for y in _pivot159.index],
+                colorscale=[
+                    [0.0, "#166534"], [0.3, "#22c55e"],
+                    [0.5, "#6366f1"], [0.7, "#f59e0b"],
+                    [1.0, "#7f1d1d"]
+                ],
+                zmin=0, zmax=100,
+                colorbar=dict(title="Score", tickvals=[0, 25, 50, 75, 100]),
+                text=_np159.round(_pivot159.values, 0),
+                texttemplate="%{text:.0f}",
+                hovertemplate="Year: %{y}<br>Month: %{x}<br>Score: %{z:.1f}<extra></extra>"
+            ))
+            _fig159.update_layout(
+                title="Monthly Average Composite Score by Year",
+                height=max(300, len(_pivot159) * 28 + 100),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                xaxis=dict(side="top")
+            )
+            st.plotly_chart(_fig159, use_container_width=True)
+            # Seasonal average
+            _seas159 = _cal159.groupby("month")["score"].mean()
+            _hot159 = int(_seas159.idxmax())
+            _cold159 = int(_seas159.idxmin())
+            _hot_name159 = _pd159.Timestamp(2000, _hot159, 1).strftime("%B")
+            _cold_name159 = _pd159.Timestamp(2000, _cold159, 1).strftime("%B")
+            st.caption(
+                f"Seasonal: highest avg stress month = **{_hot_name159}** ({_seas159[_hot159]:.1f}) · "
+                f"lowest = **{_cold_name159}** ({_seas159[_cold159]:.1f})."
+            )
+    except Exception as _e159:
+        st.caption(f"Score calendar: {_e159}")
+
+if _active_sub == 160:
+    try:
+        import plotly.graph_objects as _go160
+        import numpy as _np160
+        import pandas as _pd160
+        _df160 = df.copy() if "df" in dir() else None
+        _has160 = _df160 is not None and "hy_spread" in _df160.columns
+        if not _has160:
+            st.info("hy_spread required.")
+        else:
+            st.subheader("Macro Factor Correlation Scan")
+            st.caption("Rolling 63-day correlation of each macro input vs forward 21-day HY spread change. Identifies which indicators are currently the strongest leading signals for credit conditions. Sorted by absolute correlation — top rows = most predictive right now.")
+            _fwd_hy160 = _df160["hy_spread"].diff(21).shift(-21)
+            _candidates160 = [
+                ("vix", "VIX Level"),
+                ("vix_change_30d", "VIX 30d Change"),
+                ("spread", "Yield Curve (2s10s)"),
+                ("sp500_return_30d", "SP500 30d Return"),
+                ("sp500_drawdown", "SP500 Drawdown"),
+                ("nfci", "NFCI"),
+                ("nfci_change_90d", "NFCI 90d Change"),
+                ("unemployment", "Unemployment"),
+                ("sahm_like", "Sahm-like"),
+                ("real_yield_proxy", "Real Yield"),
+                ("breakeven_10y", "Breakeven Inflation"),
+                ("credit_impulse", "Credit Impulse"),
+                ("hy_change_30d", "HY 30d Change"),
+            ]
+            _rows160 = []
+            for _col160, _label160 in _candidates160:
+                if _col160 not in _df160.columns:
+                    continue
+                _ser160 = _df160[_col160].dropna()
+                _j160 = _ser160.to_frame("x").join(_fwd_hy160.to_frame("y"), how="inner").dropna()
+                if len(_j160) < 126:
+                    continue
+                # Current rolling 63d corr (last window)
+                _tail160 = _j160.tail(63)
+                if len(_tail160) < 30:
+                    continue
+                _c160 = float(_tail160["x"].corr(_tail160["y"]))
+                # Full history corr
+                _c_full160 = float(_j160["x"].corr(_j160["y"]))
+                _rows160.append({
+                    "Factor": _label160,
+                    "Current 63d Corr": round(_c160, 3),
+                    "Full History Corr": round(_c_full160, 3),
+                    "Signal": "Leading Higher" if _c160 > 0.2 else ("Leading Lower" if _c160 < -0.2 else "Neutral"),
+                })
+            if _rows160:
+                _scan_df160 = (_pd160.DataFrame(_rows160)
+                               .sort_values("Current 63d Corr", key=_np160.abs, ascending=False)
+                               .reset_index(drop=True))
+                # Bar chart
+                _fig160 = _go160.Figure()
+                _fig160.add_trace(_go160.Bar(
+                    x=_scan_df160["Factor"],
+                    y=_scan_df160["Current 63d Corr"],
+                    marker_color=_np160.where(_scan_df160["Current 63d Corr"].values > 0,
+                                              "#ef4444", "#22c55e"),
+                    name="Current 63d Corr"
+                ))
+                _fig160.add_trace(_go160.Scatter(
+                    x=_scan_df160["Factor"],
+                    y=_scan_df160["Full History Corr"],
+                    mode="markers", marker=dict(color="#6366f1", size=8, symbol="diamond"),
+                    name="Full History Corr"
+                ))
+                _fig160.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+                _fig160.update_layout(
+                    title="Factor Correlation vs Forward 21d HY Change",
+                    height=380, yaxis_title="Correlation",
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    legend=dict(bgcolor="rgba(0,0,0,0)"),
+                    xaxis=dict(tickangle=-30)
+                )
+                st.plotly_chart(_fig160, use_container_width=True)
+                st.dataframe(_scan_df160, use_container_width=True, hide_index=True)
+                _top160 = _scan_df160.iloc[0]
+                st.caption(
+                    f"Strongest current leading indicator: **{_top160['Factor']}** "
+                    f"(r={_top160['Current 63d Corr']:.2f}) → {_top160['Signal']}."
+                )
+            else:
+                st.info("Not enough data for factor correlation scan.")
+    except Exception as _e160:
+        st.caption(f"Factor correlation scan: {_e160}")
+
+if _active_sub == 161:
+    try:
+        import plotly.graph_objects as _go161
+        import numpy as _np161
+        import pandas as _pd161
+        _df161 = df.copy() if "df" in dir() else None
+        _has161 = (_df161 is not None
+                   and "nfci_90d_avg" in _df161.columns
+                   and "hy_spread" in _df161.columns)
+        if not _has161:
+            st.info("nfci_90d_avg and hy_spread required.")
+        else:
+            st.subheader("Liquidity-Credit Nexus")
+            st.caption("NFCI (National Financial Conditions Index) as a systemic liquidity proxy vs HY spreads. Tighter NFCI (more positive) = tighter financial conditions → tends to lead HY widening. Rolling correlation tracks how tightly the two are coupled in the current environment.")
+            _nfci161 = _df161["nfci_90d_avg"].dropna()
+            _hy161 = _df161["hy_spread"].dropna()
+            _j161 = _nfci161.to_frame("nfci").join(_hy161.to_frame("hy"), how="inner").dropna().tail(1260)
+            _fig161 = _go161.Figure()
+            _fig161.add_trace(_go161.Scatter(
+                x=_j161.index, y=_j161["hy"],
+                name="HY Spread (bps)", line=dict(color="#ef4444", width=1.5),
+                yaxis="y1"
+            ))
+            _fig161.add_trace(_go161.Scatter(
+                x=_j161.index, y=_j161["nfci"],
+                name="NFCI 90d Avg", line=dict(color="#6366f1", width=1.5, dash="dot"),
+                yaxis="y2"
+            ))
+            _fig161.update_layout(
+                title="HY Spread vs NFCI (5Y)",
+                height=350,
+                yaxis=dict(title="HY Spread (bps)", side="left"),
+                yaxis2=dict(title="NFCI", side="right", overlaying="y"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(_fig161, use_container_width=True)
+            # Rolling correlation
+            _roll_corr161 = _j161["nfci"].rolling(63).corr(_j161["hy"])
+            _fig161b = _go161.Figure()
+            _fig161b.add_trace(_go161.Scatter(
+                x=_roll_corr161.index, y=_roll_corr161.values,
+                line=dict(color="#6366f1", width=1.5),
+                fill="tozeroy", fillcolor="rgba(99,102,241,0.1)"
+            ))
+            _fig161b.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig161b.update_layout(
+                title="Rolling 63d NFCI–HY Correlation",
+                height=220, yaxis_title="Correlation", yaxis=dict(range=[-1, 1]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig161b, use_container_width=True)
+            # Scatter
+            _fig161c = _go161.Figure()
+            _fig161c.add_trace(_go161.Scatter(
+                x=_j161["nfci"], y=_j161["hy"],
+                mode="markers", marker=dict(color="#6366f1", size=3, opacity=0.4),
+                name="History"
+            ))
+            _cur161 = _j161.iloc[-1]
+            _fig161c.add_trace(_go161.Scatter(
+                x=[_cur161["nfci"]], y=[_cur161["hy"]],
+                mode="markers+text", marker=dict(color="white", size=10, symbol="star"),
+                text=["Now"], textposition="top center", name="Current"
+            ))
+            _fig161c.update_layout(
+                title="NFCI vs HY Spread — Scatter (5Y)",
+                height=300, xaxis_title="NFCI 90d Avg", yaxis_title="HY Spread (bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig161c, use_container_width=True)
+            _cur_corr161 = float(_roll_corr161.iloc[-1]) if _roll_corr161.notna().any() else float("nan")
+            _coupling161 = "tightly coupled" if abs(_cur_corr161) > 0.5 else ("moderately coupled" if abs(_cur_corr161) > 0.25 else "decoupled")
+            st.caption(
+                f"Current NFCI: **{float(_cur161['nfci']):.3f}** · "
+                f"63d NFCI-HY correlation: **{_cur_corr161:.2f}** ({_coupling161}). "
+                "Positive correlation = tighter financial conditions historically associated with higher spreads."
+            )
+    except Exception as _e161:
+        st.caption(f"Liquidity-credit nexus: {_e161}")
+
+if _active_sub == 162:
+    try:
+        import plotly.graph_objects as _go162
+        import numpy as _np162
+        import pandas as _pd162
+        _df162 = df.copy() if "df" in dir() else None
+        _comp_col162 = "composite_risk_score_smooth"
+        _sub_cols162 = [c for c in [
+            "macro_risk_score_smooth", "credit_market_risk_score_smooth",
+            "complacency_score_smooth", "liquidity_regime_score_smooth",
+            "treasury_stress_score_smooth", "fx_commodity_score_smooth",
+            "enhanced_funding_stress_score_smooth", "cross_asset_divergence_score_smooth",
+            "mean_reversion_score_smooth",
+        ] if _df162 is not None and c in _df162.columns]
+        _has162 = _df162 is not None and _comp_col162 in _df162.columns and len(_sub_cols162) >= 2
+        if not _has162:
+            st.info("composite_risk_score_smooth and sub-score columns required.")
+        else:
+            st.subheader("Score Lead-Lag Map")
+            st.caption("Cross-correlation of each sub-score vs the composite at lags from −21 to +21 trading days. A peak at negative lag = sub-score leads the composite (early warning). Peak at positive lag = sub-score lags (confirming). Diagonal = contemporaneous.")
+            _comp162 = _df162[_comp_col162].dropna()
+            _lags162 = list(range(-21, 22))
+            _corr_matrix162 = {}
+            for _sc162 in _sub_cols162:
+                _row162 = []
+                _s162 = _df162[_sc162].dropna()
+                _j162 = _comp162.to_frame("comp").join(_s162.to_frame("sub"), how="inner").dropna()
+                for _lag162 in _lags162:
+                    if _lag162 < 0:
+                        _shifted162 = _j162["sub"].shift(-_lag162)
+                    else:
+                        _shifted162 = _j162["sub"].shift(-_lag162)
+                    _aligned162 = _j162["comp"].to_frame("comp").join(
+                        _shifted162.to_frame("sub"), how="inner").dropna()
+                    if len(_aligned162) > 30:
+                        _row162.append(float(_aligned162["comp"].corr(_aligned162["sub"])))
+                    else:
+                        _row162.append(float("nan"))
+                _corr_matrix162[_sc162] = _row162
+            _heat_z162 = [_corr_matrix162[sc] for sc in _sub_cols162]
+            _short_names162 = [c.replace("_score_smooth", "").replace("_risk", "").replace("_", " ").title()
+                               for c in _sub_cols162]
+            _fig162 = _go162.Figure(data=_go162.Heatmap(
+                z=_heat_z162,
+                x=[str(l) for l in _lags162],
+                y=_short_names162,
+                colorscale=[[0.0, "#1d4ed8"], [0.5, "#1e1b4b"], [1.0, "#7f1d1d"]],
+                zmid=0, zmin=-1, zmax=1,
+                colorbar=dict(title="Corr"),
+                hovertemplate="Sub-score: %{y}<br>Lag: %{x}d<br>Corr: %{z:.2f}<extra></extra>"
+            ))
+            _fig162.add_vline(x="0", line_color="#9aa0aa", line_dash="dash")
+            _fig162.update_layout(
+                title="Sub-score vs Composite Cross-Correlation (lag in trading days)",
+                height=max(280, len(_sub_cols162) * 35 + 100),
+                xaxis_title="Lag (negative = sub-score leads composite)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa")
+            )
+            st.plotly_chart(_fig162, use_container_width=True)
+            # Peak lag per sub-score
+            _peak_rows162 = []
+            for _sc162, _row162 in _corr_matrix162.items():
+                _arr162 = _np162.array(_row162, dtype=float)
+                if _np162.all(_np162.isnan(_arr162)):
+                    continue
+                _peak_idx162 = int(_np162.nanargmax(_np162.abs(_arr162)))
+                _peak_lag162 = _lags162[_peak_idx162]
+                _peak_corr162 = _arr162[_peak_idx162]
+                _role162 = ("Leads" if _peak_lag162 < -2 else ("Lags" if _peak_lag162 > 2 else "Contemporaneous"))
+                _peak_rows162.append({
+                    "Sub-score": _sc162.replace("_score_smooth", "").replace("_", " ").title(),
+                    "Peak Lag (d)": _peak_lag162,
+                    "Peak Corr": round(_peak_corr162, 2),
+                    "Role": _role162,
+                })
+            if _peak_rows162:
+                _peak_df162 = (_pd162.DataFrame(_peak_rows162)
+                               .sort_values("Peak Lag (d)").reset_index(drop=True))
+                st.dataframe(_peak_df162, use_container_width=True, hide_index=True)
+                _leaders162 = [r["Sub-score"] for r in _peak_rows162 if r["Role"] == "Leads"]
+                if _leaders162:
+                    st.caption("Leading sub-scores: " + ", ".join(_leaders162))
+    except Exception as _e162:
+        st.caption(f"Score lead-lag map: {_e162}")
