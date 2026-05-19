@@ -1302,7 +1302,7 @@ _ANALYTICS_VIEWS = {
         ("Credit Cycle Clock", 157), ("Spread Velocity", 158),
         ("Risk Appetite", 163), ("Carry Efficiency", 164),
         ("HY Term Structure", 172), ("Credit Diffusion", 174),
-        ("BBB Cliff Risk", 175),
+        ("BBB Cliff Risk", 175), ("Banking Flows", 183), ("Default Prob", 185),
     ],
     "Rates & Macro": [
         ("Overview", "ov_rm"),
@@ -1321,7 +1321,7 @@ _ANALYTICS_VIEWS = {
         ("Macro-Credit Corr", 138), ("Credit Impulse Drill", 142),
         ("Sahm Episodes", 143), ("Real Yield Episodes", 145),
         ("Credit-Labor Div", 152), ("Liquidity-Credit", 161),
-        ("Initial Claims", 176), ("Oil-Credit", 177),
+        ("Initial Claims", 176), ("Oil-Credit", 177), ("FX-Credit", 181), ("Fed Balance Sheet", 182),
     ],
     "Risk Monitors": [
         ("Overview", "ov_risk"),
@@ -1340,7 +1340,7 @@ _ANALYTICS_VIEWS = {
         ("VIX Context", 127), ("Drawdown Anatomy", 133), ("Alert History", 139),
         ("Vol of Vol", 148), ("Corr Regime", 154),
         ("Tail Skew", 167), ("Vol Clustering", 170),
-        ("STLFSI", 178), ("MOVE-VIX Ratio", 179), ("X-Asset Corr", 180),
+        ("STLFSI", 178), ("MOVE-VIX Ratio", 179), ("X-Asset Corr", 180), ("ANFCI Suite", 186),
     ],
     "Signal Lab": [
         ("Overview", "ov_sl"),
@@ -1360,7 +1360,7 @@ _ANALYTICS_VIEWS = {
         ("Score Bootstrap CI", 153), ("Score Calendar", 159),
         ("Factor Corr Scan", 160), ("Score Lead-Lag", 162),
         ("Score Drawdown", 165), ("Factor Decomp", 169),
-        ("Score Inflection", 173),
+        ("Score Inflection", 173), ("Fwd Return Cal", 184),
     ],
     "Regime": [
         ("Overview", "ov_reg"),
@@ -22821,3 +22821,595 @@ if _active_sub == 180:
                 f"Using {len(_corr_cols180)} assets over 63 trading days.")
     except Exception as _e180:
         st.caption(f"Cross-asset correlation: {_e180}")
+
+# --- sub181: FX-Credit Nexus ---
+if _active_sub == 181:
+    st.subheader("FX-Credit Nexus")
+    st.caption("USD strength vs credit spreads — EUR/USD and USD/JPY as leading risk indicators")
+    try:
+        import plotly.graph_objects as _go181
+        import numpy as _np181
+        import pandas as _pd181
+        _df181 = df[["hy_spread","eurusd","usdjpy","eurusd_change_30d","usdjpy_change_30d","hy_spread"]].dropna().copy()
+        _df181["hy_change_30d"] = _df181["hy_spread"].diff(30)
+        _df181 = _df181.dropna()
+        # Header metrics
+        _last181 = _df181.iloc[-1]
+        _c1_181, _c2_181, _c3_181, _c4_181 = st.columns(4)
+        _c1_181.metric("EUR/USD", f"{_last181['eurusd']:.4f}", f"{_last181['eurusd_change_30d']:+.4f} 30d")
+        _c2_181.metric("USD/JPY", f"{_last181['usdjpy']:.2f}", f"{_last181['usdjpy_change_30d']:+.2f} 30d")
+        _c3_181.metric("HY Spread", f"{_last181['hy_spread']:.0f} bps", f"{_last181['hy_change_30d']:+.0f} 30d")
+        _corr_eur181 = round(float(_df181["eurusd_change_30d"].corr(_df181["hy_change_30d"])), 2)
+        _c4_181.metric("EUR↔HY Corr", f"{_corr_eur181:+.2f}", "30d changes")
+        st.divider()
+        # Dual-axis time series: EUR/USD (inverted, USD strength) + HY spread
+        _fig181a = _go181.Figure()
+        _fig181a.add_trace(_go181.Scatter(
+            x=_df181.index, y=_df181["hy_spread"],
+            name="HY Spread (bps)", line=dict(color="#ef4444", width=1.5), yaxis="y1"
+        ))
+        _fig181a.add_trace(_go181.Scatter(
+            x=_df181.index, y=_df181["eurusd"],
+            name="EUR/USD", line=dict(color="#3b82f6", width=1.2), yaxis="y2"
+        ))
+        _fig181a.add_trace(_go181.Scatter(
+            x=_df181.index, y=_df181["usdjpy"],
+            name="USD/JPY", line=dict(color="#f59e0b", width=1.2), yaxis="y3", visible="legendonly"
+        ))
+        _fig181a.update_layout(
+            title="HY Spread vs FX (EUR/USD & USD/JPY)",
+            height=360,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="HY Spread (bps)", side="left", color="#ef4444"),
+            yaxis2=dict(title="EUR/USD", side="right", overlaying="y", color="#3b82f6", showgrid=False),
+            yaxis3=dict(title="USD/JPY", side="right", overlaying="y", position=0.95, color="#f59e0b", showgrid=False, visible=False),
+            legend=dict(orientation="h", y=1.05),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig181a, use_container_width=True)
+        # Scatter: 30d EUR/USD change vs 30d HY change
+        _c1b_181, _c2b_181 = st.columns(2)
+        with _c1b_181:
+            _fig181b = _go181.Figure()
+            _fig181b.add_trace(_go181.Scatter(
+                x=_df181["eurusd_change_30d"], y=_df181["hy_change_30d"],
+                mode="markers", marker=dict(size=3, color="#3b82f6", opacity=0.5), name="EUR/USD vs HY"
+            ))
+            # Regression line
+            _m181, _b181 = _np181.polyfit(_df181["eurusd_change_30d"], _df181["hy_change_30d"], 1)
+            _x181 = _np181.linspace(_df181["eurusd_change_30d"].min(), _df181["eurusd_change_30d"].max(), 50)
+            _fig181b.add_trace(_go181.Scatter(x=_x181, y=_m181*_x181+_b181, mode="lines", line=dict(color="#ef4444", width=1.5), name="Trend"))
+            _fig181b.update_layout(
+                title=f"EUR/USD Δ30d vs HY Δ30d (r={_corr_eur181:+.2f})",
+                height=280,
+                xaxis_title="EUR/USD Change (30d)", yaxis_title="HY Spread Change (30d bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(t=40, b=30))
+            st.plotly_chart(_fig181b, use_container_width=True)
+        with _c2b_181:
+            _corr_jpy181 = round(float(_df181["usdjpy_change_30d"].corr(_df181["hy_change_30d"])), 2)
+            _fig181c = _go181.Figure()
+            _fig181c.add_trace(_go181.Scatter(
+                x=_df181["usdjpy_change_30d"], y=_df181["hy_change_30d"],
+                mode="markers", marker=dict(size=3, color="#f59e0b", opacity=0.5), name="USD/JPY vs HY"
+            ))
+            _m181j, _b181j = _np181.polyfit(_df181["usdjpy_change_30d"], _df181["hy_change_30d"], 1)
+            _x181j = _np181.linspace(_df181["usdjpy_change_30d"].min(), _df181["usdjpy_change_30d"].max(), 50)
+            _fig181c.add_trace(_go181.Scatter(x=_x181j, y=_m181j*_x181j+_b181j, mode="lines", line=dict(color="#ef4444", width=1.5), name="Trend"))
+            _fig181c.update_layout(
+                title=f"USD/JPY Δ30d vs HY Δ30d (r={_corr_jpy181:+.2f})",
+                height=280,
+                xaxis_title="USD/JPY Change (30d)", yaxis_title="HY Spread Change (30d bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11), margin=dict(t=40, b=30))
+            st.plotly_chart(_fig181c, use_container_width=True)
+        # Rolling 90d correlation
+        _roll_corr_eur181 = _df181["eurusd_change_30d"].rolling(90).corr(_df181["hy_change_30d"])
+        _roll_corr_jpy181 = _df181["usdjpy_change_30d"].rolling(90).corr(_df181["hy_change_30d"])
+        _fig181d = _go181.Figure()
+        _fig181d.add_trace(_go181.Scatter(x=_df181.index, y=_roll_corr_eur181, name="EUR/USD↔HY (90d)", line=dict(color="#3b82f6", width=1.5)))
+        _fig181d.add_trace(_go181.Scatter(x=_df181.index, y=_roll_corr_jpy181, name="USD/JPY↔HY (90d)", line=dict(color="#f59e0b", width=1.5)))
+        _fig181d.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=1)
+        _fig181d.update_layout(
+            title="Rolling 90d FX-HY Correlation",
+            height=240,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"), yaxis_title="Correlation",
+            margin=dict(t=40, b=30),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig181d, use_container_width=True)
+        _risk_flag181 = abs(_last181["eurusd_change_30d"]) > 0.02 and _last181["hy_change_30d"] > 20
+        st.caption(
+            f"EUR/USD 30d change {_last181['eurusd_change_30d']:+.4f}; USD/JPY 30d change {_last181['usdjpy_change_30d']:+.2f}. "
+            f"EUR↔HY corr {_corr_eur181:+.2f}, JPY↔HY corr {_corr_jpy181:+.2f} over full history. "
+            f"{'Risk-off FX + spread widening alignment flagged.' if _risk_flag181 else 'FX-credit alignment within normal range.'}")
+    except Exception as _e181:
+        st.caption(f"FX-Credit nexus: {_e181}")
+
+# --- sub182: Fed Balance Sheet QT Tracker ---
+if _active_sub == 182:
+    st.subheader("Fed Balance Sheet / QT Tracker")
+    st.caption("QE/QT cycle impact on credit spreads — balance sheet expansion vs contraction regimes")
+    try:
+        import plotly.graph_objects as _go182
+        import numpy as _np182
+        import pandas as _pd182
+        _df182 = df[["fed_balance_sheet","fed_bs_change_90d","hy_spread","ig_spread","nfci"]].dropna().copy()
+        _last182 = _df182.iloc[-1]
+        _bs_pct182 = (_df182["fed_balance_sheet"].iloc[-1] / _df182["fed_balance_sheet"].max()) * 100
+        _c1_182, _c2_182, _c3_182, _c4_182 = st.columns(4)
+        _c1_182.metric("Fed BS (bn)", f"${_last182['fed_balance_sheet']:,.0f}", f"{_last182['fed_bs_change_90d']:+,.0f} 90d")
+        _c2_182.metric("% of Peak", f"{_bs_pct182:.1f}%")
+        _c3_182.metric("HY Spread", f"{_last182['hy_spread']:.0f} bps")
+        _regime182 = "QT" if _last182["fed_bs_change_90d"] < 0 else "QE/Neutral"
+        _c4_182.metric("Regime", _regime182)
+        st.divider()
+        # Dual axis: Fed BS + HY spread
+        _fig182a = _go182.Figure()
+        _fig182a.add_trace(_go182.Scatter(
+            x=_df182.index, y=_df182["fed_balance_sheet"],
+            name="Fed Balance Sheet (bn)", fill="tozeroy",
+            fillcolor="rgba(59,130,246,0.15)", line=dict(color="#3b82f6", width=1.5), yaxis="y2"
+        ))
+        _fig182a.add_trace(_go182.Scatter(
+            x=_df182.index, y=_df182["hy_spread"],
+            name="HY Spread (bps)", line=dict(color="#ef4444", width=1.5), yaxis="y1"
+        ))
+        _fig182a.add_trace(_go182.Scatter(
+            x=_df182.index, y=_df182["ig_spread"],
+            name="IG Spread (bps)", line=dict(color="#f59e0b", width=1.2, dash="dot"), yaxis="y1"
+        ))
+        # Shade QT periods (90d change < -100bn)
+        _qt_mask182 = _df182["fed_bs_change_90d"] < -100
+        _qt_starts182 = _df182.index[_qt_mask182 & (~_qt_mask182.shift(1, fill_value=False))]
+        _qt_ends182 = _df182.index[_qt_mask182 & (~_qt_mask182.shift(-1, fill_value=False))]
+        for _s182, _e182 in zip(_qt_starts182, _qt_ends182):
+            _fig182a.add_vrect(x0=_s182, x1=_e182, fillcolor="rgba(239,68,68,0.08)", line_width=0, annotation_text="QT")
+        _fig182a.update_layout(
+            title="Fed Balance Sheet vs Credit Spreads (QT periods shaded)",
+            height=380,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="Spread (bps)", side="left", color="#ef4444"),
+            yaxis2=dict(title="Fed BS ($bn)", side="right", overlaying="y", color="#3b82f6", showgrid=False),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig182a, use_container_width=True)
+        # 90d change rate
+        _fig182b = _go182.Figure()
+        _fig182b.add_trace(_go182.Bar(
+            x=_df182.index, y=_df182["fed_bs_change_90d"],
+            marker_color=_df182["fed_bs_change_90d"].apply(lambda v: "#3b82f6" if v >= 0 else "#ef4444"),
+            name="Fed BS 90d Change"
+        ))
+        _fig182b.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=1)
+        _fig182b.update_layout(
+            title="Fed Balance Sheet 90d Change (QE=blue, QT=red)",
+            height=220,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"), yaxis_title="$bn Change",
+            margin=dict(t=40, b=30),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig182b, use_container_width=True)
+        # Stats by regime
+        _df182["bs_regime"] = _df182["fed_bs_change_90d"].apply(lambda v: "QT" if v < -100 else ("QE" if v > 100 else "Neutral"))
+        _regime_stats182 = _df182.groupby("bs_regime")["hy_spread"].agg(["mean","std","count"]).round(1)
+        _regime_stats182.columns = ["Avg HY Spread", "Std", "Observations"]
+        st.markdown("**HY Spread by Fed Balance Sheet Regime**")
+        st.dataframe(_regime_stats182, use_container_width=True)
+        _corr_bs182 = round(float(_df182["fed_balance_sheet"].corr(_df182["hy_spread"])), 2)
+        st.caption(
+            f"Fed BS {_regime182} regime — current 90d change ${_last182['fed_bs_change_90d']:+,.0f}bn. "
+            f"Full-history BS↔HY correlation: {_corr_bs182:+.2f}. "
+            f"Balance sheet at {_bs_pct182:.1f}% of its all-time peak.")
+    except Exception as _e182:
+        st.caption(f"Fed balance sheet: {_e182}")
+
+# --- sub183: Banking Flow Monitor ---
+if _active_sub == 183:
+    st.subheader("Banking Flow Monitor")
+    st.caption("Deposit and loan growth as leading credit stress indicators — early warning from banking system flows")
+    try:
+        import plotly.graph_objects as _go183
+        import numpy as _np183
+        import pandas as _pd183
+        _df183 = df[["deposit_growth_90d","loan_growth_90d","bank_deposits","hy_spread","nfci"]].dropna().copy()
+        _last183 = _df183.iloc[-1]
+        _c1_183, _c2_183, _c3_183, _c4_183 = st.columns(4)
+        _c1_183.metric("Deposit Growth (90d)", f"{_last183['deposit_growth_90d']:+.2f}%")
+        _c2_183.metric("Loan Growth (90d)", f"{_last183['loan_growth_90d']:+.2f}%")
+        _c3_183.metric("Bank Deposits", f"${_last183['bank_deposits']:,.0f}bn" if _last183['bank_deposits'] > 100 else f"{_last183['bank_deposits']:,.1f}")
+        _stress183 = _last183["deposit_growth_90d"] < -2 or _last183["loan_growth_90d"] < -3
+        _c4_183.metric("Flow Signal", "Stress" if _stress183 else "Normal", delta=None)
+        st.divider()
+        # Dual panel: deposit/loan growth + HY
+        _fig183a = _go183.Figure()
+        _fig183a.add_trace(_go183.Scatter(
+            x=_df183.index, y=_df183["deposit_growth_90d"],
+            name="Deposit Growth 90d (%)", line=dict(color="#3b82f6", width=1.5), yaxis="y1"
+        ))
+        _fig183a.add_trace(_go183.Scatter(
+            x=_df183.index, y=_df183["loan_growth_90d"],
+            name="Loan Growth 90d (%)", line=dict(color="#10b981", width=1.5), yaxis="y1"
+        ))
+        _fig183a.add_trace(_go183.Scatter(
+            x=_df183.index, y=_df183["hy_spread"],
+            name="HY Spread (bps)", line=dict(color="#ef4444", width=1.2, dash="dot"), yaxis="y2"
+        ))
+        _fig183a.add_hline(y=0, line_color="#4b5563", line_dash="dash", line_width=1)
+        _fig183a.update_layout(
+            title="Deposit/Loan Growth vs HY Spread",
+            height=360,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="Growth (%)", side="left"),
+            yaxis2=dict(title="HY Spread (bps)", side="right", overlaying="y", color="#ef4444", showgrid=False),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig183a, use_container_width=True)
+        # Bank deposits level
+        _fig183b = _go183.Figure()
+        _fig183b.add_trace(_go183.Scatter(
+            x=_df183.index, y=_df183["bank_deposits"],
+            name="Bank Deposits", fill="tozeroy",
+            fillcolor="rgba(59,130,246,0.12)", line=dict(color="#3b82f6", width=1.5)
+        ))
+        _fig183b.update_layout(
+            title="Total Bank Deposits",
+            height=200,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"), yaxis_title="Deposits",
+            margin=dict(t=40, b=30),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig183b, use_container_width=True)
+        # Rolling correlation between deposit growth and HY spread
+        _roll_dep183 = _df183["deposit_growth_90d"].rolling(90).corr(_df183["hy_spread"])
+        _roll_loan183 = _df183["loan_growth_90d"].rolling(90).corr(_df183["hy_spread"])
+        _fig183c = _go183.Figure()
+        _fig183c.add_trace(_go183.Scatter(x=_df183.index, y=_roll_dep183, name="Deposit↔HY (90d roll)", line=dict(color="#3b82f6", width=1.5)))
+        _fig183c.add_trace(_go183.Scatter(x=_df183.index, y=_roll_loan183, name="Loan↔HY (90d roll)", line=dict(color="#10b981", width=1.5)))
+        _fig183c.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=1)
+        _fig183c.update_layout(
+            title="Rolling 90d Correlation: Banking Flows ↔ HY Spread",
+            height=200,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"), yaxis_title="Correlation",
+            margin=dict(t=40, b=30))
+        st.plotly_chart(_fig183c, use_container_width=True)
+        _corr_dep183 = round(float(_df183["deposit_growth_90d"].corr(_df183["hy_spread"])), 2)
+        _corr_loan183 = round(float(_df183["loan_growth_90d"].corr(_df183["hy_spread"])), 2)
+        st.caption(
+            f"Deposit growth {_last183['deposit_growth_90d']:+.2f}% / Loan growth {_last183['loan_growth_90d']:+.2f}% (90d). "
+            f"Full-history deposit↔HY corr: {_corr_dep183:+.2f}; loan↔HY corr: {_corr_loan183:+.2f}. "
+            f"{'Banking flow stress detected.' if _stress183 else 'Banking flows within normal range.'}")
+    except Exception as _e183:
+        st.caption(f"Banking flow monitor: {_e183}")
+
+# --- sub184: Forward Return Calibration ---
+if _active_sub == 184:
+    st.subheader("Forward Return Calibration")
+    st.caption("Pre-computed HY spread forward changes binned by composite score — true signal validation using realized outcomes")
+    try:
+        import plotly.graph_objects as _go184
+        import numpy as _np184
+        import pandas as _pd184
+        _score_col184 = next((c for c in ["composite_score_smooth","credit_risk_score_smooth","hy_spread_score_smooth"] if c in df.columns), None)
+        if _score_col184 is None:
+            st.warning("No composite score column found.")
+        else:
+            _df184 = df[[_score_col184, "hy_spread_forward_21d_change", "hy_spread_forward_63d_change", "hy_spread_forward_126d_change"]].dropna().copy()
+            _df184["score_decile"] = _pd184.qcut(_df184[_score_col184], q=10, labels=[f"D{i}" for i in range(1, 11)])
+            _last_score184 = float(df[_score_col184].dropna().iloc[-1])
+            _score_pct184 = float((_df184[_score_col184] < _last_score184).mean() * 100)
+            _c1_184, _c2_184, _c3_184 = st.columns(3)
+            _c1_184.metric("Current Score", f"{_last_score184:.2f}")
+            _c2_184.metric("Percentile", f"{_score_pct184:.0f}th")
+            _c3_184.metric("Total Obs", f"{len(_df184):,}")
+            st.divider()
+            # Mean forward return by decile for each horizon
+            _horizons184 = [("21d", "hy_spread_forward_21d_change"), ("63d", "hy_spread_forward_63d_change"), ("126d", "hy_spread_forward_126d_change")]
+            _decile_stats184 = {}
+            for _h184, _col184 in _horizons184:
+                _stats184 = _df184.groupby("score_decile")[_col184].agg(["mean","std","count"]).reset_index()
+                _stats184.columns = ["Decile", "Mean Fwd Chg", "Std", "N"]
+                _decile_stats184[_h184] = _stats184
+            # 3-panel bar charts
+            _fig184a = _go184.Figure()
+            for _h184, _col184 in _horizons184:
+                _s184 = _decile_stats184[_h184]
+                _fig184a.add_trace(_go184.Bar(
+                    x=_s184["Decile"].astype(str),
+                    y=_s184["Mean Fwd Chg"],
+                    name=f"{_h184} mean",
+                    marker_color=[("#ef4444" if v > 0 else "#3b82f6") for v in _s184["Mean Fwd Chg"]],
+                    visible=(_h184 == "21d")
+                ))
+            # Buttons to switch horizon
+            _fig184a.update_layout(
+                title="Mean HY Spread Forward Change by Score Decile (D1=lowest score, D10=highest)",
+                height=300,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                yaxis_title="Mean Forward Spread Change (bps)",
+                xaxis_title="Score Decile",
+                updatemenus=[dict(
+                    type="buttons", direction="right", x=0.5, y=1.15, xanchor="center",
+                    buttons=[dict(label=_h184, method="update",
+                                  args=[{"visible": [_h184 == h2 for h2, _ in _horizons184]}])
+                             for _h184, _ in _horizons184]
+                )],
+                margin=dict(t=60, b=40),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+            )
+            st.plotly_chart(_fig184a, use_container_width=True)
+            # Cumulative mean forward return: top vs bottom quartile
+            _df184["score_quartile"] = _pd184.qcut(_df184[_score_col184], q=4, labels=["Q1 (Low)", "Q2", "Q3", "Q4 (High)"])
+            _c1b_184, _c2b_184 = st.columns(2)
+            with _c1b_184:
+                st.markdown("**21d Forward Returns by Quartile**")
+                _q21_184 = _df184.groupby("score_quartile")["hy_spread_forward_21d_change"].agg(["mean","std","count"])
+                _q21_184.columns = ["Mean (bps)", "Std", "N"]
+                st.dataframe(_q21_184.round(1), use_container_width=True)
+            with _c2b_184:
+                st.markdown("**63d Forward Returns by Quartile**")
+                _q63_184 = _df184.groupby("score_quartile")["hy_spread_forward_63d_change"].agg(["mean","std","count"])
+                _q63_184.columns = ["Mean (bps)", "Std", "N"]
+                st.dataframe(_q63_184.round(1), use_container_width=True)
+            # Score vs forward return scatter (63d)
+            _fig184b = _go184.Figure()
+            _fig184b.add_trace(_go184.Scatter(
+                x=_df184[_score_col184], y=_df184["hy_spread_forward_63d_change"],
+                mode="markers", marker=dict(size=2, color="#3b82f6", opacity=0.3),
+                name="Obs"
+            ))
+            # Running mean
+            _df184_sorted184 = _df184.sort_values(_score_col184)
+            _running_mean184 = _df184_sorted184["hy_spread_forward_63d_change"].rolling(200, center=True).mean()
+            _fig184b.add_trace(_go184.Scatter(
+                x=_df184_sorted184[_score_col184], y=_running_mean184,
+                mode="lines", line=dict(color="#f59e0b", width=2), name="200-obs rolling mean"
+            ))
+            _fig184b.add_vline(x=_last_score184, line_dash="dash", line_color="#10b981",
+                               annotation_text=f"Current: {_last_score184:.2f}")
+            _fig184b.update_layout(
+                title=f"Score vs 63d Forward HY Change (current={_last_score184:.2f}, {_score_pct184:.0f}th pct)",
+                height=280,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                xaxis_title="Score", yaxis_title="63d HY Spread Change (bps)",
+                margin=dict(t=40, b=30),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+            )
+            st.plotly_chart(_fig184b, use_container_width=True)
+            # Interpret current score
+            _cur_decile184 = int(_score_pct184 // 10) + 1
+            _cur_decile184 = min(_cur_decile184, 10)
+            _dec_label184 = f"D{_cur_decile184}"
+            _fwd21_184 = _decile_stats184["21d"][_decile_stats184["21d"]["Decile"].astype(str) == _dec_label184]["Mean Fwd Chg"]
+            _fwd63_184 = _decile_stats184["63d"][_decile_stats184["63d"]["Decile"].astype(str) == _dec_label184]["Mean Fwd Chg"]
+            _fwd21_val184 = float(_fwd21_184.iloc[0]) if len(_fwd21_184) > 0 else float("nan")
+            _fwd63_val184 = float(_fwd63_184.iloc[0]) if len(_fwd63_184) > 0 else float("nan")
+            st.caption(
+                f"Score at {_score_pct184:.0f}th percentile ({_dec_label184}). "
+                f"Historical mean 21d forward HY change at this decile: {_fwd21_val184:+.1f} bps; "
+                f"63d: {_fwd63_val184:+.1f} bps. "
+                f"Using {_score_col184}.")
+    except Exception as _e184:
+        st.caption(f"Forward return calibration: {_e184}")
+
+# --- sub185: Default Probability Monitor ---
+if _active_sub == 185:
+    st.subheader("Default Probability Monitor")
+    st.caption("Cycle-based default probability, CDS-implied PD, and default cycle score — credit stress through the default lens")
+    try:
+        import plotly.graph_objects as _go185
+        import numpy as _np185
+        import pandas as _pd185
+        _df185 = df[["default_cycle_score","default_probability","cds_implied_pd_score","hy_spread","nfci"]].dropna().copy()
+        _last185 = _df185.iloc[-1]
+        _dp_pct185 = float((_df185["default_probability"] < _last185["default_probability"]).mean() * 100)
+        _dc_pct185 = float((_df185["default_cycle_score"] < _last185["default_cycle_score"]).mean() * 100)
+        _c1_185, _c2_185, _c3_185, _c4_185 = st.columns(4)
+        _c1_185.metric("Default Prob", f"{_last185['default_probability']:.2%}", f"{_dp_pct185:.0f}th pct")
+        _c2_185.metric("Default Cycle", f"{_last185['default_cycle_score']:.2f}", f"{_dc_pct185:.0f}th pct")
+        _c3_185.metric("CDS Implied PD", f"{_last185['cds_implied_pd_score']:.2f}")
+        _alert185 = _last185["default_probability"] > _df185["default_probability"].quantile(0.80)
+        _c4_185.metric("Signal", "Elevated" if _alert185 else "Normal")
+        st.divider()
+        # Main time series: all three on same chart
+        _fig185a = _go185.Figure()
+        _fig185a.add_trace(_go185.Scatter(
+            x=_df185.index, y=_df185["default_probability"],
+            name="Default Probability", line=dict(color="#ef4444", width=2), yaxis="y1"
+        ))
+        _fig185a.add_trace(_go185.Scatter(
+            x=_df185.index, y=_df185["default_cycle_score"],
+            name="Default Cycle Score", line=dict(color="#f59e0b", width=1.5, dash="dot"), yaxis="y2"
+        ))
+        _fig185a.add_trace(_go185.Scatter(
+            x=_df185.index, y=_df185["cds_implied_pd_score"],
+            name="CDS Implied PD Score", line=dict(color="#a78bfa", width=1.5, dash="dash"), yaxis="y2"
+        ))
+        _fig185a.add_hline(y=_df185["default_probability"].quantile(0.80), line_dash="dot",
+                           line_color="#ef4444", line_width=0.8, yref="y1", annotation_text="80th pct")
+        _fig185a.update_layout(
+            title="Default Probability & Cycle Score",
+            height=360,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="Default Probability", side="left", color="#ef4444", tickformat=".1%"),
+            yaxis2=dict(title="Score (normalized)", side="right", overlaying="y", color="#f59e0b", showgrid=False),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig185a, use_container_width=True)
+        # HY spread vs default probability scatter
+        _c1b_185, _c2b_185 = st.columns(2)
+        with _c1b_185:
+            _fig185b = _go185.Figure()
+            _fig185b.add_trace(_go185.Scatter(
+                x=_df185["default_probability"], y=_df185["hy_spread"],
+                mode="markers", marker=dict(size=3, color="#ef4444", opacity=0.4), name="Obs"
+            ))
+            _fig185b.add_trace(_go185.Scatter(
+                x=[_last185["default_probability"]], y=[_last185["hy_spread"]],
+                mode="markers", marker=dict(size=12, color="#f59e0b", symbol="star"), name="Now"
+            ))
+            _fig185b.update_layout(
+                title="Default Prob vs HY Spread",
+                height=260,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                xaxis_title="Default Prob", yaxis_title="HY Spread (bps)",
+                xaxis_tickformat=".1%",
+                margin=dict(t=40, b=30))
+            st.plotly_chart(_fig185b, use_container_width=True)
+        with _c2b_185:
+            # Distribution of default probability
+            _fig185c = _go185.Figure()
+            _fig185c.add_trace(_go185.Histogram(
+                x=_df185["default_probability"], nbinsx=50,
+                marker_color="#ef4444", opacity=0.7, name="Distribution"
+            ))
+            _fig185c.add_vline(x=_last185["default_probability"], line_dash="dash",
+                               line_color="#f59e0b", annotation_text=f"Now: {_last185['default_probability']:.2%}")
+            _fig185c.update_layout(
+                title="Default Prob Distribution",
+                height=260,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                xaxis_title="Default Probability", yaxis_title="Count",
+                xaxis_tickformat=".1%",
+                margin=dict(t=40, b=30))
+            st.plotly_chart(_fig185c, use_container_width=True)
+        # Rolling correlation: default prob vs HY
+        _roll_dp_hy185 = _df185["default_probability"].rolling(90).corr(_df185["hy_spread"])
+        _fig185d = _go185.Figure()
+        _fig185d.add_trace(_go185.Scatter(x=_df185.index, y=_roll_dp_hy185,
+                                          name="DefaultProb↔HY (90d)", line=dict(color="#ef4444", width=1.5)))
+        _fig185d.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=1)
+        _fig185d.update_layout(
+            title="Rolling 90d: Default Probability ↔ HY Spread Correlation",
+            height=180,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"), yaxis_title="Correlation",
+            margin=dict(t=40, b=25))
+        st.plotly_chart(_fig185d, use_container_width=True)
+        _corr_dp185 = round(float(_df185["default_probability"].corr(_df185["hy_spread"])), 2)
+        st.caption(
+            f"Default probability at {_last185['default_probability']:.2%} ({_dp_pct185:.0f}th percentile). "
+            f"Default cycle score: {_last185['default_cycle_score']:.2f} ({_dc_pct185:.0f}th pct). "
+            f"Full-history default prob↔HY spread correlation: {_corr_dp185:+.2f}. "
+            f"{'Elevated default risk — spread widening risk elevated.' if _alert185 else 'Default probability within normal historical range.'}")
+    except Exception as _e185:
+        st.caption(f"Default probability monitor: {_e185}")
+
+# --- sub186: ANFCI & Banking Stress Suite ---
+if _active_sub == 186:
+    st.subheader("ANFCI & Banking Stress Suite")
+    st.caption("Adjusted NFCI isolates non-economic credit tightness; paired with banking stress and CLO market indicators")
+    try:
+        import plotly.graph_objects as _go186
+        import numpy as _np186
+        import pandas as _pd186
+        _df186 = df[["anfci","anfci_change_30d","nfci","banking_stress_score_smooth","clo_stress_score","hy_spread","excess_spread_bps","excess_spread_percentile"]].dropna().copy()
+        _last186 = _df186.iloc[-1]
+        _anfci_pct186 = float((_df186["anfci"] < _last186["anfci"]).mean() * 100)
+        _c1_186, _c2_186, _c3_186, _c4_186 = st.columns(4)
+        _c1_186.metric("ANFCI", f"{_last186['anfci']:.2f}", f"{_last186['anfci_change_30d']:+.2f} 30d")
+        _c2_186.metric("ANFCI Pct", f"{_anfci_pct186:.0f}th")
+        _c3_186.metric("Banking Stress", f"{_last186['banking_stress_score_smooth']:.2f}")
+        _c4_186.metric("CLO Stress", f"{_last186['clo_stress_score']:.2f}")
+        st.divider()
+        # ANFCI vs NFCI divergence — the "extra" tightness not explained by economy
+        _df186["nfci_anfci_gap"] = _df186["nfci"] - _df186["anfci"]
+        _fig186a = _go186.Figure()
+        _fig186a.add_trace(_go186.Scatter(
+            x=_df186.index, y=_df186["nfci"], name="NFCI", line=dict(color="#3b82f6", width=1.5)
+        ))
+        _fig186a.add_trace(_go186.Scatter(
+            x=_df186.index, y=_df186["anfci"], name="ANFCI (adjusted)", line=dict(color="#f59e0b", width=1.5)
+        ))
+        _fig186a.add_trace(_go186.Scatter(
+            x=_df186.index, y=_df186["nfci_anfci_gap"],
+            name="NFCI - ANFCI Gap (excess tightness)",
+            fill="tozeroy", fillcolor="rgba(239,68,68,0.12)",
+            line=dict(color="#ef4444", width=1)
+        ))
+        _fig186a.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=1)
+        _fig186a.update_layout(
+            title="NFCI vs ANFCI — Excess Financial Tightness",
+            height=320,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig186a, use_container_width=True)
+        # Banking stress + CLO stress vs HY
+        _fig186b = _go186.Figure()
+        _fig186b.add_trace(_go186.Scatter(
+            x=_df186.index, y=_df186["banking_stress_score_smooth"],
+            name="Banking Stress Score", line=dict(color="#ef4444", width=1.5), yaxis="y1"
+        ))
+        _fig186b.add_trace(_go186.Scatter(
+            x=_df186.index, y=_df186["clo_stress_score"],
+            name="CLO Stress Score", line=dict(color="#a78bfa", width=1.5), yaxis="y1"
+        ))
+        _fig186b.add_trace(_go186.Scatter(
+            x=_df186.index, y=_df186["hy_spread"],
+            name="HY Spread (bps)", line=dict(color="#9aa0aa", width=1, dash="dot"), yaxis="y2"
+        ))
+        _fig186b.update_layout(
+            title="Banking Stress & CLO Stress vs HY Spread",
+            height=280,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="Stress Score", side="left"),
+            yaxis2=dict(title="HY Spread (bps)", side="right", overlaying="y", color="#9aa0aa", showgrid=False),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig186b, use_container_width=True)
+        # Excess spread percentile over time
+        _fig186c = _go186.Figure()
+        _fig186c.add_trace(_go186.Scatter(
+            x=_df186.index, y=_df186["excess_spread_percentile"],
+            name="Excess Spread Pct", fill="tozeroy",
+            fillcolor="rgba(16,185,129,0.12)", line=dict(color="#10b981", width=1.5)
+        ))
+        _fig186c.add_hline(y=50, line_dash="dash", line_color="#4b5563", line_width=0.8)
+        _fig186c.update_layout(
+            title="Excess Spread Percentile (compensation above expected loss)",
+            height=200,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"), yaxis_title="Percentile",
+            margin=dict(t=40, b=25))
+        st.plotly_chart(_fig186c, use_container_width=True)
+        # Correlation table
+        _corr_cols186 = ["anfci", "banking_stress_score_smooth", "clo_stress_score", "excess_spread_percentile"]
+        _corr186 = _df186[_corr_cols186 + ["hy_spread"]].corr()[["hy_spread"]].round(2)
+        _corr186.index = ["ANFCI", "Banking Stress", "CLO Stress", "Excess Spread Pct", "HY Spread"]
+        _corr186.columns = ["↔ HY Spread"]
+        st.markdown("**Correlation with HY Spread**")
+        st.dataframe(_corr186, use_container_width=True)
+        _stress_combo186 = _last186["banking_stress_score_smooth"] > _df186["banking_stress_score_smooth"].quantile(0.75) and _last186["clo_stress_score"] > _df186["clo_stress_score"].quantile(0.75)
+        st.caption(
+            f"ANFCI {_last186['anfci']:.2f} ({_anfci_pct186:.0f}th pct); 30d change {_last186['anfci_change_30d']:+.2f}. "
+            f"Excess spread at {_last186['excess_spread_percentile']:.0f}th pct — "
+            f"{'compensating for risk' if _last186['excess_spread_percentile'] > 50 else 'compressed vs expected loss'}. "
+            f"{'Banking + CLO stress both elevated — systemic credit risk.' if _stress_combo186 else 'Banking and CLO stress within normal range.'}")
+    except Exception as _e186:
+        st.caption(f"ANFCI suite: {_e186}")
