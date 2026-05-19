@@ -316,6 +316,5 @@ def _run_claude(context_text: str) -> None:
 
 if __name__ == "__main__":
     main()
-
-
-main()
+else:
+    main()

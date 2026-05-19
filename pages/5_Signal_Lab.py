@@ -225,6 +225,27 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
+# ── load_* aliases ────────────────────────────────────────────────────────────
+load_attribution            = run_regime_attribution
+load_drawdown_attribution   = run_drawdown_attribution
+load_performance_attribution = compute_performance_attribution
+load_signal_move_attribution = run_signal_move_attribution
+load_regime_transition      = run_regime_analysis
+load_validation_audit       = run_validation_audit
+load_bootstrap              = run_bootstrap_analysis
+load_signal_decay           = run_signal_decay
+load_orthogonality          = run_orthogonality_analysis
+load_factor_analysis        = run_factor_analysis
+load_granger                = run_granger_analysis
+load_correlation_regime     = run_correlation_analysis
+load_correlation_heatmap    = run_correlation_heatmap_analysis
+load_pca_analysis           = run_pca_analysis
+load_custom_composite       = run_custom_composite_analysis
+load_data_diagnostics       = _run_data_diagnostics
+load_dv01                   = run_dv01_analysis
+load_carry_breakeven        = run_breakeven_analysis
+load_cvar                   = run_cvar_analysis
+
 
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
@@ -254,6 +275,8 @@ _av_label = st.sidebar.selectbox(
     '_nav_view', [v[0] for v in _av_list_show], label_visibility='collapsed',
 )
 _active_sub = dict(_av_list_show).get(_av_label, _av_list[0][1])
+_active_section = st.session_state.get("_active_section", "Overview")
+_nav_type = st.session_state.get("_nav_type", "Core")
 _vdesc = _VIEW_DESC.get(_active_sub, '')
 if _vdesc:
     st.sidebar.caption(_vdesc)
@@ -261,6 +284,15 @@ if _vdesc:
 # Ensure analytics content blocks get a DatetimeIndex df
 if "date" in df.columns and not isinstance(df.index, pd.DatetimeIndex):
     df = df.set_index(pd.to_datetime(df["date"])).drop(columns=["date"])
+
+
+def load_walk_forward():
+    """Return (wf_windows_df, wf_regimes_df) from frozen OOS splits."""
+    try:
+        wf_windows = run_frozen_splits(df)
+    except Exception:
+        wf_windows = pd.DataFrame()
+    return wf_windows, pd.DataFrame()
 
 
 # ── Data freshness warning ─────────────────────────────────────────────────
@@ -660,7 +692,13 @@ if _active_section == "Backtest":
             return {"ret": ann_ret, "sharpe": sharpe, "dd": max_dd, "vol": ann_vol}
 
         _cutoff_ts2 = pd.Timestamp(OOS_CUTOFF)
-        _bt_dates   = pd.to_datetime(_bt_live["date"] if "date" in _bt_live.columns else _bt_live.index)
+        _bt_dates_raw = _bt_live["date"] if "date" in _bt_live.columns else _bt_live.index
+        _bt_dates = pd.to_datetime(_bt_dates_raw, errors="coerce")
+        if isinstance(_bt_dates, pd.DatetimeIndex):
+            _bt_dates = pd.Series(_bt_dates, index=_bt_live.index)
+        if _bt_dates.empty or _bt_dates.isna().all():
+            st.warning("Backtest unavailable: no valid date column found.")
+            st.stop()
         _is_m  = (_bt_dates < _cutoff_ts2).values
         _oos_m = (_bt_dates >= _cutoff_ts2).values
         _all_m = pd.Series([True] * len(_bt_live)).values

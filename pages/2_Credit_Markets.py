@@ -225,6 +225,36 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
+# ── load_* aliases (thin wrappers around run_* imports) ──────────────────────
+load_default_analysis          = run_default_analysis
+load_forward_simulation        = run_forward_simulation
+load_cdx_proxy                 = run_cdx_analysis
+load_default_cycle             = run_default_cycle_analysis
+load_spread_volatility         = run_spread_volatility_analysis
+load_fallen_angel              = run_fallen_angel_analysis
+load_global_credit             = run_global_credit_analysis
+load_corporate_leverage        = run_corporate_leverage_analysis
+load_seasonality               = run_seasonality_analysis
+load_credit_quality_migration  = run_credit_quality_migration
+load_loan_market_monitor       = run_loan_market_monitor
+load_credit_basis              = run_credit_basis
+load_primary_market_issuance   = run_primary_market_issuance
+load_clo_monitor               = run_clo_monitor
+load_cds_implied_pd            = run_cds_implied_pd
+load_em_credit                 = run_em_credit_analysis
+load_carry_breakeven           = run_breakeven_analysis
+load_credit_momentum           = run_credit_momentum_analysis
+load_quality_curve             = run_quality_curve_analysis
+
+
+def load_distressed_debt(df):
+    if run_distressed_debt_analysis is None:
+        return {"available": False}
+    try:
+        return run_distressed_debt_analysis(df)
+    except Exception as _e:
+        return {"available": False, "error": str(_e)}
+
 
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()

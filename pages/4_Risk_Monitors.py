@@ -225,6 +225,30 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
+# ── load_* aliases ────────────────────────────────────────────────────────────
+load_tail_risk              = run_tail_risk_analysis
+load_stress_analysis        = run_stress_analysis
+load_contagion              = run_contagion_analysis
+load_vol_regime_composite   = run_vol_regime_composite
+load_systematic_deleveraging = run_systematic_deleveraging
+load_sector_divergence      = run_sector_divergence
+load_put_call_sentiment     = run_put_call_sentiment
+load_tail_dependency        = run_tail_dependency
+load_portfolio_stress_test  = run_portfolio_stress_test
+load_at1_coco_monitor       = run_at1_coco_monitor
+load_cre_stress             = run_cre_stress
+load_etf_premium_discount   = run_etf_premium_discount
+load_sovereign_contagion    = run_sovereign_contagion
+load_consumer_credit_stress = run_consumer_credit_stress
+load_etf_fund_flows         = run_etf_fund_flows
+load_move                   = run_move_analysis
+load_vix_term               = run_vix_term_analysis
+load_options_skew           = run_skew_analysis
+load_dv01                   = run_dv01_analysis
+load_cvar                   = run_cvar_analysis
+load_vrp                    = run_vrp_analysis
+load_funding_stress         = run_funding_stress_analysis
+
 
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
@@ -254,6 +278,8 @@ _av_label = st.sidebar.selectbox(
     '_nav_view', [v[0] for v in _av_list_show], label_visibility='collapsed',
 )
 _active_sub = dict(_av_list_show).get(_av_label, _av_list[0][1])
+_active_section = st.session_state.get("_active_section", "Overview")
+_nav_type = st.session_state.get("_nav_type", "Core")
 _vdesc = _VIEW_DESC.get(_active_sub, '')
 if _vdesc:
     st.sidebar.caption(_vdesc)

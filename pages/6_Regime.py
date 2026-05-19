@@ -225,6 +225,9 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
+# ── load_* aliases ────────────────────────────────────────────────────────────
+load_failure_analysis = run_failure_analysis
+
 
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()

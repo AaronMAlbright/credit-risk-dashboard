@@ -225,6 +225,33 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
+# ── load_* aliases ────────────────────────────────────────────────────────────
+load_weight_optimization = run_weight_optimization
+load_regime_transition   = run_regime_analysis
+load_regime_probability  = run_regime_probability
+
+
+def load_monte_carlo(df, _cache_key=None):
+    try:
+        probs = {}
+        try:
+            _rp = run_regime_probability(df)
+            probs = _rp.get("current", {}).get("probs")
+        except Exception:
+            pass
+        return run_monte_carlo(df, current_probs=probs)
+    except Exception as _e:
+        return {}
+
+
+def load_scenario_grid(df):
+    try:
+        _grid = run_scenario_grid(df, SCENARIO_PRESETS)
+        _tornado = build_tornado_data(df)
+        return {"grid": _grid, "tornado": _tornado, "model": {}}
+    except Exception as _e:
+        return {"grid": pd.DataFrame(), "tornado": pd.DataFrame(), "model": {}}
+
 
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
@@ -2229,10 +2256,19 @@ if _active_sub == "ov_mod":
         # Model health summary
         _comp_mod = float(_d["composite_risk_score_smooth"].dropna().iloc[-1]) if "composite_risk_score_smooth" in _d.columns else float("nan")
         _conf_col = "model_confidence" if "model_confidence" in _d.columns else None
-        _conf_val = float(_d[_conf_col].dropna().iloc[-1]) if _conf_col else float("nan")
+        _conf_raw = _d[_conf_col].dropna().iloc[-1] if _conf_col else None
+        _CONF_MAP = {"High": 3, "Medium": 2, "Low": 1}
+        if _conf_raw is not None:
+            try:
+                _conf_val = float(_conf_raw)
+            except (ValueError, TypeError):
+                _conf_val = float("nan")
+            _conf_disp = str(_conf_raw) if isinstance(_conf_raw, str) else f"{_conf_val:.1%}" if not _pd_ov_mod.isna(_conf_val) else "—"
+        else:
+            _conf_val, _conf_disp = float("nan"), "—"
         _c1, _c2, _c3 = st.columns(3)
         _c1.metric("Composite Score", f"{_comp_mod:.1f}" if not _pd_ov_mod.isna(_comp_mod) else "—")
-        _c2.metric("Model Confidence", f"{_conf_val:.1%}" if not _pd_ov_mod.isna(_conf_val) else "—")
+        _c2.metric("Model Confidence", _conf_disp)
         _n_scores = sum(1 for c in _d.columns if c.endswith("_score_smooth"))
         _c3.metric("Active Sub-scores", str(_n_scores))
         st.divider()
@@ -2260,16 +2296,29 @@ if _active_sub == 192:
         import plotly.graph_objects as _go192
         import numpy as _np192
         import pandas as _pd192
-        _score_col192 = next((c for c in ["composite_score_smooth","credit_risk_score_smooth"] if c in df.columns), None)
-        _df192_cols = ["model_confidence","risk_appetite_score_smooth","hy_spread","vix"]
+        _score_col192 = next((c for c in ["composite_risk_score_smooth","composite_score_smooth","credit_risk_score_smooth"] if c in df.columns), None)
+        _df192_base_cols = ["risk_appetite_score_smooth","hy_spread","vix"]
         if _score_col192:
-            _df192_cols.append(_score_col192)
-        _df192 = df[_df192_cols].dropna().copy()
+            _df192_base_cols.append(_score_col192)
+        _df192 = df[[c for c in _df192_base_cols if c in df.columns]].dropna().copy()
+        # model_confidence may be string ("High"/"Medium"/"Low") — map to numeric
+        _CONF_MAP192 = {"High": 3, "Medium": 2, "Low": 1}
+        if "model_confidence" in df.columns:
+            _mc_series = df["model_confidence"]
+            if _mc_series.dtype == object:
+                _df192["model_confidence"] = _mc_series.map(_CONF_MAP192).reindex(_df192.index)
+            else:
+                _df192["model_confidence"] = _mc_series.reindex(_df192.index)
+            _df192 = _df192.dropna(subset=["model_confidence"])
+        else:
+            _df192["model_confidence"] = float("nan")
         _last192 = _df192.iloc[-1]
         _mc_pct192 = float((_df192["model_confidence"] < _last192["model_confidence"]).mean() * 100)
         _ra_pct192 = float((_df192["risk_appetite_score_smooth"] < _last192["risk_appetite_score_smooth"]).mean() * 100)
         _c1_192, _c2_192, _c3_192, _c4_192 = st.columns(4)
-        _c1_192.metric("Model Confidence", f"{_last192['model_confidence']:.2f}", f"{_mc_pct192:.0f}th pct")
+        _conf_labels192 = {3: "High", 2: "Medium", 1: "Low"}
+        _conf_disp192 = _conf_labels192.get(int(_last192["model_confidence"]), f"{_last192['model_confidence']:.2f}")
+        _c1_192.metric("Model Confidence", _conf_disp192, f"{_mc_pct192:.0f}th pct")
         _c2_192.metric("Risk Appetite", f"{_last192['risk_appetite_score_smooth']:.2f}", f"{_ra_pct192:.0f}th pct")
         _c3_192.metric("VIX", f"{_last192['vix']:.1f}")
         _trust192 = _last192["model_confidence"] > _df192["model_confidence"].quantile(0.50)

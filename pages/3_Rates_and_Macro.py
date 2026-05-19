@@ -225,6 +225,28 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
+# ── load_* aliases ────────────────────────────────────────────────────────────
+load_regime_return_table  = run_regime_return_analysis
+load_cross_asset_momentum = run_cross_asset_momentum
+load_macro_surprise_index = run_macro_surprise_index
+load_inflation_regime     = run_inflation_regime
+load_fed_liquidity        = run_fed_liquidity
+load_g4_divergence        = run_g4_divergence
+load_swap_spread_monitor  = run_swap_spread_monitor
+load_cross_currency_basis = run_cross_currency_basis
+load_financial_conditions = run_fci_analysis
+load_credit_impulse       = run_credit_impulse_analysis
+load_term_premium         = run_term_premium_analysis
+load_yield_curve_butterfly = run_butterfly_analysis
+load_sloos_monitor        = run_sloos_monitor
+load_corporate_profit_cycle = run_corporate_profit_cycle
+load_recession            = run_recession_analysis
+load_real_rates           = run_real_rates_analysis
+load_fed_sentiment        = run_fed_sentiment
+load_taylor               = run_taylor_analysis
+load_macro_nowcast        = run_macro_nowcast
+load_term_structure       = run_term_structure_analysis
+
 
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
