@@ -1297,6 +1297,7 @@ _ANALYTICS_VIEWS = {
         ("Credit Risk Score", 117), ("HY Lead-Lag", 130),
         ("Spread Vol Regime", 136), ("Regime Spread Dist", 141),
         ("Credit Beta", 146), ("HY Multi-Horizon", 149),
+        ("Spread Dispersion", 151), ("Carry Decomp", 156),
     ],
     "Rates & Macro": [
         ("Regime Returns", 23), ("X-Asset Momentum", 38), ("Macro Surprise", 41),
@@ -1313,6 +1314,7 @@ _ANALYTICS_VIEWS = {
         ("Breakeven Inflation", 122), ("10y Yield", 125),
         ("Macro-Credit Corr", 138), ("Credit Impulse Drill", 142),
         ("Sahm Episodes", 143), ("Real Yield Episodes", 145),
+        ("Credit-Labor Div", 152),
     ],
     "Risk Monitors": [
         ("Tail Risk", 6), ("Stress Test", 7), ("Contagion", 12),
@@ -1328,7 +1330,7 @@ _ANALYTICS_VIEWS = {
         ("Liquidity Score", 107), ("VIX Momentum", 112), ("FX/Commodity", 113),
         ("Enhanced Funding", 119), ("Equity Returns", 124),
         ("VIX Context", 127), ("Drawdown Anatomy", 133), ("Alert History", 139),
-        ("Vol of Vol", 148),
+        ("Vol of Vol", 148), ("Corr Regime", 154),
     ],
     "Signal Lab": [
         ("Validation", 1), ("Attribution", 2), ("Timeline", 3),
@@ -1344,6 +1346,7 @@ _ANALYTICS_VIEWS = {
         ("Score Distributions", 135), ("Score Gradient", 137),
         ("Forward Returns", 140), ("Score Momentum", 144),
         ("Seasonality", 147), ("Score Ensemble", 150),
+        ("Score Bootstrap CI", 153),
     ],
     "Regime": [
         ("Performance", 8), ("Regime Validity", 10), ("Failure Analysis", 11),
@@ -1351,6 +1354,7 @@ _ANALYTICS_VIEWS = {
         ("Traffic Light", 32), ("Shock Simulation", 33), ("Alert Backtest", 34),
         ("Regime Forecast", 36), ("Regime Age", 43), ("Drawdown", 49),
         ("Recession Analog", 131), ("Transition Matrix", 134),
+        ("Regime Dwell", 155),
     ],
     "Models": [
         ("Sensitivity", "m1"), ("Transitions", "m2"), ("Regimes", "m3"),
@@ -20099,3 +20103,403 @@ if _active_sub == 150:
             st.info("Need at least 3 sub-score columns and hy_spread — run the full scoring pipeline.")
     except Exception as _e150:
         st.caption(f"Score ensemble: {_e150}")
+
+if _active_sub == 151:
+    try:
+        import plotly.graph_objects as _go151
+        import numpy as _np151
+        import pandas as _pd151
+        _df151 = df.copy() if "df" in dir() else None
+        if _df151 is None or "hy_spread" not in _df151.columns:
+            st.info("hy_spread column required.")
+        else:
+            st.subheader("Spread Dispersion Monitor")
+            st.caption("Rolling 21-day volatility of daily HY spread changes captures whether stress is broad-based or idiosyncratic. High dispersion with moderate mean widening = selective stress; low dispersion with widening = systemic.")
+            _hy151 = _df151["hy_spread"].dropna()
+            _hy_d151 = _hy151.diff(1)
+            _roll_std151 = _hy_d151.rolling(21).std()
+            _roll_mean151 = _hy_d151.rolling(21).mean()
+            _roll_pct151 = _roll_std151.rolling(252).rank(pct=True) * 100
+            _fig151 = _go151.Figure()
+            _fig151.add_trace(_go151.Scatter(
+                x=_roll_std151.index, y=_roll_std151.values,
+                name="21d HY Change Vol", line=dict(color="#ef4444", width=1.5),
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.08)"
+            ))
+            _fig151.update_layout(
+                title="Rolling 21d HY Spread Change Volatility (bps/day)",
+                height=300, yaxis_title="Bps",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig151, use_container_width=True)
+            _fig151b = _go151.Figure()
+            _fig151b.add_trace(_go151.Scatter(
+                x=_roll_pct151.index, y=_roll_pct151.values,
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.1)",
+                line=dict(color="#ef4444", width=1), name="Dispersion Percentile"
+            ))
+            _fig151b.add_hline(y=80, line_dash="dash", line_color="#f59e0b",
+                               annotation_text="80th pct", annotation_position="right")
+            _fig151b.update_layout(
+                title="Dispersion Percentile (vs 252d history)",
+                height=240, yaxis_title="Percentile", yaxis=dict(range=[0, 100]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig151b, use_container_width=True)
+            _cur_std151 = float(_roll_std151.iloc[-1]) if _roll_std151.notna().any() else float("nan")
+            _cur_pct151 = float(_roll_pct151.iloc[-1]) if _roll_pct151.notna().any() else float("nan")
+            _cur_mean151 = float(_roll_mean151.iloc[-1]) if _roll_mean151.notna().any() else float("nan")
+            if not _np151.isnan(_cur_std151):
+                _reg151 = ("Crisis Volatility" if _cur_pct151 > 90 else
+                           ("Elevated" if _cur_pct151 > 70 else
+                            ("Normal" if _cur_pct151 > 30 else "Suppressed")))
+                st.caption(
+                    f"Current 21d HY change vol: **{_cur_std151:.2f} bps/day** "
+                    f"({_cur_pct151:.0f}th pct) — {_reg151}. "
+                    f"Mean daily change: {_cur_mean151:+.2f} bps."
+                )
+    except Exception as _e151:
+        st.caption(f"Spread dispersion: {_e151}")
+
+if _active_sub == 152:
+    try:
+        import plotly.graph_objects as _go152
+        import numpy as _np152
+        import pandas as _pd152
+        _df152 = df.copy() if "df" in dir() else None
+        _has152 = (_df152 is not None
+                   and "sahm_like" in _df152.columns
+                   and "hy_change_30d" in _df152.columns)
+        if not _has152:
+            st.info("sahm_like and hy_change_30d required.")
+        else:
+            st.subheader("Credit-Labor Divergence")
+            st.caption("Cross-signal divergence between labor market stress (Sahm-like) and 30d HY spread change. Four quadrants: when credit tightens before labor weakens, credit is leading. When labor weakens but credit holds, expect delayed credit repricing.")
+            _sahm152 = _df152["sahm_like"].dropna()
+            _hy152 = _df152["hy_change_30d"].dropna()
+            _j152 = _sahm152.to_frame("sahm").join(_hy152.to_frame("hy_chg"), how="inner").dropna().tail(1260)
+            def _quad152(row):
+                if row["sahm"] < 0.3 and row["hy_chg"] < 0:
+                    return "Both Calm"
+                elif row["sahm"] >= 0.3 and row["hy_chg"] >= 0:
+                    return "Both Stressed"
+                elif row["sahm"] < 0.3 and row["hy_chg"] >= 0:
+                    return "Credit Leads"
+                else:
+                    return "Labor Leads"
+            _j152["quadrant"] = _j152.apply(_quad152, axis=1)
+            _colors152 = {"Both Calm": "#22c55e", "Both Stressed": "#ef4444",
+                          "Credit Leads": "#f59e0b", "Labor Leads": "#8b5cf6"}
+            _fig152 = _go152.Figure()
+            for _q152, _c152 in _colors152.items():
+                _sub152 = _j152[_j152["quadrant"] == _q152]
+                _fig152.add_trace(_go152.Scatter(
+                    x=_sub152["sahm"], y=_sub152["hy_chg"],
+                    mode="markers", marker=dict(color=_c152, size=4, opacity=0.55),
+                    name=_q152
+                ))
+            _cur152 = _j152.iloc[-1]
+            _fig152.add_trace(_go152.Scatter(
+                x=[_cur152["sahm"]], y=[_cur152["hy_chg"]],
+                mode="markers", marker=dict(color="white", size=12, symbol="star"),
+                name="Current"
+            ))
+            _fig152.add_vline(x=0.3, line_dash="dash", line_color="#9aa0aa")
+            _fig152.add_hline(y=0, line_dash="dash", line_color="#9aa0aa")
+            _fig152.update_layout(
+                title="Credit vs Labor Stress Quadrants (5Y)",
+                height=400,
+                xaxis_title="Sahm-like (0.3 = recession warning)",
+                yaxis_title="HY 30d Change (bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(_fig152, use_container_width=True)
+            _qdist152 = _j152["quadrant"].value_counts()
+            _cur_quad152 = str(_cur152["quadrant"])
+            st.caption(
+                f"Current: **{_cur_quad152}** · "
+                + " · ".join(f"{k}: {v}d ({v/len(_j152)*100:.0f}%)" for k, v in _qdist152.items())
+            )
+    except Exception as _e152:
+        st.caption(f"Credit-labor divergence: {_e152}")
+
+if _active_sub == 153:
+    try:
+        import plotly.graph_objects as _go153
+        import numpy as _np153
+        import pandas as _pd153
+        _df153 = df.copy() if "df" in dir() else None
+        _score_cols153 = [c for c in [
+            "macro_risk_score_smooth", "credit_market_risk_score_smooth",
+            "complacency_score_smooth", "liquidity_regime_score_smooth",
+            "treasury_stress_score_smooth", "fx_commodity_score_smooth",
+            "enhanced_funding_stress_score_smooth", "cross_asset_divergence_score_smooth",
+        ] if _df153 is not None and c in _df153.columns]
+        if len(_score_cols153) < 3:
+            st.info("Need at least 3 sub-score columns for bootstrap CI.")
+        else:
+            st.subheader("Score Bootstrap Confidence Interval")
+            st.caption("Bootstrap uncertainty bands around the composite score: resample sub-scores (with replacement) 200 times to estimate the range of plausible composite values. Wide bands = high model uncertainty; narrow bands = robust signal.")
+            _sub153 = _df153[_score_cols153].tail(504).dropna(how="all")
+            _comp153 = _sub153.mean(axis=1)
+            _n_boot153 = 200
+            _boot153 = _np153.zeros((_n_boot153, len(_sub153)))
+            _rng153 = _np153.random.default_rng(42)
+            _ncols153 = len(_score_cols153)
+            for _b153 in range(_n_boot153):
+                _bidx153 = _rng153.integers(0, _ncols153, size=_ncols153)
+                _boot153[_b153] = _sub153.iloc[:, _bidx153].mean(axis=1).values
+            _p5_153 = _np153.percentile(_boot153, 5, axis=0)
+            _p25_153 = _np153.percentile(_boot153, 25, axis=0)
+            _p75_153 = _np153.percentile(_boot153, 75, axis=0)
+            _p95_153 = _np153.percentile(_boot153, 95, axis=0)
+            _idx153 = _sub153.index
+            _fig153 = _go153.Figure()
+            _fig153.add_trace(_go153.Scatter(
+                x=list(_idx153) + list(_idx153[::-1]),
+                y=list(_p5_153) + list(_p95_153[::-1]),
+                fill="toself", fillcolor="rgba(99,102,241,0.08)",
+                line=dict(color="rgba(0,0,0,0)"), name="90% CI"
+            ))
+            _fig153.add_trace(_go153.Scatter(
+                x=list(_idx153) + list(_idx153[::-1]),
+                y=list(_p25_153) + list(_p75_153[::-1]),
+                fill="toself", fillcolor="rgba(99,102,241,0.18)",
+                line=dict(color="rgba(0,0,0,0)"), name="50% CI"
+            ))
+            _fig153.add_trace(_go153.Scatter(
+                x=_idx153, y=_comp153.values,
+                line=dict(color="#6366f1", width=2), name="Composite Score"
+            ))
+            _fig153.add_hline(y=50, line_dash="dash", line_color="#9aa0aa",
+                              annotation_text="Stress threshold")
+            _fig153.update_layout(
+                title="Composite Score — Bootstrap Uncertainty Bands",
+                height=400, yaxis_title="Score (0–100)", yaxis=dict(range=[0, 100]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(_fig153, use_container_width=True)
+            _cur_p5_153 = float(_p5_153[-1])
+            _cur_p95_153 = float(_p95_153[-1])
+            _cur_comp153 = float(_comp153.iloc[-1])
+            _ci_width153 = _cur_p95_153 - _cur_p5_153
+            _uncert153 = "High" if _ci_width153 > 20 else ("Moderate" if _ci_width153 > 10 else "Low")
+            st.caption(
+                f"Current score: **{_cur_comp153:.1f}** · 90% CI: [{_cur_p5_153:.1f}, {_cur_p95_153:.1f}] "
+                f"(width {_ci_width153:.1f}) · Uncertainty: **{_uncert153}** · "
+                f"{len(_score_cols153)} sub-scores, n=200 resamples."
+            )
+    except Exception as _e153:
+        st.caption(f"Score bootstrap CI: {_e153}")
+
+if _active_sub == 154:
+    try:
+        import plotly.graph_objects as _go154
+        import numpy as _np154
+        import pandas as _pd154
+        _df154 = df.copy() if "df" in dir() else None
+        _has154 = (_df154 is not None
+                   and "sp500_return_5d" in _df154.columns
+                   and "hy_change_5d" in _df154.columns)
+        if not _has154:
+            st.info("sp500_return_5d and hy_change_5d required.")
+        else:
+            st.subheader("Rolling Credit-Equity Correlation Regime")
+            st.caption("Rolling 63-day correlation between SP500 weekly returns and HY tightening (inverted). High correlation (>0.4) = aligned risk-on/off. Inverted correlation = dislocated regime — credit leading equity lower is a classic early-warning pattern.")
+            _eq154 = _df154["sp500_return_5d"].dropna()
+            _cr154 = (-_df154["hy_change_5d"]).dropna()
+            _j154 = _eq154.to_frame("eq").join(_cr154.to_frame("cr"), how="inner").dropna()
+            _roll_corr154 = _j154["eq"].rolling(63).corr(_j154["cr"])
+            _fig154 = _go154.Figure()
+            _fig154.add_trace(_go154.Scatter(
+                x=_roll_corr154.index, y=_roll_corr154.values,
+                line=dict(color="#6366f1", width=1.5),
+                fill="tozeroy", fillcolor="rgba(99,102,241,0.1)", name="63d Corr"
+            ))
+            _fig154.add_hline(y=0.4, line_dash="dash", line_color="#22c55e",
+                              annotation_text="High (0.4)", annotation_position="right")
+            _fig154.add_hline(y=-0.2, line_dash="dash", line_color="#ef4444",
+                              annotation_text="Inverted (−0.2)", annotation_position="right")
+            _fig154.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+            _fig154.update_layout(
+                title="Rolling 63d Equity–Credit Correlation",
+                height=350, yaxis_title="Correlation", yaxis=dict(range=[-1, 1]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig154, use_container_width=True)
+            if "hy_change_30d" in _df154.columns:
+                _j154b = _roll_corr154.to_frame("corr").join(
+                    _df154["hy_change_30d"].to_frame("hy30"), how="inner").dropna()
+                _j154b["regime"] = _j154b["hy30"].apply(
+                    lambda x: "Widening" if x > 15 else ("Tightening" if x < -15 else "Flat"))
+                _box154 = _go154.Figure()
+                for _r154, _c154 in [("Tightening", "#22c55e"), ("Flat", "#6366f1"), ("Widening", "#ef4444")]:
+                    _rs154 = _j154b[_j154b["regime"] == _r154]["corr"]
+                    if len(_rs154) > 10:
+                        _box154.add_trace(_go154.Box(
+                            y=_rs154.values, name=_r154,
+                            marker_color=_c154, line_color=_c154
+                        ))
+                _box154.update_layout(
+                    title="Corr Distribution by HY Spread Regime",
+                    height=280, yaxis_title="Correlation",
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    showlegend=False
+                )
+                st.plotly_chart(_box154, use_container_width=True)
+            _cur_corr154 = float(_roll_corr154.iloc[-1]) if _roll_corr154.notna().any() else float("nan")
+            if not _np154.isnan(_cur_corr154):
+                _creg154 = ("Strongly Aligned" if _cur_corr154 > 0.4 else
+                            ("Aligned" if _cur_corr154 > 0.1 else
+                             ("Decoupled" if _cur_corr154 > -0.2 else "Inverted")))
+                st.caption(f"Current 63d equity-credit correlation: **{_cur_corr154:.2f}** — {_creg154}.")
+    except Exception as _e154:
+        st.caption(f"Credit-equity correlation regime: {_e154}")
+
+if _active_sub == 155:
+    try:
+        import plotly.graph_objects as _go155
+        import numpy as _np155
+        import pandas as _pd155
+        _df155 = df.copy() if "df" in dir() else None
+        _has155 = _df155 is not None and "composite_risk_score_smooth" in _df155.columns
+        if not _has155:
+            st.info("composite_risk_score_smooth required.")
+        else:
+            st.subheader("Regime Dwell Time Analysis")
+            st.caption("How long does the composite score stay in each regime? Dwell-time distributions reveal regime stickiness. Knowing the typical episode length and historical exit rates by dwell-day sets probabilistic expectations for current conditions.")
+            _comp155 = _df155["composite_risk_score_smooth"].dropna()
+            def _reg155(s):
+                if s < 30: return "Low Stress"
+                elif s < 50: return "Moderate"
+                elif s < 70: return "Elevated"
+                else: return "High Stress"
+            _regimes155 = _comp155.apply(_reg155)
+            _runs155 = []
+            _cur_r155 = None
+            _run_l155 = 0
+            for _r155 in _regimes155:
+                if _r155 == _cur_r155:
+                    _run_l155 += 1
+                else:
+                    if _cur_r155 is not None:
+                        _runs155.append({"regime": _cur_r155, "days": _run_l155})
+                    _cur_r155 = _r155
+                    _run_l155 = 1
+            if _cur_r155:
+                _runs155.append({"regime": _cur_r155, "days": _run_l155})
+            _runs_df155 = _pd155.DataFrame(_runs155)
+            _fig155 = _go155.Figure()
+            _rorder155 = ["Low Stress", "Moderate", "Elevated", "High Stress"]
+            _rcols155 = {"Low Stress": "#22c55e", "Moderate": "#6366f1",
+                         "Elevated": "#f59e0b", "High Stress": "#ef4444"}
+            for _r155b in _rorder155:
+                _rs155 = _runs_df155[_runs_df155["regime"] == _r155b]["days"]
+                if len(_rs155) > 2:
+                    _fig155.add_trace(_go155.Box(
+                        y=_rs155.values, name=_r155b,
+                        marker_color=_rcols155[_r155b], line_color=_rcols155[_r155b]
+                    ))
+            _fig155.update_layout(
+                title="Regime Dwell Time Distribution (trading days)",
+                height=350, yaxis_title="Days in Regime",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig155, use_container_width=True)
+            _sum155 = (_runs_df155.groupby("regime")["days"]
+                       .agg(Count="count", Median="median", Mean="mean",
+                            P90=lambda x: x.quantile(0.9))
+                       .round(1).reset_index()
+                       .rename(columns={"regime": "Regime"}))
+            st.dataframe(_sum155, use_container_width=True, hide_index=True)
+            _cur_dwell155 = int(_runs155[-1]["days"]) if _runs155 else 0
+            _cur_rname155 = _runs155[-1]["regime"] if _runs155 else "Unknown"
+            _rr155 = _runs_df155[_runs_df155["regime"] == _cur_rname155]["days"]
+            _pct_surv155 = float((_rr155 > _cur_dwell155).mean() * 100) if len(_rr155) > 0 else float("nan")
+            st.caption(
+                f"Current regime: **{_cur_rname155}** · Dwell: **{_cur_dwell155} days** · "
+                f"{_pct_surv155:.0f}% of historical {_cur_rname155} episodes lasted longer."
+            )
+    except Exception as _e155:
+        st.caption(f"Regime dwell time: {_e155}")
+
+if _active_sub == 156:
+    try:
+        import plotly.graph_objects as _go156
+        import numpy as _np156
+        import pandas as _pd156
+        _df156 = df.copy() if "df" in dir() else None
+        _has156 = (_df156 is not None
+                   and "hy_spread" in _df156.columns
+                   and "real_yield_proxy" in _df156.columns)
+        if not _has156:
+            st.info("hy_spread and real_yield_proxy required.")
+        else:
+            st.subheader("Credit Carry Decomposition")
+            st.caption("HY OAS decomposed into an expected-loss proxy (scaled from real yield stress level) and excess carry — the risk premium above expected default losses. Thin excess carry = expensive credit; thick excess carry = better value. Percentile tracks richness/cheapness historically.")
+            _hy156 = _df156["hy_spread"].dropna()
+            _real156 = _df156["real_yield_proxy"].dropna()
+            _j156 = _hy156.to_frame("hy").join(_real156.to_frame("real"), how="inner").dropna().tail(1260)
+            _rl_min156 = _j156["real"].quantile(0.05)
+            _rl_max156 = _j156["real"].quantile(0.95)
+            _rl_norm156 = (_j156["real"] - _rl_min156) / (_rl_max156 - _rl_min156 + 1e-9)
+            _exp_loss156 = (_rl_norm156 * 250).clip(0, 400)
+            _excess156 = (_j156["hy"] - _exp_loss156).clip(0)
+            _fig156 = _go156.Figure()
+            _fig156.add_trace(_go156.Scatter(
+                x=_j156.index, y=_j156["hy"].values,
+                name="HY OAS (total)", line=dict(color="#ef4444", width=1.5)
+            ))
+            _fig156.add_trace(_go156.Scatter(
+                x=_j156.index, y=_exp_loss156.values,
+                name="Expected Loss Proxy", line=dict(color="#f59e0b", width=1, dash="dash"),
+                fill="tozeroy", fillcolor="rgba(245,158,11,0.08)"
+            ))
+            _fig156.add_trace(_go156.Scatter(
+                x=_j156.index, y=_excess156.values,
+                name="Excess Carry", line=dict(color="#22c55e", width=1.5)
+            ))
+            _fig156.update_layout(
+                title="HY Carry Decomposition — Total vs Expected Loss vs Excess (5Y)",
+                height=380, yaxis_title="Bps",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(_fig156, use_container_width=True)
+            _cur_carry156 = float(_excess156.iloc[-1]) if _excess156.notna().any() else float("nan")
+            _carry_pct156 = float((_excess156 < _cur_carry156).mean() * 100) if not _np156.isnan(_cur_carry156) else float("nan")
+            _cur_hy156 = float(_j156["hy"].iloc[-1])
+            _cur_el156 = float(_exp_loss156.iloc[-1])
+            if not _np156.isnan(_cur_carry156):
+                _val156 = ("Rich" if _carry_pct156 < 30 else
+                           ("Cheap" if _carry_pct156 > 70 else "Fair Value"))
+                st.caption(
+                    f"Current HY OAS: **{_cur_hy156:.0f} bps** · "
+                    f"Expected loss proxy: **{_cur_el156:.0f} bps** · "
+                    f"Excess carry: **{_cur_carry156:.0f} bps** ({_carry_pct156:.0f}th pct) · "
+                    f"Valuation: **{_val156}**."
+                )
+    except Exception as _e156:
+        st.caption(f"Credit carry decomp: {_e156}")
