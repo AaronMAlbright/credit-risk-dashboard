@@ -1303,6 +1303,7 @@ _ANALYTICS_VIEWS = {
         ("Risk Appetite", 163), ("Carry Efficiency", 164),
         ("HY Term Structure", 172), ("Credit Diffusion", 174),
         ("BBB Cliff Risk", 175), ("Banking Flows", 183), ("Default Prob", 185),
+        ("Spread Decomp", 187), ("Corp Health", 188), ("Primary & Loan", 191),
     ],
     "Rates & Macro": [
         ("Overview", "ov_rm"),
@@ -1322,6 +1323,7 @@ _ANALYTICS_VIEWS = {
         ("Sahm Episodes", 143), ("Real Yield Episodes", 145),
         ("Credit-Labor Div", 152), ("Liquidity-Credit", 161),
         ("Initial Claims", 176), ("Oil-Credit", 177), ("FX-Credit", 181), ("Fed Balance Sheet", 182),
+        ("Yield Monitor", 189),
     ],
     "Risk Monitors": [
         ("Overview", "ov_risk"),
@@ -1341,6 +1343,7 @@ _ANALYTICS_VIEWS = {
         ("Vol of Vol", 148), ("Corr Regime", 154),
         ("Tail Skew", 167), ("Vol Clustering", 170),
         ("STLFSI", 178), ("MOVE-VIX Ratio", 179), ("X-Asset Corr", 180), ("ANFCI Suite", 186),
+        ("ETF Signals", 190),
     ],
     "Signal Lab": [
         ("Overview", "ov_sl"),
@@ -1378,7 +1381,7 @@ _ANALYTICS_VIEWS = {
         ("Monte Carlo", "m4"), ("Sub-period", "m5"), ("Sizing", "m6"),
         ("Scenarios", "m7"), ("OOS Splits", "m8"), ("Thresholds", "m9"),
         ("Merton DD", 15), ("Efficient Frontier", 16), ("Kelly Sizing", 17),
-        ("Risk Parity", 51),
+        ("Risk Parity", 51), ("Model Confidence", 192),
     ],
 }
 _ANALYTICS_SECTIONS = list(_ANALYTICS_VIEWS.keys())
@@ -23413,3 +23416,610 @@ if _active_sub == 186:
             f"{'Banking + CLO stress both elevated — systemic credit risk.' if _stress_combo186 else 'Banking and CLO stress within normal range.'}")
     except Exception as _e186:
         st.caption(f"ANFCI suite: {_e186}")
+
+# --- sub187: Spread Decomposition ---
+if _active_sub == 187:
+    st.subheader("Spread Decomposition")
+    st.caption("HY spread broken into expected loss, excess spread, and compensation ratio — how much are investors paid above fair value?")
+    try:
+        import plotly.graph_objects as _go187
+        import numpy as _np187
+        import pandas as _pd187
+        _df187 = df[["hy_spread","excess_spread_bps","expected_loss_bps","spread_compensation_ratio","excess_spread_percentile"]].dropna().copy()
+        _last187 = _df187.iloc[-1]
+        _scr_pct187 = float((_df187["spread_compensation_ratio"] < _last187["spread_compensation_ratio"]).mean() * 100)
+        _exc_pct187 = float((_df187["excess_spread_bps"] < _last187["excess_spread_bps"]).mean() * 100)
+        _c1_187, _c2_187, _c3_187, _c4_187 = st.columns(4)
+        _c1_187.metric("HY Spread", f"{_last187['hy_spread']:.0f} bps")
+        _c2_187.metric("Expected Loss", f"{_last187['expected_loss_bps']:.0f} bps", f"{_last187['expected_loss_bps']/max(_last187['hy_spread'],1)*100:.0f}% of spread")
+        _c3_187.metric("Excess Spread", f"{_last187['excess_spread_bps']:.0f} bps", f"{_exc_pct187:.0f}th pct")
+        _c4_187.metric("Compensation Ratio", f"{_last187['spread_compensation_ratio']:.2f}x", f"{_scr_pct187:.0f}th pct")
+        st.divider()
+        # Stacked area: EL + excess = total spread
+        _fig187a = _go187.Figure()
+        _fig187a.add_trace(_go187.Scatter(
+            x=_df187.index, y=_df187["expected_loss_bps"],
+            name="Expected Loss", stackgroup="spread",
+            fillcolor="rgba(239,68,68,0.6)", line=dict(color="#ef4444", width=0)
+        ))
+        _fig187a.add_trace(_go187.Scatter(
+            x=_df187.index, y=_df187["excess_spread_bps"].clip(lower=0),
+            name="Excess Spread (compensation)", stackgroup="spread",
+            fillcolor="rgba(16,185,129,0.5)", line=dict(color="#10b981", width=0)
+        ))
+        _fig187a.add_trace(_go187.Scatter(
+            x=_df187.index, y=_df187["hy_spread"],
+            name="HY Spread (total)", line=dict(color="#f59e0b", width=1.5, dash="dot"), stackgroup=None
+        ))
+        _fig187a.update_layout(
+            title="HY Spread Decomposition: Expected Loss vs Excess Spread",
+            height=360,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis_title="bps",
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig187a, use_container_width=True)
+        # Compensation ratio and excess spread percentile
+        _c1b_187, _c2b_187 = st.columns(2)
+        with _c1b_187:
+            _fig187b = _go187.Figure()
+            _fig187b.add_trace(_go187.Scatter(
+                x=_df187.index, y=_df187["spread_compensation_ratio"],
+                name="Compensation Ratio", fill="tozeroy",
+                fillcolor="rgba(16,185,129,0.12)", line=dict(color="#10b981", width=1.5)
+            ))
+            _fig187b.add_hline(y=1.0, line_dash="dash", line_color="#f59e0b", line_width=1,
+                               annotation_text="Fair value (1.0x)")
+            _fig187b.add_hline(y=float(_last187["spread_compensation_ratio"]),
+                               line_dash="dot", line_color="#3b82f6", line_width=1,
+                               annotation_text=f"Now: {_last187['spread_compensation_ratio']:.2f}x")
+            _fig187b.update_layout(
+                title="Spread Compensation Ratio",
+                height=240,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                yaxis_title="Ratio (>1 = compensated)",
+                margin=dict(t=40, b=30))
+            st.plotly_chart(_fig187b, use_container_width=True)
+        with _c2b_187:
+            _fig187c = _go187.Figure()
+            _fig187c.add_trace(_go187.Scatter(
+                x=_df187.index, y=_df187["excess_spread_percentile"],
+                name="Excess Spread Percentile", fill="tozeroy",
+                fillcolor="rgba(59,130,246,0.12)", line=dict(color="#3b82f6", width=1.5)
+            ))
+            _fig187c.add_hline(y=50, line_dash="dash", line_color="#4b5563", line_width=0.8)
+            _fig187c.add_hline(y=float(_last187["excess_spread_percentile"]),
+                               line_dash="dot", line_color="#f59e0b", line_width=1,
+                               annotation_text=f"Now: {_last187['excess_spread_percentile']:.0f}th")
+            _fig187c.update_layout(
+                title="Excess Spread Percentile",
+                height=240,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                yaxis_title="Percentile", yaxis_range=[0, 100],
+                margin=dict(t=40, b=30))
+            st.plotly_chart(_fig187c, use_container_width=True)
+        # Valuation summary
+        _val_signal187 = "Rich (below fair value)" if _last187["spread_compensation_ratio"] < 0.9 else ("Cheap (above fair value)" if _last187["spread_compensation_ratio"] > 1.1 else "Fair value")
+        st.info(
+            f"**Spread valuation: {_val_signal187}**  \n"
+            f"Of the {_last187['hy_spread']:.0f} bps total HY spread, {_last187['expected_loss_bps']:.0f} bps compensates for expected credit losses "
+            f"and {_last187['excess_spread_bps']:.0f} bps is excess (risk premium). "
+            f"Compensation ratio {_last187['spread_compensation_ratio']:.2f}x is at the {_scr_pct187:.0f}th historical percentile."
+        )
+    except Exception as _e187:
+        st.caption(f"Spread decomposition: {_e187}")
+
+# --- sub188: Corporate Health Suite ---
+if _active_sub == 188:
+    st.subheader("Corporate Health Suite")
+    st.caption("Corporate leverage cycle and profit cycle scores — fundamental credit quality drivers")
+    try:
+        import plotly.graph_objects as _go188
+        import numpy as _np188
+        import pandas as _pd188
+        _df188 = df[["corporate_leverage_score","corporate_profit_cycle_score","hy_spread","ig_spread"]].dropna().copy()
+        _last188 = _df188.iloc[-1]
+        _lev_pct188 = float((_df188["corporate_leverage_score"] < _last188["corporate_leverage_score"]).mean() * 100)
+        _pft_pct188 = float((_df188["corporate_profit_cycle_score"] < _last188["corporate_profit_cycle_score"]).mean() * 100)
+        _c1_188, _c2_188, _c3_188, _c4_188 = st.columns(4)
+        _c1_188.metric("Leverage Score", f"{_last188['corporate_leverage_score']:.2f}", f"{_lev_pct188:.0f}th pct")
+        _c2_188.metric("Profit Cycle", f"{_last188['corporate_profit_cycle_score']:.2f}", f"{_pft_pct188:.0f}th pct")
+        _c3_188.metric("HY Spread", f"{_last188['hy_spread']:.0f} bps")
+        _combined188 = (_last188["corporate_leverage_score"] + (1 - _last188["corporate_profit_cycle_score"])) / 2
+        _c4_188.metric("Combined Stress", f"{_combined188:.2f}", "high=stress")
+        st.divider()
+        # Time series: both scores + HY
+        _fig188a = _go188.Figure()
+        _fig188a.add_trace(_go188.Scatter(
+            x=_df188.index, y=_df188["corporate_leverage_score"],
+            name="Leverage Score (high=stressed)", line=dict(color="#ef4444", width=1.8), yaxis="y1"
+        ))
+        _fig188a.add_trace(_go188.Scatter(
+            x=_df188.index, y=_df188["corporate_profit_cycle_score"],
+            name="Profit Cycle Score (high=healthy)", line=dict(color="#10b981", width=1.8), yaxis="y1"
+        ))
+        _fig188a.add_trace(_go188.Scatter(
+            x=_df188.index, y=_df188["hy_spread"],
+            name="HY Spread (bps)", line=dict(color="#9aa0aa", width=1, dash="dot"), yaxis="y2"
+        ))
+        _fig188a.update_layout(
+            title="Corporate Leverage & Profit Cycle vs HY Spread",
+            height=340,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="Score", side="left"),
+            yaxis2=dict(title="HY Spread (bps)", side="right", overlaying="y", color="#9aa0aa", showgrid=False),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig188a, use_container_width=True)
+        # Quadrant scatter: leverage vs profit cycle
+        _c1b_188, _c2b_188 = st.columns(2)
+        with _c1b_188:
+            _fig188b = _go188.Figure()
+            _color_scale188 = _df188["hy_spread"].values
+            _fig188b.add_trace(_go188.Scatter(
+                x=_df188["corporate_leverage_score"], y=_df188["corporate_profit_cycle_score"],
+                mode="markers",
+                marker=dict(size=3, color=_color_scale188, colorscale=[[0,"#3b82f6"],[0.5,"#f59e0b"],[1,"#ef4444"]],
+                            colorbar=dict(title="HY bps", len=0.6), opacity=0.5),
+                name="History"
+            ))
+            _fig188b.add_trace(_go188.Scatter(
+                x=[_last188["corporate_leverage_score"]], y=[_last188["corporate_profit_cycle_score"]],
+                mode="markers", marker=dict(size=14, color="#f59e0b", symbol="star"), name="Now"
+            ))
+            _lev_med188 = float(_df188["corporate_leverage_score"].median())
+            _pft_med188 = float(_df188["corporate_profit_cycle_score"].median())
+            _fig188b.add_vline(x=_lev_med188, line_dash="dash", line_color="#4b5563", line_width=0.8)
+            _fig188b.add_hline(y=_pft_med188, line_dash="dash", line_color="#4b5563", line_width=0.8)
+            _fig188b.update_layout(
+                title="Corporate Health Quadrant",
+                height=280,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                xaxis_title="Leverage (high=stressed)", yaxis_title="Profit Cycle (high=healthy)",
+                margin=dict(t=40, b=30))
+            st.plotly_chart(_fig188b, use_container_width=True)
+        with _c2b_188:
+            # Rolling correlation
+            _roll_lev188 = _df188["corporate_leverage_score"].rolling(90).corr(_df188["hy_spread"])
+            _roll_pft188 = _df188["corporate_profit_cycle_score"].rolling(90).corr(_df188["hy_spread"])
+            _fig188c = _go188.Figure()
+            _fig188c.add_trace(_go188.Scatter(x=_df188.index, y=_roll_lev188,
+                                              name="Leverage↔HY (90d)", line=dict(color="#ef4444", width=1.5)))
+            _fig188c.add_trace(_go188.Scatter(x=_df188.index, y=_roll_pft188,
+                                              name="Profit↔HY (90d)", line=dict(color="#10b981", width=1.5)))
+            _fig188c.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=0.8)
+            _fig188c.update_layout(
+                title="Rolling 90d Correlation with HY Spread",
+                height=280,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                yaxis_title="Correlation", margin=dict(t=40, b=30))
+            st.plotly_chart(_fig188c, use_container_width=True)
+        # Quadrant label
+        _q188 = ("High Leverage / Low Profits — worst fundamentals" if _last188["corporate_leverage_score"] > _lev_med188 and _last188["corporate_profit_cycle_score"] < _pft_med188
+                 else "Low Leverage / High Profits — best fundamentals" if _last188["corporate_leverage_score"] <= _lev_med188 and _last188["corporate_profit_cycle_score"] >= _pft_med188
+                 else "Mixed signals")
+        _corr_lev188 = round(float(_df188["corporate_leverage_score"].corr(_df188["hy_spread"])), 2)
+        _corr_pft188 = round(float(_df188["corporate_profit_cycle_score"].corr(_df188["hy_spread"])), 2)
+        st.caption(
+            f"Quadrant: {_q188}. "
+            f"Leverage↔HY corr: {_corr_lev188:+.2f}; Profit↔HY corr: {_corr_pft188:+.2f}. "
+            f"Leverage {_lev_pct188:.0f}th pct, profit cycle {_pft_pct188:.0f}th pct.")
+    except Exception as _e188:
+        st.caption(f"Corporate health: {_e188}")
+
+# --- sub189: Absolute Yield Monitor ---
+if _active_sub == 189:
+    st.subheader("Absolute Yield Monitor")
+    st.caption("HY and IG absolute yield levels vs fed funds — carry above cash, real yield, and yield curve context")
+    try:
+        import plotly.graph_objects as _go189
+        import numpy as _np189
+        import pandas as _pd189
+        _df189 = df[["hy_yield","ig_yield","fed_funds_rate","yield_10y","yield_2y","breakeven_10y"]].dropna().copy()
+        _df189["hy_carry_over_cash"] = _df189["hy_yield"] - _df189["fed_funds_rate"]
+        _df189["ig_carry_over_cash"] = _df189["ig_yield"] - _df189["fed_funds_rate"]
+        _df189["hy_real_yield"] = _df189["hy_yield"] - _df189["breakeven_10y"]
+        _df189["ig_real_yield"] = _df189["ig_yield"] - _df189["breakeven_10y"]
+        _last189 = _df189.iloc[-1]
+        _c1_189, _c2_189, _c3_189, _c4_189 = st.columns(4)
+        _c1_189.metric("HY Yield", f"{_last189['hy_yield']:.2f}%", f"{_last189['hy_carry_over_cash']:+.2f}% over cash")
+        _c2_189.metric("IG Yield", f"{_last189['ig_yield']:.2f}%", f"{_last189['ig_carry_over_cash']:+.2f}% over cash")
+        _c3_189.metric("Fed Funds", f"{_last189['fed_funds_rate']:.2f}%")
+        _c4_189.metric("HY Real Yield", f"{_last189['hy_real_yield']:.2f}%")
+        st.divider()
+        # Absolute yield time series
+        _fig189a = _go189.Figure()
+        _fig189a.add_trace(_go189.Scatter(
+            x=_df189.index, y=_df189["hy_yield"],
+            name="HY Yield", line=dict(color="#ef4444", width=2)
+        ))
+        _fig189a.add_trace(_go189.Scatter(
+            x=_df189.index, y=_df189["ig_yield"],
+            name="IG Yield", line=dict(color="#3b82f6", width=1.5)
+        ))
+        _fig189a.add_trace(_go189.Scatter(
+            x=_df189.index, y=_df189["fed_funds_rate"],
+            name="Fed Funds Rate", line=dict(color="#10b981", width=1.5, dash="dash")
+        ))
+        _fig189a.add_trace(_go189.Scatter(
+            x=_df189.index, y=_df189["yield_10y"],
+            name="10y Treasury", line=dict(color="#f59e0b", width=1, dash="dot")
+        ))
+        _fig189a.update_layout(
+            title="Absolute Yield Levels: HY / IG / Fed Funds / 10y",
+            height=340,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis_title="Yield (%)",
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig189a, use_container_width=True)
+        # Carry over cash
+        _fig189b = _go189.Figure()
+        _fig189b.add_trace(_go189.Scatter(
+            x=_df189.index, y=_df189["hy_carry_over_cash"],
+            name="HY carry over cash", fill="tozeroy",
+            fillcolor="rgba(239,68,68,0.15)", line=dict(color="#ef4444", width=1.5)
+        ))
+        _fig189b.add_trace(_go189.Scatter(
+            x=_df189.index, y=_df189["ig_carry_over_cash"],
+            name="IG carry over cash", fill="tozeroy",
+            fillcolor="rgba(59,130,246,0.12)", line=dict(color="#3b82f6", width=1.5)
+        ))
+        _fig189b.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=1)
+        _fig189b.update_layout(
+            title="Carry Over Cash (Yield - Fed Funds Rate)",
+            height=220,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis_title="Carry (%)",
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=30),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig189b, use_container_width=True)
+        # Real yield
+        _fig189c = _go189.Figure()
+        _fig189c.add_trace(_go189.Scatter(
+            x=_df189.index, y=_df189["hy_real_yield"],
+            name="HY Real Yield", line=dict(color="#ef4444", width=1.5)
+        ))
+        _fig189c.add_trace(_go189.Scatter(
+            x=_df189.index, y=_df189["ig_real_yield"],
+            name="IG Real Yield", line=dict(color="#3b82f6", width=1.5)
+        ))
+        _fig189c.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=1, annotation_text="Zero real yield")
+        _fig189c.update_layout(
+            title="Real Yield (Yield - 10y Breakeven Inflation)",
+            height=200,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis_title="Real Yield (%)",
+            margin=dict(t=40, b=25),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig189c, use_container_width=True)
+        _hy_carry_pct189 = float((_df189["hy_carry_over_cash"] < _last189["hy_carry_over_cash"]).mean() * 100)
+        st.caption(
+            f"HY yield {_last189['hy_yield']:.2f}% / IG {_last189['ig_yield']:.2f}% vs fed funds {_last189['fed_funds_rate']:.2f}%. "
+            f"HY carry over cash {_last189['hy_carry_over_cash']:+.2f}% ({_hy_carry_pct189:.0f}th pct). "
+            f"HY real yield {_last189['hy_real_yield']:.2f}%.")
+    except Exception as _e189:
+        st.caption(f"Absolute yield monitor: {_e189}")
+
+# --- sub190: ETF Flow & Dislocation ---
+if _active_sub == 190:
+    st.subheader("ETF Flow & Dislocation Monitor")
+    st.caption("Credit ETF fund flows and NAV dislocation — technical stress signals from ETF market structure")
+    try:
+        import plotly.graph_objects as _go190
+        import numpy as _np190
+        import pandas as _pd190
+        _df190 = df[["etf_dislocation_score","etf_fund_flow_score","hy_spread","vix"]].dropna().copy()
+        _last190 = _df190.iloc[-1]
+        _dis_pct190 = float((_df190["etf_dislocation_score"] < _last190["etf_dislocation_score"]).mean() * 100)
+        _flow_pct190 = float((_df190["etf_fund_flow_score"] < _last190["etf_fund_flow_score"]).mean() * 100)
+        _c1_190, _c2_190, _c3_190, _c4_190 = st.columns(4)
+        _c1_190.metric("Dislocation Score", f"{_last190['etf_dislocation_score']:.2f}", f"{_dis_pct190:.0f}th pct")
+        _c2_190.metric("Fund Flow Score", f"{_last190['etf_fund_flow_score']:.2f}", f"{_flow_pct190:.0f}th pct")
+        _c3_190.metric("HY Spread", f"{_last190['hy_spread']:.0f} bps")
+        _dual_stress190 = _last190["etf_dislocation_score"] > _df190["etf_dislocation_score"].quantile(0.80) and _last190["etf_fund_flow_score"] > _df190["etf_fund_flow_score"].quantile(0.80)
+        _c4_190.metric("ETF Stress", "Elevated" if _dual_stress190 else "Normal")
+        st.divider()
+        # Dual-panel: dislocation + fund flow vs HY
+        _fig190a = _go190.Figure()
+        _fig190a.add_trace(_go190.Scatter(
+            x=_df190.index, y=_df190["etf_dislocation_score"],
+            name="Dislocation Score", line=dict(color="#f59e0b", width=1.8), yaxis="y1"
+        ))
+        _fig190a.add_trace(_go190.Scatter(
+            x=_df190.index, y=_df190["etf_fund_flow_score"],
+            name="Fund Flow Score", line=dict(color="#3b82f6", width=1.5), yaxis="y1"
+        ))
+        _fig190a.add_trace(_go190.Scatter(
+            x=_df190.index, y=_df190["hy_spread"],
+            name="HY Spread (bps)", line=dict(color="#ef4444", width=1, dash="dot"), yaxis="y2"
+        ))
+        # Mark dislocation spikes
+        _disloc_q80_190 = float(_df190["etf_dislocation_score"].quantile(0.80))
+        _fig190a.add_hline(y=_disloc_q80_190, yref="y1", line_dash="dot", line_color="#f59e0b",
+                           line_width=0.8, annotation_text="80th pct", annotation_position="bottom right")
+        _fig190a.update_layout(
+            title="ETF Dislocation & Fund Flow Scores vs HY Spread",
+            height=340,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="Score", side="left"),
+            yaxis2=dict(title="HY Spread (bps)", side="right", overlaying="y", color="#ef4444", showgrid=False),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig190a, use_container_width=True)
+        # Scatter: dislocation vs fund flow (joint stress map)
+        _c1b_190, _c2b_190 = st.columns(2)
+        with _c1b_190:
+            _fig190b = _go190.Figure()
+            _fig190b.add_trace(_go190.Scatter(
+                x=_df190["etf_fund_flow_score"], y=_df190["etf_dislocation_score"],
+                mode="markers",
+                marker=dict(size=3, color=_df190["hy_spread"].values,
+                            colorscale=[[0,"#3b82f6"],[0.5,"#f59e0b"],[1,"#ef4444"]],
+                            colorbar=dict(title="HY bps", len=0.5), opacity=0.4),
+                name="History"
+            ))
+            _fig190b.add_trace(_go190.Scatter(
+                x=[_last190["etf_fund_flow_score"]], y=[_last190["etf_dislocation_score"]],
+                mode="markers", marker=dict(size=14, color="#f59e0b", symbol="star"), name="Now"
+            ))
+            _flow_med190 = float(_df190["etf_fund_flow_score"].median())
+            _dis_med190 = float(_df190["etf_dislocation_score"].median())
+            _fig190b.add_vline(x=_flow_med190, line_dash="dash", line_color="#4b5563", line_width=0.8)
+            _fig190b.add_hline(y=_dis_med190, line_dash="dash", line_color="#4b5563", line_width=0.8)
+            _fig190b.update_layout(
+                title="ETF Stress Quadrant",
+                height=270,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                xaxis_title="Fund Flow Score", yaxis_title="Dislocation Score",
+                margin=dict(t=40, b=30))
+            st.plotly_chart(_fig190b, use_container_width=True)
+        with _c2b_190:
+            # Rolling correlation with HY
+            _roll_dis190 = _df190["etf_dislocation_score"].rolling(63).corr(_df190["hy_spread"])
+            _roll_flow190 = _df190["etf_fund_flow_score"].rolling(63).corr(_df190["hy_spread"])
+            _fig190c = _go190.Figure()
+            _fig190c.add_trace(_go190.Scatter(x=_df190.index, y=_roll_dis190,
+                                              name="Dislocation↔HY", line=dict(color="#f59e0b", width=1.5)))
+            _fig190c.add_trace(_go190.Scatter(x=_df190.index, y=_roll_flow190,
+                                              name="Flow↔HY", line=dict(color="#3b82f6", width=1.5)))
+            _fig190c.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=0.8)
+            _fig190c.update_layout(
+                title="Rolling 63d Corr with HY",
+                height=270,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                yaxis_title="Correlation", margin=dict(t=40, b=30))
+            st.plotly_chart(_fig190c, use_container_width=True)
+        _corr_dis190 = round(float(_df190["etf_dislocation_score"].corr(_df190["hy_spread"])), 2)
+        st.caption(
+            f"ETF dislocation {_last190['etf_dislocation_score']:.2f} ({_dis_pct190:.0f}th pct); "
+            f"fund flow score {_last190['etf_fund_flow_score']:.2f} ({_flow_pct190:.0f}th pct). "
+            f"Dislocation↔HY correlation: {_corr_dis190:+.2f}. "
+            f"{'Dual ETF stress signal — monitor for forced selling.' if _dual_stress190 else 'ETF market structure within normal range.'}")
+    except Exception as _e190:
+        st.caption(f"ETF flow & dislocation: {_e190}")
+
+# --- sub191: Primary & Loan Market Monitor ---
+if _active_sub == 191:
+    st.subheader("Primary & Loan Market Monitor")
+    st.caption("New issuance conditions, loan market health, and institutional credit demand — supply-side credit signals")
+    try:
+        import plotly.graph_objects as _go191
+        import numpy as _np191
+        import pandas as _pd191
+        _df191 = df[["primary_market_score","loan_market_score","institutional_credit_score","hy_spread","ig_spread"]].dropna().copy()
+        _last191 = _df191.iloc[-1]
+        _pm_pct191 = float((_df191["primary_market_score"] < _last191["primary_market_score"]).mean() * 100)
+        _lm_pct191 = float((_df191["loan_market_score"] < _last191["loan_market_score"]).mean() * 100)
+        _ic_pct191 = float((_df191["institutional_credit_score"] < _last191["institutional_credit_score"]).mean() * 100)
+        _c1_191, _c2_191, _c3_191, _c4_191 = st.columns(4)
+        _c1_191.metric("Primary Market", f"{_last191['primary_market_score']:.2f}", f"{_pm_pct191:.0f}th pct")
+        _c2_191.metric("Loan Market", f"{_last191['loan_market_score']:.2f}", f"{_lm_pct191:.0f}th pct")
+        _c3_191.metric("Institutional Credit", f"{_last191['institutional_credit_score']:.2f}", f"{_ic_pct191:.0f}th pct")
+        _avg_supply191 = (_last191["primary_market_score"] + _last191["loan_market_score"] + _last191["institutional_credit_score"]) / 3
+        _c4_191.metric("Avg Supply Signal", f"{_avg_supply191:.2f}")
+        st.divider()
+        # All three vs HY spread
+        _fig191a = _go191.Figure()
+        _fig191a.add_trace(_go191.Scatter(
+            x=_df191.index, y=_df191["primary_market_score"],
+            name="Primary Market Score", line=dict(color="#3b82f6", width=1.5), yaxis="y1"
+        ))
+        _fig191a.add_trace(_go191.Scatter(
+            x=_df191.index, y=_df191["loan_market_score"],
+            name="Loan Market Score", line=dict(color="#10b981", width=1.5), yaxis="y1"
+        ))
+        _fig191a.add_trace(_go191.Scatter(
+            x=_df191.index, y=_df191["institutional_credit_score"],
+            name="Institutional Credit Score", line=dict(color="#a78bfa", width=1.5), yaxis="y1"
+        ))
+        _fig191a.add_trace(_go191.Scatter(
+            x=_df191.index, y=_df191["hy_spread"],
+            name="HY Spread (bps)", line=dict(color="#ef4444", width=1, dash="dot"), yaxis="y2"
+        ))
+        _fig191a.update_layout(
+            title="Primary Market, Loan Market & Institutional Credit vs HY Spread",
+            height=340,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="Score", side="left"),
+            yaxis2=dict(title="HY Spread (bps)", side="right", overlaying="y", color="#ef4444", showgrid=False),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig191a, use_container_width=True)
+        # Composite supply signal vs HY
+        _df191["supply_composite"] = (_df191["primary_market_score"] + _df191["loan_market_score"] + _df191["institutional_credit_score"]) / 3
+        _c1b_191, _c2b_191 = st.columns(2)
+        with _c1b_191:
+            _fig191b = _go191.Figure()
+            _fig191b.add_trace(_go191.Scatter(
+                x=_df191.index, y=_df191["supply_composite"],
+                name="Supply Composite", fill="tozeroy",
+                fillcolor="rgba(59,130,246,0.12)", line=dict(color="#3b82f6", width=1.5)
+            ))
+            _fig191b.update_layout(
+                title="Supply Composite Score",
+                height=230,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=11),
+                yaxis_title="Score", margin=dict(t=40, b=30))
+            st.plotly_chart(_fig191b, use_container_width=True)
+        with _c2b_191:
+            # Correlation table
+            _corr191 = _df191[["primary_market_score","loan_market_score","institutional_credit_score","hy_spread"]].corr()[["hy_spread"]].round(2)
+            _corr191.index = ["Primary Market", "Loan Market", "Institutional Credit", "HY Spread"]
+            _corr191.columns = ["↔ HY Spread"]
+            st.markdown("**Correlation with HY Spread**")
+            st.dataframe(_corr191, use_container_width=True)
+            # Regime: all three above/below median
+            _pm_high191 = _last191["primary_market_score"] > _df191["primary_market_score"].median()
+            _lm_high191 = _last191["loan_market_score"] > _df191["loan_market_score"].median()
+            _ic_high191 = _last191["institutional_credit_score"] > _df191["institutional_credit_score"].median()
+            _n_elevated191 = sum([_pm_high191, _lm_high191, _ic_high191])
+            _supply_label191 = "All elevated — tight supply conditions" if _n_elevated191 == 3 else f"{_n_elevated191}/3 signals elevated"
+            st.info(f"Supply signal: {_supply_label191}")
+        st.caption(
+            f"Primary market {_last191['primary_market_score']:.2f} ({_pm_pct191:.0f}th pct), "
+            f"loan market {_last191['loan_market_score']:.2f} ({_lm_pct191:.0f}th pct), "
+            f"institutional credit {_last191['institutional_credit_score']:.2f} ({_ic_pct191:.0f}th pct). "
+            f"Composite supply signal: {_avg_supply191:.2f}.")
+    except Exception as _e191:
+        st.caption(f"Primary & loan market: {_e191}")
+
+# --- sub192: Model Confidence Monitor ---
+if _active_sub == 192:
+    st.subheader("Model Confidence Monitor")
+    st.caption("Signal confidence and risk appetite alignment — when to trust the model and when regime uncertainty is elevated")
+    try:
+        import plotly.graph_objects as _go192
+        import numpy as _np192
+        import pandas as _pd192
+        _score_col192 = next((c for c in ["composite_score_smooth","credit_risk_score_smooth"] if c in df.columns), None)
+        _df192_cols = ["model_confidence","risk_appetite_score_smooth","hy_spread","vix"]
+        if _score_col192:
+            _df192_cols.append(_score_col192)
+        _df192 = df[_df192_cols].dropna().copy()
+        _last192 = _df192.iloc[-1]
+        _mc_pct192 = float((_df192["model_confidence"] < _last192["model_confidence"]).mean() * 100)
+        _ra_pct192 = float((_df192["risk_appetite_score_smooth"] < _last192["risk_appetite_score_smooth"]).mean() * 100)
+        _c1_192, _c2_192, _c3_192, _c4_192 = st.columns(4)
+        _c1_192.metric("Model Confidence", f"{_last192['model_confidence']:.2f}", f"{_mc_pct192:.0f}th pct")
+        _c2_192.metric("Risk Appetite", f"{_last192['risk_appetite_score_smooth']:.2f}", f"{_ra_pct192:.0f}th pct")
+        _c3_192.metric("VIX", f"{_last192['vix']:.1f}")
+        _trust192 = _last192["model_confidence"] > _df192["model_confidence"].quantile(0.50)
+        _c4_192.metric("Model Signal", "High confidence" if _trust192 else "Low confidence")
+        st.divider()
+        # Model confidence + risk appetite over time
+        _fig192a = _go192.Figure()
+        _fig192a.add_trace(_go192.Scatter(
+            x=_df192.index, y=_df192["model_confidence"],
+            name="Model Confidence", fill="tozeroy",
+            fillcolor="rgba(16,185,129,0.15)", line=dict(color="#10b981", width=1.8), yaxis="y1"
+        ))
+        _fig192a.add_trace(_go192.Scatter(
+            x=_df192.index, y=_df192["risk_appetite_score_smooth"],
+            name="Risk Appetite Score", line=dict(color="#3b82f6", width=1.5), yaxis="y2"
+        ))
+        _fig192a.add_trace(_go192.Scatter(
+            x=_df192.index, y=_df192["hy_spread"],
+            name="HY Spread (bps)", line=dict(color="#ef4444", width=1, dash="dot"), yaxis="y3"
+        ))
+        _fig192a.update_layout(
+            title="Model Confidence & Risk Appetite vs HY Spread",
+            height=340,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            yaxis=dict(title="Confidence", side="left", color="#10b981"),
+            yaxis2=dict(title="Risk Appetite", side="right", overlaying="y", color="#3b82f6", showgrid=False),
+            yaxis3=dict(title="HY bps", overlaying="y", side="right", position=0.95, color="#ef4444", showgrid=False, visible=False),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=50, b=40),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0"))
+        )
+        st.plotly_chart(_fig192a, use_container_width=True)
+        # Low confidence periods as context for score interpretation
+        _low_conf_q25_192 = float(_df192["model_confidence"].quantile(0.25))
+        _low_conf_mask192 = _df192["model_confidence"] < _low_conf_q25_192
+        if _score_col192 and _score_col192 in _df192.columns:
+            _c1b_192, _c2b_192 = st.columns(2)
+            with _c1b_192:
+                # Score in high vs low confidence regimes
+                _df192["conf_regime"] = _low_conf_mask192.map({True: "Low Confidence", False: "High Confidence"})
+                _conf_stats192 = _df192.groupby("conf_regime")[_score_col192].agg(["mean","std"]).round(3)
+                _conf_stats192.columns = ["Mean Score", "Std"]
+                _conf_hy192 = _df192.groupby("conf_regime")["hy_spread"].agg(["mean","std"]).round(1)
+                _conf_hy192.columns = ["Mean HY", "HY Std"]
+                _combined_conf192 = _conf_stats192.join(_conf_hy192)
+                st.markdown("**Score & HY by Confidence Regime**")
+                st.dataframe(_combined_conf192, use_container_width=True)
+            with _c2b_192:
+                # Model confidence vs VIX scatter
+                _fig192b = _go192.Figure()
+                _fig192b.add_trace(_go192.Scatter(
+                    x=_df192["vix"], y=_df192["model_confidence"],
+                    mode="markers", marker=dict(size=3, color="#10b981", opacity=0.3), name="History"
+                ))
+                _fig192b.add_trace(_go192.Scatter(
+                    x=[_last192["vix"]], y=[_last192["model_confidence"]],
+                    mode="markers", marker=dict(size=12, color="#f59e0b", symbol="star"), name="Now"
+                ))
+                _corr_mc_vix192 = round(float(_df192["model_confidence"].corr(_df192["vix"])), 2)
+                _fig192b.update_layout(
+                    title=f"Model Confidence vs VIX (r={_corr_mc_vix192:+.2f})",
+                    height=230,
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    xaxis_title="VIX", yaxis_title="Model Confidence",
+                    margin=dict(t=40, b=30))
+                st.plotly_chart(_fig192b, use_container_width=True)
+        # Risk appetite distribution
+        _fig192c = _go192.Figure()
+        _fig192c.add_trace(_go192.Histogram(
+            x=_df192["risk_appetite_score_smooth"], nbinsx=50,
+            marker_color="#3b82f6", opacity=0.7
+        ))
+        _fig192c.add_vline(x=float(_last192["risk_appetite_score_smooth"]), line_dash="dash",
+                           line_color="#f59e0b",
+                           annotation_text=f"Now: {_last192['risk_appetite_score_smooth']:.2f}")
+        _fig192c.update_layout(
+            title="Risk Appetite Score Distribution",
+            height=180,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            xaxis_title="Risk Appetite Score", yaxis_title="Count",
+            margin=dict(t=40, b=25))
+        st.plotly_chart(_fig192c, use_container_width=True)
+        _div_signal192 = abs(_last192["model_confidence"] - _last192["risk_appetite_score_smooth"]) > 0.3
+        st.caption(
+            f"Model confidence {_last192['model_confidence']:.2f} ({_mc_pct192:.0f}th pct). "
+            f"Risk appetite {_last192['risk_appetite_score_smooth']:.2f} ({_ra_pct192:.0f}th pct). "
+            f"{'Confidence-risk appetite divergence — signal reliability may be reduced.' if _div_signal192 else 'Model confidence and risk appetite aligned.'} "
+            f"Low-confidence periods (bottom quartile) have wider score dispersion."
+        )
+    except Exception as _e192:
+        st.caption(f"Model confidence: {_e192}")
