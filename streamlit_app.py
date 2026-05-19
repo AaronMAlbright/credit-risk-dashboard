@@ -1207,6 +1207,104 @@ with st.sidebar.expander("⚙ Model Config"):
         "Edit `src/backtester.py` constants to change defaults."
     )
 
+# ── Sidebar Navigation ────────────────────────────────────────────────────────
+_ANALYTICS_VIEWS = {
+    "Credit Markets": [
+        ("Defaults", 19), ("Fwd Sim", 20), ("CDX Proxy", 21),
+        ("Default Cycle", 24), ("Spread Vol", 27), ("Fallen Angel", 28),
+        ("Global Credit", 29), ("Corp Leverage", 30), ("Seasonality", 31),
+        ("Quality Migration", 40), ("Loan Market", 42), ("Credit Basis", 48),
+        ("Issuance", 60), ("Distressed", 61), ("CLO", 62),
+        ("CDS PD", 73), ("EM Credit", 77), ("Carry Breakeven", 78),
+        ("Credit Momentum", 87), ("Quality Curve", 89),
+        ("Spread Percentile", 100), ("Credit Cycle", 102),
+        ("HY Momentum", 105), ("Credit Regime", 110),
+        ("Credit Risk Score", 117), ("HY Lead-Lag", 130),
+        ("Spread Vol Regime", 136),
+    ],
+    "Rates & Macro": [
+        ("Regime Returns", 23), ("X-Asset Momentum", 38), ("Macro Surprise", 41),
+        ("Inflation Regime", 45), ("Fed Liquidity", 53), ("G4 Divergence", 54),
+        ("Swap Spreads", 57), ("XCcy Basis", 58), ("FCI", 63),
+        ("Credit Impulse", 64), ("Term Premium", 68), ("Curve Butterfly", 69),
+        ("SLOOS", 70), ("Corp Profits", 72),
+        ("Recession Model", 74), ("Real Rates", 75),
+        ("Fed Sentiment", 81), ("Taylor Rule", 84), ("Macro Nowcast", 85),
+        ("Term Structure", 90), ("NFCI", 92), ("Sahm Rule", 93),
+        ("Curve Velocity", 103), ("Curve Regime", 104), ("Real Yield Z", 106),
+        ("Unemp Momentum", 109), ("NFCI Trend", 111), ("Labor Warning", 114),
+        ("Treasury Score", 118), ("Spread Changes", 121),
+        ("Breakeven Inflation", 122), ("10y Yield", 125),
+        ("Macro-Credit Corr", 138),
+    ],
+    "Risk Monitors": [
+        ("Tail Risk", 6), ("Stress Test", 7), ("Contagion", 12),
+        ("Vol Regime", 39), ("Deleveraging", 44), ("Sector Stress", 46),
+        ("Put/Call", 47), ("Tail Dependency", 52), ("Portfolio Stress", 55),
+        ("AT1/CoCo", 56), ("CRE Stress", 59), ("ETF Dislocation", 65),
+        ("Sovereign Contagion", 66), ("Consumer Credit", 67), ("ETF Flows", 71),
+        ("MOVE Index", 76), ("VIX Term Structure", 79),
+        ("Options Skew", 80), ("DV01", 82), ("CVaR", 83),
+        ("VRP", 86), ("Funding Stress", 88),
+        ("Market Internals", 95), ("Vol-Credit Mismatch", 96), ("Drawdown", 97),
+        ("EQ-Credit Divergence", 98), ("Shock Monitor", 99),
+        ("Liquidity Score", 107), ("VIX Momentum", 112), ("FX/Commodity", 113),
+        ("Enhanced Funding", 119), ("Equity Returns", 124),
+        ("VIX Context", 127), ("Drawdown Anatomy", 133), ("Alert History", 139),
+    ],
+    "Signal Lab": [
+        ("Validation", 1), ("Attribution", 2), ("Timeline", 3),
+        ("Signal Decay", 4), ("Orthogonality", 5), ("Factors", 9),
+        ("Granger Causality", 18), ("EQ-Credit Corr", 22), ("Correlation Heatmap", 26),
+        ("PCA", 35), ("Composite", 37), ("Signal Movement", 50),
+        ("Data Diagnostics", 91), ("Score Decomposition", 94),
+        ("Score Velocity", 101), ("X-Asset Divergence", 108),
+        ("Complacency Score", 115), ("Macro Risk Score", 116),
+        ("Mean Reversion", 120), ("Score Consensus", 123),
+        ("Composite History", 126), ("Score Correlations", 128),
+        ("Score Z-Scores", 129), ("Score Persistence", 132),
+        ("Score Distributions", 135), ("Score Gradient", 137),
+    ],
+    "Regime": [
+        ("Performance", 8), ("Regime Validity", 10), ("Failure Analysis", 11),
+        ("Analogs", 13), ("Persistence", 14), ("Compare Dates", 25),
+        ("Traffic Light", 32), ("Shock Simulation", 33), ("Alert Backtest", 34),
+        ("Regime Forecast", 36), ("Regime Age", 43), ("Drawdown", 49),
+        ("Recession Analog", 131), ("Transition Matrix", 134),
+    ],
+    "Models": [
+        ("Sensitivity", "m1"), ("Transitions", "m2"), ("Regimes", "m3"),
+        ("Monte Carlo", "m4"), ("Sub-period", "m5"), ("Sizing", "m6"),
+        ("Scenarios", "m7"), ("OOS Splits", "m8"), ("Thresholds", "m9"),
+        ("Merton DD", 15), ("Efficient Frontier", 16), ("Kelly Sizing", 17),
+        ("Risk Parity", 51),
+    ],
+}
+_ANALYTICS_SECTIONS = list(_ANALYTICS_VIEWS.keys())
+_CORE_SECTIONS = ["Dashboard", "Signal", "Charts", "Portfolio", "Backtest", "History", "Allocation", "Health"]
+
+st.sidebar.divider()
+st.sidebar.markdown("**Navigate**")
+_nav_type = st.sidebar.radio(
+    "_nav_type", ["Core", "Analytics"],
+    horizontal=True, label_visibility="collapsed",
+)
+if _nav_type == "Core":
+    _active_section = st.sidebar.radio(
+        "_nav_core", _CORE_SECTIONS, label_visibility="collapsed",
+    )
+    _active_sub = None
+else:
+    _active_section = st.sidebar.radio(
+        "_nav_analytics", _ANALYTICS_SECTIONS, label_visibility="collapsed",
+    )
+    _av_list = _ANALYTICS_VIEWS[_active_section]
+    _av_label = st.sidebar.selectbox(
+        "_nav_view", [v[0] for v in _av_list], label_visibility="collapsed",
+    )
+    _active_sub = dict(_av_list)[_av_label]
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ── Executive Overview ───────────────────────────────────────────────────────
 st.title("Macro Credit Risk Dashboard")
 
@@ -1448,15 +1546,9 @@ if composite >= 70:
         f"Current decision: **{decision}**. Review signal carefully before acting."
     )
 
-(tab1, tab2, tab3, tab4,
- tab_credit, tab_macro, tab_risk, tab_siglab, tab_regime,
- tab_models, tab7, tab8, tab9) = st.tabs([
-    "Signal", "Charts", "Portfolio", "Backtest",
-    "Credit Markets", "Rates & Macro", "Risk Monitors", "Signal Lab", "Regime",
-    "Models", "History", "Allocation", "⚙ Health",
-])
+# Navigation is sidebar-driven — see _active_section / _active_sub
 
-with tab1:
+if _active_section == "Signal":
     st.header("Current Signal Snapshot")
 
     # ── Custom rule banners ───────────────────────────────────────────────────
@@ -2259,7 +2351,7 @@ with tab1:
     except Exception as _fs_e:
         st.caption(f"Funding stress unavailable: {_fs_e}")
 
-with tab2:
+if _active_section == "Charts":
     import plotly.graph_objects as _go
     from plotly.subplots import make_subplots as _make_subplots
     from src.backtester import OOS_CUTOFF as _OOS_CUTOFF
@@ -2871,7 +2963,7 @@ with tab2:
     except Exception as _ts_e:
         st.caption(f"Term structure unavailable: {_ts_e}")
 
-with tab3:
+if _active_section == "Portfolio":
     st.header("Portfolio Stance")
 
     _pw = generate_portfolio_weights(latest)
@@ -2978,142 +3070,8 @@ with tab3:
         with st.expander("Regime sample sizes"):
             st.json(_samples)
 
-with tab_credit:  # Credit Markets — 27 sub-tabs
-    (_analytics_sub19, _analytics_sub20, _analytics_sub21,
-     _analytics_sub24, _analytics_sub27, _analytics_sub28,
-     _analytics_sub29, _analytics_sub30, _analytics_sub31,
-     _analytics_sub40, _analytics_sub42, _analytics_sub48,
-     _analytics_sub60, _analytics_sub61, _analytics_sub62,
-     _analytics_sub73, _analytics_sub77, _analytics_sub78,
-     _analytics_sub87, _analytics_sub89,
-     _analytics_sub100, _analytics_sub102,
-     _analytics_sub105, _analytics_sub110,
-     _analytics_sub117, _analytics_sub130,
-     _analytics_sub136) = st.tabs([
-        "Defaults", "Fwd Sim", "CDX Proxy",
-        "Default Cycle", "Spread Vol", "Fallen Angel",
-        "Global Credit", "Corp Leverage", "Seasonality",
-        "Quality Migr", "Loan Market", "Credit Basis",
-        "Issuance", "Distressed", "CLO", "CDS PD",
-        "EM Credit", "Carry BEven",
-        "Credit Momentum", "Quality Curve",
-        "Spread Pctile", "Credit Cycle",
-        "HY Momentum", "Credit Regime",
-        "Credit Risk Score", "HY Lead-Lag",
-        "Spread Vol Regime",
-    ])
 
-with tab_macro:  # Rates & Macro — 33 sub-tabs
-    (_analytics_sub23, _analytics_sub38, _analytics_sub41,
-     _analytics_sub45, _analytics_sub53, _analytics_sub54,
-     _analytics_sub57, _analytics_sub58, _analytics_sub63,
-     _analytics_sub64, _analytics_sub68, _analytics_sub69,
-     _analytics_sub70, _analytics_sub72,
-     _analytics_sub74, _analytics_sub75,
-     _analytics_sub81, _analytics_sub84, _analytics_sub85,
-     _analytics_sub90, _analytics_sub92, _analytics_sub93,
-     _analytics_sub103,
-     _analytics_sub104, _analytics_sub106, _analytics_sub109,
-     _analytics_sub111, _analytics_sub114,
-     _analytics_sub118, _analytics_sub121,
-     _analytics_sub122, _analytics_sub125,
-     _analytics_sub138) = st.tabs([
-        "Regime Returns", "X-Asset Mom", "Macro Surprise",
-        "Inflation Regime", "Fed Liquidity", "G4 Divergence",
-        "Swap Spreads", "XCcy Basis", "FCI",
-        "Credit Impulse", "Term Premium", "Curve Fly",
-        "SLOOS", "Corp Profits",
-        "Recession Model", "Real Rates",
-        "Fed Sentiment", "Taylor Rule", "Macro Nowcast",
-        "Term Structure",
-        "NFCI", "Sahm Rule",
-        "Curve Velocity",
-        "Curve Regime", "Real Yield Z", "Unemp Momentum",
-        "NFCI Trend", "Labor Warning",
-        "Treasury Score", "Spread Changes",
-        "Breakeven", "10y Yield",
-        "Macro-Credit Corr",
-    ])
-
-with tab_risk:  # Risk Monitors — 35 sub-tabs
-    (_analytics_sub6, _analytics_sub7, _analytics_sub12,
-     _analytics_sub39, _analytics_sub44, _analytics_sub46,
-     _analytics_sub47, _analytics_sub52, _analytics_sub55,
-     _analytics_sub56, _analytics_sub59, _analytics_sub65,
-     _analytics_sub66, _analytics_sub67, _analytics_sub71,
-     _analytics_sub76, _analytics_sub79,
-     _analytics_sub80, _analytics_sub82, _analytics_sub83,
-     _analytics_sub86, _analytics_sub88,
-     _analytics_sub95, _analytics_sub96, _analytics_sub97,
-     _analytics_sub98, _analytics_sub99,
-     _analytics_sub107, _analytics_sub112, _analytics_sub113,
-     _analytics_sub119, _analytics_sub124, _analytics_sub127,
-     _analytics_sub133, _analytics_sub139) = st.tabs([
-        "Tail Risk", "Stress", "Contagion",
-        "Vol Regime", "Deleveraging", "Sector Stress",
-        "Put/Call", "Tail Dependency", "Port Stress",
-        "AT1/CoCo", "CRE Stress", "ETF Disloc",
-        "Sovereign", "Consumer Credit", "ETF Flows",
-        "MOVE Index", "VIX Term",
-        "Options Skew", "DV01", "CVaR",
-        "VRP", "Funding Stress",
-        "Mkt Internals", "Vol-Credit", "Drawdown",
-        "EQ-Credit Div", "Shock Monitor",
-        "Liquidity Score", "VIX Momentum", "FX/Commodity",
-        "Enh Funding", "Equity Returns", "VIX Context",
-        "Drawdown Anatomy", "Alert History",
-    ])
-
-with tab_siglab:  # Signal Lab — 26 sub-tabs
-    (_analytics_sub1, _analytics_sub2, _analytics_sub3,
-     _analytics_sub4, _analytics_sub5, _analytics_sub9,
-     _analytics_sub18, _analytics_sub22, _analytics_sub26,
-     _analytics_sub35, _analytics_sub37, _analytics_sub50,
-     _analytics_sub91, _analytics_sub94,
-     _analytics_sub101, _analytics_sub108,
-     _analytics_sub115, _analytics_sub116,
-     _analytics_sub120, _analytics_sub123,
-     _analytics_sub126, _analytics_sub128,
-     _analytics_sub129, _analytics_sub132,
-     _analytics_sub135, _analytics_sub137) = st.tabs([
-        "Validation", "Attribution", "Timeline",
-        "Sig Decay", "Ortho", "Factors",
-        "Granger", "EQ-Credit Corr", "Corr Heatmap",
-        "PCA", "Composite", "Signal Move",
-        "Data Diagnostics", "Score Decomp",
-        "Score Velocity", "X-Asset Div",
-        "Complacency", "Macro Risk Score",
-        "Mean Reversion", "Score Consensus",
-        "Composite History", "Score Corr",
-        "Score Z-Scores", "Score Persist",
-        "Score Distributions", "Score Gradient",
-    ])
-
-with tab_regime:  # Regime — 14 sub-tabs
-    (_analytics_sub8, _analytics_sub10, _analytics_sub11,
-     _analytics_sub13, _analytics_sub14, _analytics_sub25,
-     _analytics_sub32, _analytics_sub33, _analytics_sub34,
-     _analytics_sub36, _analytics_sub43, _analytics_sub49,
-     _analytics_sub131, _analytics_sub134) = st.tabs([
-        "Performance", "Regime Validity", "Failure Analysis",
-        "Analogs", "Persistence", "Compare Dates",
-        "Traffic Light", "Shock Sim", "Alert BT",
-        "Regime Fcast", "Regime Age", "Drawdown",
-        "Recession Analog", "Transition Matrix",
-    ])
-
-with tab_models:  # Models — 13 sub-tabs
-    (_models_sub1, _models_sub2, _models_sub3, _models_sub4,
-     _models_sub5, _models_sub6, _models_sub7, _models_sub8,
-     _models_sub9,
-     _analytics_sub15, _analytics_sub16, _analytics_sub17,
-     _analytics_sub51) = st.tabs([
-        "Sensitivity", "Transitions", "Regimes", "Monte Carlo",
-        "Sub-period", "Sizing", "Scenarios", "OOS Splits", "Thresholds",
-        "Merton DD", "Frontier", "Kelly", "Risk Parity",
-    ])
-
-with _analytics_sub1:
+if _active_sub == 1:
     st.header("Walk-Forward Validation")
 
     wf_windows, wf_regimes = load_walk_forward()
@@ -3482,7 +3440,7 @@ with _analytics_sub1:
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-with tab4:
+if _active_section == "Backtest":
     from src.backtester import OOS_CUTOFF, build_strategy_backtest, compute_oos_split, compute_benchmark_returns
     import plotly.graph_objects as _bt_go
 
@@ -4387,7 +4345,7 @@ with tab4:
     except Exception as _cb_err:
         st.warning(f"Credit backtest unavailable: {_cb_err}")
 
-with tab7:
+if _active_section == "History":
     st.header("Model Run History")
 
     if not history.empty:
@@ -4408,7 +4366,7 @@ with tab7:
     else:
         st.warning("No run history found yet.")
 
-with _models_sub1:
+if _active_sub == "m1":
     st.header("Parameter Sensitivity")
 
     # ── Live weight optimisation ──────────────────────────────────────────────
@@ -4607,7 +4565,7 @@ with _models_sub1:
                 st.line_chart(chart_data, use_container_width=True)
 
 
-with _models_sub2:
+if _active_sub == "m2":
     st.header("Regime Transition Analysis")
 
     regime_results = load_regime_transition(df)
@@ -4918,7 +4876,7 @@ with _models_sub2:
     except Exception as _ep_err:
         st.info(f"Stress episode stats not yet available. ({_ep_err})")
 
-with _analytics_sub2:
+if _active_sub == 2:
     st.header("Signal Attribution")
     st.caption(
         "Explains which sub-scores drive composite risk levels, what triggered each "
@@ -5033,7 +4991,7 @@ with _analytics_sub2:
         )
         st.dataframe(styled, use_container_width=True)
 
-with _analytics_sub3:
+if _active_sub == 3:
     st.header("Regime Timeline")
     st.caption(
         "Interactive charts with persistent regime color mapping. "
@@ -5178,7 +5136,7 @@ with _analytics_sub3:
     }
     st.caption(" · ".join(_cycle_legend[k] for k in _chron_filter if k in _cycle_legend))
 
-with _analytics_sub4:
+if _active_sub == 4:
     st.header("Signal Decay")
     st.caption(
         "How long does each regime's forward-return edge persist? "
@@ -5318,7 +5276,7 @@ with _analytics_sub4:
         )
         st.dataframe(styled_corr, use_container_width=True)
 
-with _analytics_sub5:
+if _active_sub == 5:
     st.header("Score Orthogonality")
     st.caption(
         "Measures how independent the six composite sub-scores are from each other. "
@@ -5473,7 +5431,7 @@ with _analytics_sub5:
     else:
         st.info("Insufficient data for rolling correlations (need > 60 rows).")
 
-with _analytics_sub6:
+if _active_sub == 6:
     st.header("Tail Risk")
     st.caption(
         "95% CVaR (Conditional Value at Risk / Expected Shortfall) by regime. "
@@ -5613,7 +5571,7 @@ with _analytics_sub6:
     else:
         st.info("No future drawdown data available.")
 
-with _analytics_sub7:
+if _active_sub == 7:
     st.header("Stress Episode Analysis")
     st.caption(
         "How did the composite risk signal behave during known market stress periods? "
@@ -5741,7 +5699,7 @@ with _analytics_sub7:
     else:
         st.info("No covered episodes in the current dataset range.")
 
-with _analytics_sub8:
+if _active_sub == 8:
     import plotly.graph_objects as _go
 
     st.header("Performance Scorecard")
@@ -5961,7 +5919,7 @@ with _analytics_sub8:
                 use_container_width=True,
             )
 
-with _analytics_sub9:
+if _active_sub == 9:
     import plotly.graph_objects as _go16
 
     st.header("Factor Exposure & Beta Decomposition")
@@ -6243,7 +6201,7 @@ with _analytics_sub9:
     else:
         st.info("Attribution decomposition not available — check strategy return columns.")
 
-with _models_sub3:
+if _active_sub == "m3":
     st.header("Regime Probability Nowcast")
     st.caption(
         "Gaussian Naive Bayes posterior over regime labels, fitted in-sample "
@@ -6395,7 +6353,7 @@ with _models_sub3:
             st.dataframe(pd.DataFrame(_rows17).set_index("Regime"),
                          use_container_width=True)
 
-with _models_sub4:
+if _active_sub == "m4":
     st.header("Monte Carlo Forward Simulation")
     st.caption(
         "1 000 Markov-chain paths seeded from current regime probabilities. "
@@ -6572,7 +6530,7 @@ with _models_sub4:
                 use_container_width=True,
             )
 
-with _models_sub5:
+if _active_sub == "m5":
     st.header("Sub-period Attribution")
     st.caption(
         "Performance, factor, and regime statistics broken down by calendar year. "
@@ -6762,7 +6720,7 @@ with _models_sub5:
                 "Shift in regime frequency across periods indicates changing market conditions."
             )
 
-with _models_sub6:
+if _active_sub == "m6":
     st.header("Position Sizing")
     st.caption(
         "Four complementary position sizing methods applied to the composite risk signal. "
@@ -6923,7 +6881,7 @@ with _models_sub6:
                 "Vol-target uses 21-day rolling window"
             )
 
-with _models_sub7:
+if _active_sub == "m7":
     st.header("Scenario Analysis")
     st.caption(
         "Apply market shocks to the current observation and trace their effect through the full "
@@ -7168,7 +7126,7 @@ with _models_sub7:
 # =============================================================================
 # MODELS sub-tab 8: True OOS Splits
 # =============================================================================
-with _models_sub8:
+if _active_sub == "m8":
     import plotly.graph_objects as _go_oos
     import numpy as _np_oos
 
@@ -7214,7 +7172,7 @@ with _models_sub8:
 # =============================================================================
 # ANALYTICS sub-tab 10: Regime Validity
 # =============================================================================
-with _analytics_sub10:
+if _active_sub == 10:
     import plotly.graph_objects as _go_rv
     import numpy as _np_rv
 
@@ -7373,7 +7331,7 @@ with _analytics_sub10:
 # =============================================================================
 # ANALYTICS sub-tab 11: Failure Analysis
 # =============================================================================
-with _analytics_sub11:
+if _active_sub == 11:
     import plotly.graph_objects as _go_fa
     import numpy as _np_fa
 
@@ -7527,7 +7485,7 @@ with _analytics_sub11:
 # =============================================================================
 # ANALYTICS sub-tab 12: Stress Contagion
 # =============================================================================
-with _analytics_sub12:
+if _active_sub == 12:
     import plotly.graph_objects as _go_cg
     st.header("Stress Contagion")
     st.caption(
@@ -7605,7 +7563,7 @@ with _analytics_sub12:
 # =============================================================================
 # ANALYTICS sub-tab 13: Historical Analogs
 # =============================================================================
-with _analytics_sub13:
+if _active_sub == 13:
     import plotly.graph_objects as _go_ha
     st.header("Historical Analogs")
     st.caption(
@@ -7682,7 +7640,7 @@ with _analytics_sub13:
 # =============================================================================
 # ANALYTICS sub-tab 14: Regime Persistence
 # =============================================================================
-with _analytics_sub14:
+if _active_sub == 14:
     import plotly.graph_objects as _go_rp
     st.header("Regime Persistence")
     st.caption(
@@ -7751,7 +7709,7 @@ with _analytics_sub14:
 # =============================================================================
 # ANALYTICS sub-tab 15: Merton Distance-to-Default
 # =============================================================================
-with _analytics_sub15:
+if _active_sub == 15:
     import plotly.graph_objects as _go_mrt
     st.header("Merton Distance-to-Default")
     st.markdown(
@@ -7827,7 +7785,7 @@ with _analytics_sub15:
 # =============================================================================
 # ANALYTICS sub-tab 16: Efficient Frontier
 # =============================================================================
-with _analytics_sub16:
+if _active_sub == 16:
     import plotly.graph_objects as _go_ef
     st.header("Mean-Variance Efficient Frontier")
     st.markdown(
@@ -7914,7 +7872,7 @@ with _analytics_sub16:
 # =============================================================================
 # ANALYTICS sub-tab 17: Kelly Criterion
 # =============================================================================
-with _analytics_sub17:
+if _active_sub == 17:
     st.header("Kelly Criterion — Optimal Position Sizing")
     st.markdown(
         """
@@ -7994,7 +7952,7 @@ with _analytics_sub17:
 # =============================================================================
 # ANALYTICS sub-tab 18: Granger Causality
 # =============================================================================
-with _analytics_sub18:
+if _active_sub == 18:
     st.header("Granger Causality — Lead/Lag Relationships")
     st.markdown(
         """
@@ -8050,7 +8008,7 @@ with _analytics_sub18:
 # =============================================================================
 # ANALYTICS sub-tab 19: Default Rate Forecasting
 # =============================================================================
-with _analytics_sub19:
+if _active_sub == 19:
     import plotly.graph_objects as _go_df
     st.header("Implied Default Rate — Jarrow-Turnbull Model")
     st.markdown(
@@ -8125,7 +8083,7 @@ with _analytics_sub19:
 # =============================================================================
 # ANALYTICS sub-tab 20: Regime-Conditioned Forward Simulation
 # =============================================================================
-with _analytics_sub20:
+if _active_sub == 20:
     import plotly.graph_objects as _go_fs
     st.header("Regime-Conditioned Forward Simulation")
     st.markdown(
@@ -8222,7 +8180,7 @@ with _analytics_sub20:
 # =============================================================================
 # ANALYTICS sub-tab 21: Synthetic CDX Proxy
 # =============================================================================
-with _analytics_sub21:
+if _active_sub == 21:
     import plotly.graph_objects as _go_cdx
     st.header("Synthetic CDX — Credit Default Swap Index Proxy")
     st.markdown(
@@ -8313,7 +8271,7 @@ with _analytics_sub21:
 # =============================================================================
 # ANALYTICS sub-tab 22: Equity-Credit Correlation Regime
 # =============================================================================
-with _analytics_sub22:
+if _active_sub == 22:
     import plotly.graph_objects as _go_cr
     st.header("Equity-Credit Correlation Regime")
     st.markdown(
@@ -8401,7 +8359,7 @@ with _analytics_sub22:
 # =============================================================================
 # ANALYTICS sub-tab 23: Regime-Conditional Return Table
 # =============================================================================
-with _analytics_sub23:
+if _active_sub == 23:
     import plotly.graph_objects as _go_rrt
     st.header("Regime-Conditional Return Table")
     st.markdown(
@@ -8476,7 +8434,7 @@ with _analytics_sub23:
 # =============================================================================
 # ANALYTICS sub-tab 24: Default Cycle Positioning
 # =============================================================================
-with _analytics_sub24:
+if _active_sub == 24:
     import plotly.graph_objects as _go_dc
     st.header("Default Cycle Positioning")
     st.markdown(
@@ -8537,7 +8495,7 @@ with _analytics_sub24:
 # =============================================================================
 # ANALYTICS sub-tab 25: Signal Comparison Mode
 # =============================================================================
-with _analytics_sub25:
+if _active_sub == 25:
     st.header("Signal Comparison Mode")
     st.markdown(
         """
@@ -8601,7 +8559,7 @@ with _analytics_sub25:
 # =============================================================================
 # ANALYTICS sub-tab 26: Cross-Asset Correlation Heatmap
 # =============================================================================
-with _analytics_sub26:
+if _active_sub == 26:
     import plotly.graph_objects as _go_hm
     st.header("Cross-Asset Correlation Heatmap")
     st.markdown(
@@ -8680,7 +8638,7 @@ with _analytics_sub26:
 # =============================================================================
 # ANALYTICS sub-tab 27: Spread Volatility Monitor
 # =============================================================================
-with _analytics_sub27:
+if _active_sub == 27:
     import plotly.graph_objects as _go_sv
     st.header("Credit Spread Volatility Monitor")
     st.markdown(
@@ -8746,7 +8704,7 @@ with _analytics_sub27:
 # =============================================================================
 # ANALYTICS sub-tab 28: Fallen Angel Risk
 # =============================================================================
-with _analytics_sub28:
+if _active_sub == 28:
     import plotly.graph_objects as _go_fa
     st.header("Fallen Angel Risk Monitor")
     st.markdown(
@@ -8821,7 +8779,7 @@ with _analytics_sub28:
 # =============================================================================
 # ANALYTICS sub-tab 29: Global Credit Divergence
 # =============================================================================
-with _analytics_sub29:
+if _active_sub == 29:
     import plotly.graph_objects as _go_gc
     st.header("Global Credit Divergence (US vs International HY)")
     st.markdown(
@@ -8870,7 +8828,7 @@ with _analytics_sub29:
 # =============================================================================
 # ANALYTICS sub-tab 30: Corporate Leverage Cycle
 # =============================================================================
-with _analytics_sub30:
+if _active_sub == 30:
     import plotly.graph_objects as _go_cl
     st.header("Corporate Leverage Cycle")
     st.markdown(
@@ -8931,7 +8889,7 @@ with _analytics_sub30:
 # =============================================================================
 # ANALYTICS sub-tab 31: Credit Spread Seasonality
 # =============================================================================
-with _analytics_sub31:
+if _active_sub == 31:
     import plotly.graph_objects as _go_sea
     st.header("Credit Spread Seasonality")
     st.markdown(
@@ -9018,7 +8976,7 @@ with _analytics_sub31:
 # =============================================================================
 # ANALYTICS sub-tab 32: Signal Traffic Light
 # =============================================================================
-with _analytics_sub32:
+if _active_sub == 32:
     import plotly.graph_objects as _go_tl
     st.header("Signal Traffic Light")
     st.markdown(
@@ -9085,7 +9043,7 @@ with _analytics_sub32:
 # =============================================================================
 # ANALYTICS sub-tab 33: Interactive Shock Simulator
 # =============================================================================
-with _analytics_sub33:
+if _active_sub == 33:
     import plotly.graph_objects as _go_shk
     st.header("Interactive Shock Simulator")
     st.markdown(
@@ -9165,7 +9123,7 @@ with _analytics_sub33:
 # =============================================================================
 # ANALYTICS sub-tab 34: Alert Precision/Recall Backtest
 # =============================================================================
-with _analytics_sub34:
+if _active_sub == 34:
     import plotly.graph_objects as _go_abt
     st.header("Alert Precision / Recall Backtest")
     st.markdown(
@@ -9235,7 +9193,7 @@ with _analytics_sub34:
 # =============================================================================
 # ANALYTICS sub-tab 35: PCA Signal Decomposition
 # =============================================================================
-with _analytics_sub35:
+if _active_sub == 35:
     import plotly.graph_objects as _go_pca
     st.header("PCA Signal Decomposition")
     st.markdown(
@@ -9326,7 +9284,7 @@ with _analytics_sub35:
 # =============================================================================
 # ANALYTICS sub-tab 36: Regime Transition Forecast
 # =============================================================================
-with _analytics_sub36:
+if _active_sub == 36:
     import plotly.graph_objects as _go_rf
     st.header("Regime Transition Forecast")
     st.markdown(
@@ -9409,7 +9367,7 @@ with _analytics_sub36:
 # =============================================================================
 # ANALYTICS sub-tab 37: Custom Composite Builder
 # =============================================================================
-with _analytics_sub37:
+if _active_sub == 37:
     import plotly.graph_objects as _go_cc
     st.header("Custom Composite Builder")
     st.markdown(
@@ -9524,7 +9482,7 @@ with _analytics_sub37:
 # =============================================================================
 # ANALYTICS sub-tab 38: Cross-Asset Momentum Scorecard
 # =============================================================================
-with _analytics_sub38:
+if _active_sub == 38:
     import plotly.graph_objects as _go_xam
     st.header("Cross-Asset Momentum Scorecard")
     st.markdown(
@@ -9589,7 +9547,7 @@ with _analytics_sub38:
 # =============================================================================
 # ANALYTICS sub-tab 39: Volatility Regime Composite
 # =============================================================================
-with _analytics_sub39:
+if _active_sub == 39:
     import plotly.graph_objects as _go_vrc
     st.header("Volatility Regime Composite")
     st.markdown(
@@ -9662,7 +9620,7 @@ with _analytics_sub39:
 # =============================================================================
 # ANALYTICS sub-tab 40: Credit Quality Migration Monitor
 # =============================================================================
-with _analytics_sub40:
+if _active_sub == 40:
     import plotly.graph_objects as _go_cqm
     st.header("Credit Quality Migration Monitor")
     st.markdown(
@@ -9733,7 +9691,7 @@ with _analytics_sub40:
 # =============================================================================
 # ANALYTICS sub-tab 41: Macro Surprise Index
 # =============================================================================
-with _analytics_sub41:
+if _active_sub == 41:
     import plotly.graph_objects as _go_msi
     st.header("Macro Surprise Index")
     st.markdown(
@@ -9806,7 +9764,7 @@ with _analytics_sub41:
 # =============================================================================
 # ANALYTICS sub-tab 42: Loan Market / CLO Stress Monitor
 # =============================================================================
-with _analytics_sub42:
+if _active_sub == 42:
     import plotly.graph_objects as _go_lmm
     st.header("Loan Market / CLO Stress Monitor")
     st.markdown(
@@ -9854,7 +9812,7 @@ with _analytics_sub42:
 # =============================================================================
 # ANALYTICS sub-tab 43: Regime Duration & Fatigue Clock
 # =============================================================================
-with _analytics_sub43:
+if _active_sub == 43:
     import plotly.graph_objects as _go_rd
     st.header("Regime Duration & Fatigue Clock")
     st.markdown(
@@ -9951,7 +9909,7 @@ with _analytics_sub43:
 # =============================================================================
 # ANALYTICS sub-tab 44: Systematic Deleveraging Detector
 # =============================================================================
-with _analytics_sub44:
+if _active_sub == 44:
     import plotly.graph_objects as _go_sdl
     st.header("Systematic Deleveraging Detector")
     st.markdown(
@@ -10026,7 +9984,7 @@ with _analytics_sub44:
 # =============================================================================
 # ANALYTICS sub-tab 45: Inflation Regime Monitor
 # =============================================================================
-with _analytics_sub45:
+if _active_sub == 45:
     import plotly.graph_objects as _go_infl
     st.header("Inflation Regime Monitor")
     st.markdown(
@@ -10110,7 +10068,7 @@ with _analytics_sub45:
 # =============================================================================
 # ANALYTICS sub-tab 46: Sector ETF Stress Divergence
 # =============================================================================
-with _analytics_sub46:
+if _active_sub == 46:
     import plotly.graph_objects as _go_sec
     st.header("Sector ETF Stress Divergence")
     st.markdown(
@@ -10175,7 +10133,7 @@ with _analytics_sub46:
 # =============================================================================
 # ANALYTICS sub-tab 47: Put/Call Ratio & Sentiment
 # =============================================================================
-with _analytics_sub47:
+if _active_sub == 47:
     import plotly.graph_objects as _go_pcs
     st.header("Put/Call Ratio & Sentiment Composite")
     st.markdown(
@@ -10241,7 +10199,7 @@ with _analytics_sub47:
 # =============================================================================
 # ANALYTICS sub-tab 48: Credit Basis Monitor
 # =============================================================================
-with _analytics_sub48:
+if _active_sub == 48:
     import plotly.graph_objects as _go_cb
     st.header("Credit Basis Monitor")
     st.markdown(
@@ -10316,7 +10274,7 @@ with _analytics_sub48:
 # =============================================================================
 # ANALYTICS sub-tab 49: Drawdown Recovery Analyzer
 # =============================================================================
-with _analytics_sub49:
+if _active_sub == 49:
     import plotly.graph_objects as _go_ddr
     st.header("Drawdown Recovery Analyzer")
     st.markdown(
@@ -10387,7 +10345,7 @@ with _analytics_sub49:
 # =============================================================================
 # ANALYTICS sub-tab 50: Signal Move Attribution
 # =============================================================================
-with _analytics_sub50:
+if _active_sub == 50:
     import plotly.graph_objects as _go_sma
     st.header("Signal Move Attribution")
     st.markdown(
@@ -10455,7 +10413,7 @@ with _analytics_sub50:
 # =============================================================================
 # ANALYTICS sub-tab 51: Risk Parity Credit Allocation
 # =============================================================================
-with _analytics_sub51:
+if _active_sub == 51:
     import plotly.graph_objects as _go_rpa
     st.header("Risk Parity Credit Allocation")
     st.markdown(
@@ -10516,7 +10474,7 @@ with _analytics_sub51:
 # =============================================================================
 # ANALYTICS sub-tab 52: Tail Dependency Matrix
 # =============================================================================
-with _analytics_sub52:
+if _active_sub == 52:
     import plotly.graph_objects as _go_td
     st.header("Tail Dependency Matrix")
     st.markdown(
@@ -10591,7 +10549,7 @@ with _analytics_sub52:
 # =============================================================================
 # ANALYTICS sub-tab 53: Fed Liquidity Plumbing Monitor
 # =============================================================================
-with _analytics_sub53:
+if _active_sub == 53:
     import plotly.graph_objects as _go_fl
     st.header("Fed Liquidity Plumbing Monitor")
     st.markdown(
@@ -10675,7 +10633,7 @@ with _analytics_sub53:
 # =============================================================================
 # ANALYTICS sub-tab 54: G4 Central Bank Divergence
 # =============================================================================
-with _analytics_sub54:
+if _active_sub == 54:
     import plotly.graph_objects as _go_g4
     st.header("G4 Central Bank Divergence")
     st.markdown(
@@ -10750,7 +10708,7 @@ with _analytics_sub54:
 # =============================================================================
 # ANALYTICS sub-tab 55: Portfolio Stress Test
 # =============================================================================
-with _analytics_sub55:
+if _active_sub == 55:
     import plotly.graph_objects as _go_pst
     st.header("Portfolio Stress Test")
     st.markdown(
@@ -10839,7 +10797,7 @@ with _analytics_sub55:
         st.caption(f"Portfolio stress test unavailable: {_pst_e}")
 
 # --- sub-tab 56: AT1/CoCo Monitor -------------------------------------------
-with _analytics_sub56:
+if _active_sub == 56:
     import plotly.graph_objects as _go_at1
     st.header("AT1 / CoCo Monitor")
     st.markdown(
@@ -10879,7 +10837,7 @@ with _analytics_sub56:
         st.caption(f"AT1/CoCo monitor unavailable: {_at1_e}")
 
 # --- sub-tab 57: Swap Spread Monitor ----------------------------------------
-with _analytics_sub57:
+if _active_sub == 57:
     import plotly.graph_objects as _go_swp
     st.header("Swap Spread Monitor")
     st.markdown(
@@ -10927,7 +10885,7 @@ with _analytics_sub57:
         st.caption(f"Swap spread monitor unavailable: {_swp_e}")
 
 # --- sub-tab 58: Cross-Currency Basis ----------------------------------------
-with _analytics_sub58:
+if _active_sub == 58:
     import plotly.graph_objects as _go_xccy
     st.header("Cross-Currency Basis")
     st.markdown(
@@ -10973,7 +10931,7 @@ with _analytics_sub58:
         st.caption(f"Cross-currency basis unavailable: {_xccy_e}")
 
 # --- sub-tab 59: CRE Stress --------------------------------------------------
-with _analytics_sub59:
+if _active_sub == 59:
     import plotly.graph_objects as _go_cre
     st.header("Commercial Real Estate (CRE) Stress")
     st.markdown(
@@ -11017,7 +10975,7 @@ with _analytics_sub59:
         st.caption(f"CRE stress unavailable: {_cre_e}")
 
 # --- sub-tab 60: Primary Market Issuance ------------------------------------
-with _analytics_sub60:
+if _active_sub == 60:
     import plotly.graph_objects as _go_iss
     st.header("Primary Market Issuance")
     st.markdown(
@@ -11058,7 +11016,7 @@ with _analytics_sub60:
         st.caption(f"Primary market issuance unavailable: {_iss_e}")
 
 # --- sub-tab 61: Distressed Debt ---------------------------------------------
-with _analytics_sub61:
+if _active_sub == 61:
     import plotly.graph_objects as _go_dis
     st.header("Distressed Debt Monitor")
     st.markdown(
@@ -11121,7 +11079,7 @@ with _analytics_sub61:
         st.caption(f"Distressed debt monitor unavailable: {_dis_e}")
 
 # --- sub-tab 62: CLO Monitor ------------------------------------------------
-with _analytics_sub62:
+if _active_sub == 62:
     import plotly.graph_objects as _go_clo
     st.header("CLO / Structured Credit Monitor")
     st.markdown(
@@ -11179,7 +11137,7 @@ with _analytics_sub62:
         st.caption(f"CLO monitor unavailable: {_clo_e}")
 
 # --- sub-tab 63: Financial Conditions Index ----------------------------------
-with _analytics_sub63:
+if _active_sub == 63:
     import plotly.graph_objects as _go_fci
     st.header("Financial Conditions Index (FCI)")
     st.markdown(
@@ -11240,7 +11198,7 @@ with _analytics_sub63:
         st.caption(f"Financial Conditions Index unavailable: {_fci_e}")
 
 # --- sub-tab 64: Credit Impulse ---------------------------------------------
-with _analytics_sub64:
+if _active_sub == 64:
     import plotly.graph_objects as _go_ci
     st.header("Credit Impulse")
     st.markdown(
@@ -11287,7 +11245,7 @@ with _analytics_sub64:
         st.caption(f"Credit impulse unavailable: {_ci_e}")
 
 # --- sub-tab 65: ETF Premium/Discount ----------------------------------------
-with _analytics_sub65:
+if _active_sub == 65:
     import plotly.graph_objects as _go_etf
     st.header("ETF Premium / Discount Monitor")
     st.markdown(
@@ -11343,7 +11301,7 @@ with _analytics_sub65:
         st.caption(f"ETF premium/discount unavailable: {_etf_e}")
 
 # --- sub-tab 66: Sovereign Contagion ----------------------------------------
-with _analytics_sub66:
+if _active_sub == 66:
     import plotly.graph_objects as _go_sov
     st.header("Sovereign Contagion")
     st.markdown(
@@ -11405,7 +11363,7 @@ with _analytics_sub66:
         st.caption(f"Sovereign contagion unavailable: {_sov_e}")
 
 # --- sub-tab 67: Consumer Credit Stress -------------------------------------
-with _analytics_sub67:
+if _active_sub == 67:
     import plotly.graph_objects as _go_cons
     st.header("Consumer Credit Stress")
     st.markdown(
@@ -11470,7 +11428,7 @@ with _analytics_sub67:
         st.caption(f"Consumer credit stress unavailable: {_cons_e}")
 
 # --- sub-tab 68: Term Premium ------------------------------------------------
-with _analytics_sub68:
+if _active_sub == 68:
     import plotly.graph_objects as _go_tp
     st.header("Term Premium Monitor")
     st.markdown(
@@ -11525,7 +11483,7 @@ with _analytics_sub68:
         st.caption(f"Term premium unavailable: {_tp_e}")
 
 # --- sub-tab 69: Yield Curve Butterfly ---------------------------------------
-with _analytics_sub69:
+if _active_sub == 69:
     import plotly.graph_objects as _go_fly
     st.header("Yield Curve Butterfly (2s5s10s)")
     st.markdown(
@@ -11581,7 +11539,7 @@ with _analytics_sub69:
         st.caption(f"Yield curve butterfly unavailable: {_fly_e}")
 
 # --- sub-tab 70: SLOOS -------------------------------------------------------
-with _analytics_sub70:
+if _active_sub == 70:
     import plotly.graph_objects as _go_sl
     st.header("Bank Lending Standards (SLOOS)")
     st.markdown(
@@ -11634,7 +11592,7 @@ with _analytics_sub70:
         st.caption(f"SLOOS monitor unavailable: {_sl_e}")
 
 # --- sub-tab 71: ETF Fund Flows ----------------------------------------------
-with _analytics_sub71:
+if _active_sub == 71:
     import plotly.graph_objects as _go_ff
     st.header("Credit ETF Fund Flows")
     st.markdown(
@@ -11689,7 +11647,7 @@ with _analytics_sub71:
         st.caption(f"ETF fund flows unavailable: {_ff_e}")
 
 # --- sub-tab 72: Corporate Profit Cycle --------------------------------------
-with _analytics_sub72:
+if _active_sub == 72:
     import plotly.graph_objects as _go_cp
     st.header("Corporate Profit Cycle")
     st.markdown(
@@ -11756,7 +11714,7 @@ with _analytics_sub72:
         st.caption(f"Corporate profit cycle unavailable: {_cp_e}")
 
 # --- sub-tab 73: CDS-Implied Default Probability -----------------------------
-with _analytics_sub73:
+if _active_sub == 73:
     import plotly.graph_objects as _go_pd
     st.header("CDS-Implied Default Probability Surface")
     st.markdown(
@@ -11827,7 +11785,7 @@ with _analytics_sub73:
 # BATCH 8 ANALYTICS: sub74–79
 # =============================================================================
 
-with _analytics_sub74:
+if _active_sub == 74:
     import plotly.graph_objects as _go74
     st.header("Recession Model (Estrella-Mishkin)")
     st.markdown(
@@ -11932,7 +11890,7 @@ with _analytics_sub74:
         st.caption(f"Recession model unavailable: {_e74}")
 
 
-with _analytics_sub75:
+if _active_sub == 75:
     import plotly.graph_objects as _go75
     st.header("Real Rates Monitor")
     st.markdown(
@@ -12050,7 +12008,7 @@ with _analytics_sub75:
         st.caption(f"Real rates unavailable: {_e75}")
 
 
-with _analytics_sub76:
+if _active_sub == 76:
     import plotly.graph_objects as _go76
     st.header("MOVE Index — Bond Market Volatility")
     st.markdown(
@@ -12153,7 +12111,7 @@ with _analytics_sub76:
         st.caption(f"MOVE Index unavailable: {_e76}")
 
 
-with _analytics_sub77:
+if _active_sub == 77:
     import plotly.graph_objects as _go77
     st.header("EM Credit — Emerging Market vs DM HY")
     st.markdown(
@@ -12260,7 +12218,7 @@ with _analytics_sub77:
         st.caption(f"EM credit unavailable: {_e77}")
 
 
-with _analytics_sub78:
+if _active_sub == 78:
     import plotly.graph_objects as _go78
     st.header("Carry Breakeven Analysis")
     st.markdown(
@@ -12367,7 +12325,7 @@ with _analytics_sub78:
         st.caption(f"Carry breakeven unavailable: {_e78}")
 
 
-with _analytics_sub79:
+if _active_sub == 79:
     import plotly.graph_objects as _go79
     st.header("VIX Term Structure")
     st.markdown(
@@ -12480,7 +12438,7 @@ with _analytics_sub79:
 # BATCH 9 ANALYTICS: sub80–85
 # =============================================================================
 
-with _analytics_sub80:
+if _active_sub == 80:
     import plotly.graph_objects as _go80
     st.header("Options Skew — Tail Risk Pricing")
     st.markdown(
@@ -12589,7 +12547,7 @@ with _analytics_sub80:
         st.caption(f"Options skew unavailable: {_e80}")
 
 
-with _analytics_sub81:
+if _active_sub == 81:
     import plotly.graph_objects as _go81
     st.header("Fed Communication Sentiment")
     st.markdown(
@@ -12671,7 +12629,7 @@ with _analytics_sub81:
         st.caption(f"Fed sentiment unavailable: {_e81}")
 
 
-with _analytics_sub82:
+if _active_sub == 82:
     import plotly.graph_objects as _go82
     st.header("DV01 — Spread Sensitivity & P&L Scenarios")
     st.markdown(
@@ -12750,7 +12708,7 @@ with _analytics_sub82:
         st.caption(f"DV01 unavailable: {_e82}")
 
 
-with _analytics_sub83:
+if _active_sub == 83:
     import plotly.graph_objects as _go83
     st.header("CVaR — Conditional Value at Risk")
     st.markdown(
@@ -12830,7 +12788,7 @@ with _analytics_sub83:
         st.caption(f"CVaR unavailable: {_e83}")
 
 
-with _analytics_sub84:
+if _active_sub == 84:
     import plotly.graph_objects as _go84
     st.header("Taylor Rule — Monetary Policy Positioning")
     st.markdown(
@@ -12926,7 +12884,7 @@ with _analytics_sub84:
         st.caption(f"Taylor Rule unavailable: {_e84}")
 
 
-with _analytics_sub85:
+if _active_sub == 85:
     import plotly.graph_objects as _go85
     st.header("Macro Nowcast")
     st.markdown(
@@ -13045,7 +13003,7 @@ with _analytics_sub85:
 # BATCH 10 ANALYTICS: sub86–91
 # =============================================================================
 
-with _analytics_sub86:
+if _active_sub == 86:
     import plotly.graph_objects as _go86
     st.header("Volatility Risk Premium (VRP)")
     st.markdown(
@@ -13158,7 +13116,7 @@ with _analytics_sub86:
         st.caption(f"VRP unavailable: {_e86}")
 
 
-with _analytics_sub87:
+if _active_sub == 87:
     import plotly.graph_objects as _go87
     st.header("Credit Spread Momentum")
     st.markdown(
@@ -13280,7 +13238,7 @@ with _analytics_sub87:
         st.caption(f"Credit momentum unavailable: {_e87}")
 
 
-with _analytics_sub88:
+if _active_sub == 88:
     import plotly.graph_objects as _go88
     st.header("Funding Stress Monitor")
     st.markdown(
@@ -13382,7 +13340,7 @@ with _analytics_sub88:
         st.caption(f"Funding stress unavailable: {_e88}")
 
 
-with _analytics_sub89:
+if _active_sub == 89:
     import plotly.graph_objects as _go89
     st.header("Credit Quality Curve")
     st.markdown(
@@ -13482,7 +13440,7 @@ with _analytics_sub89:
         st.caption(f"Quality curve unavailable: {_e89}")
 
 
-with _analytics_sub90:
+if _active_sub == 90:
     import plotly.graph_objects as _go90
     st.header("Rates & Credit Term Structure")
     st.markdown(
@@ -13574,7 +13532,7 @@ with _analytics_sub90:
         st.caption(f"Term structure unavailable: {_e90}")
 
 
-with _analytics_sub91:
+if _active_sub == 91:
     import plotly.graph_objects as _go91
     st.header("Data Quality Diagnostics")
     st.markdown(
@@ -13681,7 +13639,7 @@ with _analytics_sub91:
 # BATCH 11 ANALYTICS: sub92–97
 # =============================================================================
 
-with _analytics_sub92:
+if _active_sub == 92:
     import plotly.graph_objects as _go92
     st.header("NFCI — National Financial Conditions Index")
     st.markdown(
@@ -13810,7 +13768,7 @@ with _analytics_sub92:
         st.caption(f"NFCI unavailable: {_e92}")
 
 
-with _analytics_sub93:
+if _active_sub == 93:
     import plotly.graph_objects as _go93
     st.header("Sahm Rule — Labor Market Early Warning")
     st.markdown(
@@ -13938,7 +13896,7 @@ with _analytics_sub93:
         st.caption(f"Sahm Rule unavailable: {_e93}")
 
 
-with _analytics_sub94:
+if _active_sub == 94:
     import plotly.graph_objects as _go94
     st.header("Score Decomposition")
     st.markdown(
@@ -14078,7 +14036,7 @@ with _analytics_sub94:
         st.caption(f"Score decomposition unavailable: {_e94}")
 
 
-with _analytics_sub95:
+if _active_sub == 95:
     import plotly.graph_objects as _go95
     st.header("Market Internals & Cross-Asset Divergence")
     st.markdown(
@@ -14163,7 +14121,7 @@ with _analytics_sub95:
         st.caption(f"Market internals unavailable: {_e95}")
 
 
-with _analytics_sub96:
+if _active_sub == 96:
     import plotly.graph_objects as _go96
     st.header("Vol-Credit Mismatch")
     st.markdown(
@@ -14270,7 +14228,7 @@ with _analytics_sub96:
         st.caption(f"Vol-Credit mismatch unavailable: {_e96}")
 
 
-with _analytics_sub97:
+if _active_sub == 97:
     import plotly.graph_objects as _go97
     st.header("Equity Drawdown vs Credit Spreads")
     st.markdown(
@@ -14392,14 +14350,14 @@ with _analytics_sub97:
 # =============================================================================
 # TAB 8: Allocation (placeholder — content in Tab 3 Portfolio and Tab 4 Backtest)
 # =============================================================================
-with tab8:
+if _active_section == "Allocation":
     st.header("Allocation")
     st.info("Allocation content is integrated into the **Portfolio** and **Backtest** tabs.")
 
 # =============================================================================
 # TAB 9: Signal Health Monitor
 # =============================================================================
-with tab9:
+if _active_section == "Health":
     st.header("Signal Health Monitor")
     st.markdown(
         "Meta-view of all signal modules — which data sources loaded, which are stale, "
@@ -14495,7 +14453,7 @@ with tab9:
 # sub103 Yield Curve Velocity             → tab_macro
 # =============================================================================
 
-with _analytics_sub98:
+if _active_sub == 98:
     import plotly.graph_objects as _go98
     st.header("Credit-Equity Divergence Episodes")
     st.markdown(
@@ -14616,7 +14574,7 @@ with _analytics_sub98:
     except Exception as _e98:
         st.caption(f"Credit-equity divergence: {_e98}")
 
-with _analytics_sub99:
+if _active_sub == 99:
     import plotly.graph_objects as _go99
     st.header("Shock Intensity Monitor")
     st.markdown(
@@ -14723,7 +14681,7 @@ with _analytics_sub99:
     except Exception as _e99:
         st.caption(f"Shock monitor: {_e99}")
 
-with _analytics_sub100:
+if _active_sub == 100:
     import plotly.graph_objects as _go100
     st.header("HY Spread Percentile Monitor")
     st.markdown(
@@ -14848,7 +14806,7 @@ with _analytics_sub100:
     except Exception as _e100:
         st.caption(f"HY Spread Percentile: {_e100}")
 
-with _analytics_sub101:
+if _active_sub == 101:
     import plotly.graph_objects as _go101
     from src.regime_attribution import SCORE_COLS as _SC101, COMPOSITE_WEIGHTS as _CW101, DISPLAY_NAMES as _DN101
     st.header("Score Velocity & Alert Monitor")
@@ -14962,7 +14920,7 @@ with _analytics_sub101:
     except Exception as _e101:
         st.caption(f"Score velocity: {_e101}")
 
-with _analytics_sub102:
+if _active_sub == 102:
     import plotly.graph_objects as _go102
     st.header("Credit Cycle Phase")
     st.markdown(
@@ -15100,7 +15058,7 @@ with _analytics_sub102:
     except Exception as _e102:
         st.caption(f"Credit cycle phase: {_e102}")
 
-with _analytics_sub103:
+if _active_sub == 103:
     import plotly.graph_objects as _go103
     st.header("Yield Curve Velocity")
     st.markdown(
@@ -15239,7 +15197,7 @@ with _analytics_sub103:
 # sub109  Unemployment Momentum            → tab_macro
 # =============================================================================
 
-with _analytics_sub104:
+if _active_sub == 104:
     import plotly.graph_objects as _go104
     st.header("Yield Curve Regime Deep Dive")
     st.markdown(
@@ -15378,7 +15336,7 @@ with _analytics_sub104:
     except Exception as _e104:
         st.caption(f"Curve regime: {_e104}")
 
-with _analytics_sub105:
+if _active_sub == 105:
     import plotly.graph_objects as _go105
     st.header("HY Spread Momentum Term Structure")
     st.markdown(
@@ -15515,7 +15473,7 @@ with _analytics_sub105:
     except Exception as _e105:
         st.caption(f"HY momentum term structure: {_e105}")
 
-with _analytics_sub106:
+if _active_sub == 106:
     import plotly.graph_objects as _go106
     st.header("Real Yield Z-Score Monitor")
     st.markdown(
@@ -15638,7 +15596,7 @@ with _analytics_sub106:
     except Exception as _e106:
         st.caption(f"Real yield Z-score: {_e106}")
 
-with _analytics_sub107:
+if _active_sub == 107:
     import plotly.graph_objects as _go107
     st.header("Liquidity Sub-Score Deep Dive")
     st.markdown(
@@ -15768,7 +15726,7 @@ with _analytics_sub107:
     except Exception as _e107:
         st.caption(f"Liquidity score: {_e107}")
 
-with _analytics_sub108:
+if _active_sub == 108:
     import plotly.graph_objects as _go108
     from src.regime_attribution import SUPPLEMENTAL_SCORES as _SS108, DISPLAY_NAMES as _DN108
     st.header("Cross-Asset Divergence — Supplemental Score")
@@ -15877,7 +15835,7 @@ with _analytics_sub108:
     except Exception as _e108:
         st.caption(f"Cross-asset divergence: {_e108}")
 
-with _analytics_sub109:
+if _active_sub == 109:
     import plotly.graph_objects as _go109
     st.header("Unemployment Momentum Monitor")
     st.markdown(
@@ -16030,7 +15988,7 @@ with _analytics_sub109:
 # sub115  Complacency Sub-Score           → tab_siglab
 # =============================================================================
 
-with _analytics_sub110:
+if _active_sub == 110:
     import plotly.graph_objects as _go110
     st.header("Credit Regime Monitor")
     st.markdown(
@@ -16169,7 +16127,7 @@ with _analytics_sub110:
     except Exception as _e110:
         st.caption(f"Credit regime: {_e110}")
 
-with _analytics_sub111:
+if _active_sub == 111:
     import plotly.graph_objects as _go111
     st.header("NFCI Trend Change Monitor")
     st.markdown(
@@ -16299,7 +16257,7 @@ with _analytics_sub111:
     except Exception as _e111:
         st.caption(f"NFCI trend: {_e111}")
 
-with _analytics_sub112:
+if _active_sub == 112:
     import plotly.graph_objects as _go112
     st.header("VIX Momentum Deep Dive")
     st.markdown(
@@ -16421,7 +16379,7 @@ with _analytics_sub112:
     except Exception as _e112:
         st.caption(f"VIX momentum: {_e112}")
 
-with _analytics_sub113:
+if _active_sub == 113:
     import plotly.graph_objects as _go113
     st.header("FX / Commodity Sub-Score")
     st.markdown(
@@ -16544,7 +16502,7 @@ with _analytics_sub113:
     except Exception as _e113:
         st.caption(f"FX/Commodity score: {_e113}")
 
-with _analytics_sub114:
+if _active_sub == 114:
     import plotly.graph_objects as _go114
     st.header("Labor Warning Episodes")
     st.markdown(
@@ -16656,7 +16614,7 @@ with _analytics_sub114:
     except Exception as _e114:
         st.caption(f"Labor warning: {_e114}")
 
-with _analytics_sub115:
+if _active_sub == 115:
     import plotly.graph_objects as _go115
     st.header("Complacency Sub-Score")
     st.markdown(
@@ -16803,7 +16761,7 @@ with _analytics_sub115:
 # sub121  Spread Change Deep Dive         → tab_macro
 # =============================================================================
 
-with _analytics_sub116:
+if _active_sub == 116:
     import plotly.graph_objects as _go116
     from src.regime_attribution import COMPOSITE_WEIGHTS as _CW116, DISPLAY_NAMES as _DN116
     st.header("Macro Risk Sub-Score")
@@ -16915,7 +16873,7 @@ with _analytics_sub116:
     except Exception as _e116:
         st.caption(f"Macro risk score: {_e116}")
 
-with _analytics_sub117:
+if _active_sub == 117:
     import plotly.graph_objects as _go117
     from src.regime_attribution import COMPOSITE_WEIGHTS as _CW117, DISPLAY_NAMES as _DN117
     st.header("Credit Market Risk Sub-Score")
@@ -17026,7 +16984,7 @@ with _analytics_sub117:
     except Exception as _e117:
         st.caption(f"Credit market risk score: {_e117}")
 
-with _analytics_sub118:
+if _active_sub == 118:
     import plotly.graph_objects as _go118
     from src.regime_attribution import COMPOSITE_WEIGHTS as _CW118
     st.header("Treasury Stress Sub-Score")
@@ -17139,7 +17097,7 @@ with _analytics_sub118:
     except Exception as _e118:
         st.caption(f"Treasury stress score: {_e118}")
 
-with _analytics_sub119:
+if _active_sub == 119:
     import plotly.graph_objects as _go119
     from src.regime_attribution import COMPOSITE_WEIGHTS as _CW119
     st.header("Enhanced Funding Stress Sub-Score")
@@ -17248,7 +17206,7 @@ with _analytics_sub119:
     except Exception as _e119:
         st.caption(f"Enhanced funding score: {_e119}")
 
-with _analytics_sub120:
+if _active_sub == 120:
     import plotly.graph_objects as _go120
     st.header("Mean Reversion Sub-Score (Supplemental)")
     st.markdown(
@@ -17354,7 +17312,7 @@ with _analytics_sub120:
     except Exception as _e120:
         st.caption(f"Mean reversion score: {_e120}")
 
-with _analytics_sub121:
+if _active_sub == 121:
     import plotly.graph_objects as _go121
     st.header("Yield Curve Spread Changes — Multi-Horizon")
     st.markdown(
@@ -17489,7 +17447,7 @@ with _analytics_sub121:
 # sub127  VIX Level Context               → tab_risk
 # =============================================================================
 
-with _analytics_sub122:
+if _active_sub == 122:
     import plotly.graph_objects as _go122
     st.header("Breakeven Inflation Monitor")
     st.markdown(
@@ -17628,7 +17586,7 @@ with _analytics_sub122:
     except Exception as _e122:
         st.caption(f"Breakeven monitor: {_e122}")
 
-with _analytics_sub123:
+if _active_sub == 123:
     import plotly.graph_objects as _go123
     from src.regime_attribution import SCORE_COLS as _SC123, COMPOSITE_WEIGHTS as _CW123, DISPLAY_NAMES as _DN123
     st.header("Score Consensus Monitor")
@@ -17751,7 +17709,7 @@ with _analytics_sub123:
     except Exception as _e123:
         st.caption(f"Score consensus: {_e123}")
 
-with _analytics_sub124:
+if _active_sub == 124:
     import plotly.graph_objects as _go124
     st.header("Equity Return Context")
     st.markdown(
@@ -17871,7 +17829,7 @@ with _analytics_sub124:
     except Exception as _e124:
         st.caption(f"Equity returns: {_e124}")
 
-with _analytics_sub125:
+if _active_sub == 125:
     import plotly.graph_objects as _go125
     st.header("10-Year Yield Level Context")
     st.markdown(
@@ -17993,7 +17951,7 @@ with _analytics_sub125:
     except Exception as _e125:
         st.caption(f"10y yield context: {_e125}")
 
-with _analytics_sub126:
+if _active_sub == 126:
     import plotly.graph_objects as _go126
     st.header("Composite Risk Score — Full History")
     st.markdown(
@@ -18122,7 +18080,7 @@ with _analytics_sub126:
     except Exception as _e126:
         st.caption(f"Composite history: {_e126}")
 
-with _analytics_sub127:
+if _active_sub == 127:
     import plotly.graph_objects as _go127
     st.header("VIX Level Context")
     st.markdown(
@@ -18259,7 +18217,7 @@ with _analytics_sub127:
 # ---------------------------------------------------------------------------
 
 # sub128 — Score Correlations (tab_siglab)
-with _analytics_sub128:
+if _active_sub == 128:
     try:
         import plotly.graph_objects as _go128
         from src.regime_attribution import SCORE_COLS, DISPLAY_NAMES
@@ -18326,7 +18284,7 @@ with _analytics_sub128:
         st.caption(f"Score correlations: {_e128}")
 
 # sub129 — Score Z-Scores (tab_siglab)
-with _analytics_sub129:
+if _active_sub == 129:
     try:
         import plotly.graph_objects as _go129
         import numpy as _np129
@@ -18396,7 +18354,7 @@ with _analytics_sub129:
         st.caption(f"Score z-scores: {_e129}")
 
 # sub130 — HY Lead-Lag (tab_credit)
-with _analytics_sub130:
+if _active_sub == 130:
     try:
         import plotly.graph_objects as _go130
         import numpy as _np130
@@ -18478,7 +18436,7 @@ with _analytics_sub130:
         st.caption(f"HY lead-lag: {_e130}")
 
 # sub131 — Recession Analog (tab_regime)
-with _analytics_sub131:
+if _active_sub == 131:
     try:
         import plotly.graph_objects as _go131
         import pandas as _pd131
@@ -18587,7 +18545,7 @@ with _analytics_sub131:
         st.caption(f"Recession analog: {_e131}")
 
 # sub132 — Score Persistence (tab_siglab)
-with _analytics_sub132:
+if _active_sub == 132:
     try:
         import plotly.graph_objects as _go132
         import numpy as _np132
@@ -18666,7 +18624,7 @@ with _analytics_sub132:
         st.caption(f"Score persistence: {_e132}")
 
 # sub133 — Drawdown Anatomy (tab_risk)
-with _analytics_sub133:
+if _active_sub == 133:
     try:
         import plotly.graph_objects as _go133
         import numpy as _np133
@@ -18783,7 +18741,7 @@ with _analytics_sub133:
 # ---------------------------------------------------------------------------
 
 # sub134 — Regime Transition Matrix (tab_regime)
-with _analytics_sub134:
+if _active_sub == 134:
     try:
         import plotly.graph_objects as _go134
         import numpy as _np134
@@ -18863,7 +18821,7 @@ with _analytics_sub134:
         st.caption(f"Transition matrix: {_e134}")
 
 # sub135 — Score Distributions (tab_siglab)
-with _analytics_sub135:
+if _active_sub == 135:
     try:
         import plotly.graph_objects as _go135
         import numpy as _np135
@@ -18921,7 +18879,7 @@ with _analytics_sub135:
         st.caption(f"Score distributions: {_e135}")
 
 # sub136 — Spread Vol Regime (tab_credit)
-with _analytics_sub136:
+if _active_sub == 136:
     try:
         import plotly.graph_objects as _go136
         import numpy as _np136
@@ -19016,7 +18974,7 @@ with _analytics_sub136:
         st.caption(f"Spread vol regime: {_e136}")
 
 # sub137 — Score Gradient (tab_siglab)
-with _analytics_sub137:
+if _active_sub == 137:
     try:
         import plotly.graph_objects as _go137
         import numpy as _np137
@@ -19112,7 +19070,7 @@ with _analytics_sub137:
         st.caption(f"Score gradient: {_e137}")
 
 # sub138 — Macro-Credit Decoupling (tab_macro)
-with _analytics_sub138:
+if _active_sub == 138:
     try:
         import plotly.graph_objects as _go138
         import numpy as _np138
@@ -19208,7 +19166,7 @@ with _analytics_sub138:
         st.caption(f"Macro-credit corr: {_e138}")
 
 # sub139 — Alert History (tab_risk)
-with _analytics_sub139:
+if _active_sub == 139:
     try:
         import plotly.graph_objects as _go139
         import numpy as _np139
