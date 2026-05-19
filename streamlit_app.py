@@ -1296,6 +1296,7 @@ _ANALYTICS_VIEWS = {
         ("HY Momentum", 105), ("Credit Regime", 110),
         ("Credit Risk Score", 117), ("HY Lead-Lag", 130),
         ("Spread Vol Regime", 136), ("Regime Spread Dist", 141),
+        ("Credit Beta", 146), ("HY Multi-Horizon", 149),
     ],
     "Rates & Macro": [
         ("Regime Returns", 23), ("X-Asset Momentum", 38), ("Macro Surprise", 41),
@@ -1311,7 +1312,7 @@ _ANALYTICS_VIEWS = {
         ("Treasury Score", 118), ("Spread Changes", 121),
         ("Breakeven Inflation", 122), ("10y Yield", 125),
         ("Macro-Credit Corr", 138), ("Credit Impulse Drill", 142),
-        ("Sahm Episodes", 143),
+        ("Sahm Episodes", 143), ("Real Yield Episodes", 145),
     ],
     "Risk Monitors": [
         ("Tail Risk", 6), ("Stress Test", 7), ("Contagion", 12),
@@ -1327,6 +1328,7 @@ _ANALYTICS_VIEWS = {
         ("Liquidity Score", 107), ("VIX Momentum", 112), ("FX/Commodity", 113),
         ("Enhanced Funding", 119), ("Equity Returns", 124),
         ("VIX Context", 127), ("Drawdown Anatomy", 133), ("Alert History", 139),
+        ("Vol of Vol", 148),
     ],
     "Signal Lab": [
         ("Validation", 1), ("Attribution", 2), ("Timeline", 3),
@@ -1341,6 +1343,7 @@ _ANALYTICS_VIEWS = {
         ("Score Z-Scores", 129), ("Score Persistence", 132),
         ("Score Distributions", 135), ("Score Gradient", 137),
         ("Forward Returns", 140), ("Score Momentum", 144),
+        ("Seasonality", 147), ("Score Ensemble", 150),
     ],
     "Regime": [
         ("Performance", 8), ("Regime Validity", 10), ("Failure Analysis", 11),
@@ -19532,3 +19535,567 @@ if _active_sub == "m9":
             st.caption(f"Default thresholds: {DEFAULT_THRESHOLDS}. Grid shifts tested: {SHIFT_GRID}.")
     except Exception as _e_m9:
         st.caption(f"Threshold robustness: {_e_m9}")
+
+# ---------------------------------------------------------------------------
+# Batch 20 — sub145–sub150
+# ---------------------------------------------------------------------------
+
+# sub145 — Real Yield Episodes (Rates & Macro)
+if _active_sub == 145:
+    try:
+        import plotly.graph_objects as _go145
+        import numpy as _np145
+        import pandas as _pd145
+        if "real_yield_proxy" in df.columns:
+            _ry145 = df["real_yield_proxy"].dropna()
+            _ryz145 = df["real_yield_z"].dropna() if "real_yield_z" in df.columns else None
+            _hy145 = df["hy_spread"].dropna() if "hy_spread" in df.columns else None
+            _sp145 = df["sp500"].dropna() if "sp500" in df.columns else None
+
+            def _ry_regime(v):
+                if _np145.isnan(v): return "Unknown"
+                if v < -1.0:  return "Deeply Negative"
+                if v < 0.0:   return "Negative"
+                if v < 1.0:   return "Low Positive"
+                if v < 2.5:   return "Normal"
+                return "Restrictive"
+            _RY_COLORS = {"Deeply Negative": "#1e40af", "Negative": "#3b82f6",
+                          "Low Positive": "#10b981", "Normal": "#6b7280",
+                          "Restrictive": "#ef4444", "Unknown": "#4b5563"}
+
+            # Real yield time series
+            _fig145a = _go145.Figure()
+            _fig145a.add_trace(_go145.Scatter(
+                x=_ry145.index, y=_ry145.values,
+                mode="lines", line=dict(color="#06b6d4", width=1.3),
+                fill="tozeroy", fillcolor="rgba(6,182,212,0.07)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.2f}%<extra></extra>",
+            ))
+            _fig145a.add_hline(y=0, line_color="#4b5563", line_width=1)
+            _fig145a.add_hline(y=2.5, line_color="#ef4444", line_width=1, line_dash="dot",
+                               annotation_text="Restrictive (2.5%)", annotation_font=dict(color="#ef4444", size=8))
+            _fig145a.add_hline(y=-1.0, line_color="#1e40af", line_width=1, line_dash="dot",
+                               annotation_text="Deeply Neg (−1%)", annotation_font=dict(color="#1e40af", size=8))
+            _fig145a.update_layout(
+                height=230, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="Real Yield Proxy (10y Nominal − 10y Breakeven)", font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="Real Yield (%)"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig145a, use_container_width=True)
+
+            # Z-score overlay
+            if _ryz145 is not None:
+                _fig145b = _go145.Figure()
+                _fig145b.add_trace(_go145.Scatter(
+                    x=_ryz145.index, y=_ryz145.values,
+                    mode="lines", line=dict(color="#8b5cf6", width=1.0),
+                    hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f}σ<extra></extra>",
+                ))
+                _fig145b.add_hline(y=0, line_color="#4b5563", line_width=1)
+                _fig145b.add_hline(y=2, line_color="#ef4444", line_width=1, line_dash="dot")
+                _fig145b.add_hline(y=-2, line_color="#1e40af", line_width=1, line_dash="dot")
+                _fig145b.update_layout(
+                    height=170, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Real Yield Rolling Z-Score vs 252d History", font=dict(size=11, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="Z-Score (σ)", zeroline=True, zerolinecolor="#4b5563"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig145b, use_container_width=True)
+
+            # HY spread by real yield regime
+            if _hy145 is not None:
+                _ry_reg_series = _ry145.apply(_ry_regime)
+                _j145 = _ry_reg_series.to_frame("regime").join(_hy145.to_frame("hy"), how="inner").dropna()
+                _REGIME_ORDER145 = ["Deeply Negative", "Negative", "Low Positive", "Normal", "Restrictive"]
+                _fig145c = _go145.Figure()
+                for reg in _REGIME_ORDER145:
+                    _sub = _j145[_j145["regime"] == reg]["hy"]
+                    if len(_sub) < 5:
+                        continue
+                    _fig145c.add_trace(_go145.Box(
+                        y=_sub.values, name=reg,
+                        marker_color=_RY_COLORS.get(reg, "#6b7280"),
+                        boxmean=True,
+                        hovertemplate=f"{reg}: %{{y:.0f}}bps<extra></extra>",
+                    ))
+                _fig145c.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="HY Spread Distribution by Real Yield Regime", font=dict(size=11, color="#9aa0aa")),
+                    xaxis=dict(color="#6b7280"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="HY Spread (bps)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig145c, use_container_width=True)
+                _curr_ry = float(_ry145.iloc[-1])
+                _curr_reg = _ry_regime(_curr_ry)
+                _ry_pct = float((_ry145 < _curr_ry).mean() * 100)
+                st.caption(f"Current real yield: **{_curr_ry:.2f}%** ({_ry_pct:.0f}th pct) — Regime: **{_curr_reg}**. "
+                           "Restrictive real yields historically correlate with wider credit spreads and equity stress.")
+        else:
+            st.info("real_yield_proxy not found — run the feature pipeline.")
+    except Exception as _e145:
+        st.caption(f"Real yield episodes: {_e145}")
+
+
+# sub146 — Credit Beta by Regime (Credit Markets)
+if _active_sub == 146:
+    try:
+        import plotly.graph_objects as _go146
+        import numpy as _np146
+        if "hy_spread" in df.columns and "sp500" in df.columns:
+            _hy146 = df["hy_spread"].dropna()
+            _sp146 = df["sp500"].dropna()
+            _j146 = _hy146.to_frame("hy").join(_sp146.to_frame("sp"), how="inner").dropna()
+            _j146["hy_chg"] = _j146["hy"].diff(21)
+            _j146["sp_ret"] = _j146["sp"].pct_change(21) * 100
+            _j146 = _j146.dropna()
+
+            # Rolling 63d beta: HY change / SP500 return
+            def _roll_beta(window=63):
+                betas = []
+                for i in range(len(_j146)):
+                    if i < window:
+                        betas.append(_np146.nan)
+                        continue
+                    _slice = _j146.iloc[i-window:i]
+                    _x = _slice["sp_ret"].values
+                    _y = _slice["hy_chg"].values
+                    _cov = _np146.cov(_x, _y)
+                    _var = _np146.var(_x, ddof=1)
+                    betas.append(float(_cov[0, 1] / _var) if _var > 0 else _np146.nan)
+                return betas
+            import pandas as _pd146
+            _j146["beta_63d"] = _roll_beta(63)
+
+            _fig146a = _go146.Figure()
+            _fig146a.add_trace(_go146.Scatter(
+                x=_j146.index, y=_j146["beta_63d"],
+                mode="lines", line=dict(color="#f59e0b", width=1.2),
+                hovertemplate="%{x|%Y-%m-%d}: β=%{y:.2f}<extra></extra>",
+            ))
+            _fig146a.add_hline(y=0, line_color="#4b5563", line_width=1)
+            _fig146a.add_hline(y=-5, line_color="#ef4444", line_width=1, line_dash="dot",
+                               annotation_text="Stress zone (β<−5)", annotation_font=dict(color="#ef4444", size=8))
+            _fig146a.update_layout(
+                height=230, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="Rolling 63d Credit Beta: HY Spread Change per 1% SP500 Return (bps/%)",
+                           font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="β (bps per %)"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig146a, use_container_width=True)
+
+            # Beta by composite regime
+            if "composite_risk_score_smooth" in df.columns:
+                _comp146 = df["composite_risk_score_smooth"].dropna()
+                _j146b = _j146.join(_comp146.to_frame("comp"), how="inner").dropna(subset=["beta_63d", "comp"])
+                def _reg146(s):
+                    if s < 25: return "Low"
+                    if s < 40: return "Moderate"
+                    if s < 55: return "Elevated"
+                    if s < 70: return "High"
+                    return "Extreme"
+                _j146b["regime"] = _j146b["comp"].apply(_reg146)
+                _REGIME_ORDER146 = ["Low", "Moderate", "Elevated", "High", "Extreme"]
+                _REG_COLORS146 = {"Low": "#10b981", "Moderate": "#3b82f6", "Elevated": "#f59e0b",
+                                   "High": "#ef4444", "Extreme": "#7f1d1d"}
+                _fig146b = _go146.Figure()
+                for reg in _REGIME_ORDER146:
+                    _sub = _j146b[_j146b["regime"] == reg]["beta_63d"].dropna()
+                    if len(_sub) < 5:
+                        continue
+                    _fig146b.add_trace(_go146.Box(
+                        y=_sub.values, name=reg,
+                        marker_color=_REG_COLORS146[reg],
+                        boxmean=True,
+                        hovertemplate=f"{reg}: β=%{{y:.1f}}<extra></extra>",
+                    ))
+                _fig146b.add_hline(y=0, line_color="#4b5563", line_width=1)
+                _fig146b.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Credit Beta Distribution by Composite Regime", font=dict(size=11, color="#9aa0aa")),
+                    xaxis=dict(color="#6b7280"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                               title="β (bps per %)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig146b, use_container_width=True)
+                _stats146 = []
+                for reg in _REGIME_ORDER146:
+                    _sub = _j146b[_j146b["regime"] == reg]["beta_63d"].dropna()
+                    if len(_sub) < 3: continue
+                    _stats146.append({"Regime": reg, "Median β": round(float(_sub.median()), 1),
+                                       "Mean β": round(float(_sub.mean()), 1), "N": len(_sub)})
+                if _stats146:
+                    st.dataframe(_pd146.DataFrame(_stats146).set_index("Regime"), use_container_width=True)
+            _curr_beta = float(_j146["beta_63d"].iloc[-1]) if _j146["beta_63d"].notna().any() else None
+            st.caption(
+                f"Current 63d credit beta: **{f'{_curr_beta:.1f} bps per 1% SP500 return' if _curr_beta else 'N/A'}**. "
+                "Negative beta = equity rallies associated with spread tightening (normal). "
+                "More negative in High/Extreme regimes = amplified co-movement."
+            )
+        else:
+            st.info("hy_spread or sp500 not found.")
+    except Exception as _e146:
+        st.caption(f"Credit beta: {_e146}")
+
+
+# sub147 — Score Seasonality (Signal Lab)
+if _active_sub == 147:
+    try:
+        import plotly.graph_objects as _go147
+        import numpy as _np147
+        import pandas as _pd147
+        _MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+        _cols_to_check = []
+        if "composite_risk_score_smooth" in df.columns:
+            _cols_to_check.append(("Composite", "composite_risk_score_smooth"))
+        if "hy_spread" in df.columns:
+            _cols_to_check.append(("HY Spread", "hy_spread"))
+        if "vix" in df.columns:
+            _cols_to_check.append(("VIX", "vix"))
+        if not _cols_to_check:
+            st.info("No series found for seasonality analysis.")
+        else:
+            for _label, _col in _cols_to_check:
+                _s147 = df[_col].dropna()
+                if len(_s147) < 252:
+                    continue
+                _s147.index = _pd147.to_datetime(_s147.index)
+                _monthly = _s147.groupby(_s147.index.month)
+                _fig147 = _go147.Figure()
+                for m in range(1, 13):
+                    _vals = _monthly.get_group(m).values if m in _monthly.groups else []
+                    if len(_vals) < 5:
+                        continue
+                    _fig147.add_trace(_go147.Box(
+                        y=_vals, name=_MONTH_NAMES[m-1],
+                        marker_color="#3b82f6",
+                        boxmean=True,
+                        hovertemplate=f"{_MONTH_NAMES[m-1]}: %{{y:.1f}}<extra></extra>",
+                    ))
+                _monthly_means = [float(_s147[_s147.index.month == m].mean()) for m in range(1, 13)]
+                _fig147.add_trace(_go147.Scatter(
+                    x=_MONTH_NAMES, y=_monthly_means,
+                    mode="lines+markers",
+                    line=dict(color="#ef4444", width=1.5),
+                    marker=dict(size=6, color="#ef4444"),
+                    name="Monthly Mean",
+                    hovertemplate="%{x}: mean=%{y:.1f}<extra></extra>",
+                ))
+                _fig147.update_layout(
+                    height=240, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=35, b=8),
+                    title=dict(text=f"{_label} — Seasonal Distribution by Calendar Month",
+                               font=dict(size=12, color="#9aa0aa")),
+                    xaxis=dict(color="#6b7280"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                    showlegend=False,
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig147, use_container_width=True)
+            # Month-of-year mean table for composite
+            if "composite_risk_score_smooth" in df.columns:
+                _s147c = df["composite_risk_score_smooth"].dropna()
+                _s147c.index = _pd147.to_datetime(_s147c.index)
+                _rows147 = []
+                for m in range(1, 13):
+                    _vals = _s147c[_s147c.index.month == m]
+                    if len(_vals) < 3: continue
+                    _rows147.append({
+                        "Month": _MONTH_NAMES[m-1],
+                        "Mean Score": round(float(_vals.mean()), 1),
+                        "Median": round(float(_vals.median()), 1),
+                        "P25": round(float(_vals.quantile(0.25)), 1),
+                        "P75": round(float(_vals.quantile(0.75)), 1),
+                        "N days": len(_vals),
+                    })
+                if _rows147:
+                    st.dataframe(_pd147.DataFrame(_rows147).set_index("Month"), use_container_width=True)
+                    _high_month = max(_rows147, key=lambda x: x["Mean Score"])
+                    _low_month = min(_rows147, key=lambda x: x["Mean Score"])
+                    st.caption(
+                        f"Historically highest-stress month: **{_high_month['Month']}** ({_high_month['Mean Score']:.1f} avg). "
+                        f"Lowest: **{_low_month['Month']}** ({_low_month['Mean Score']:.1f} avg). "
+                        "Seasonal patterns in credit often reflect earnings calendar, fiscal year-end, and summer liquidity."
+                    )
+    except Exception as _e147:
+        st.caption(f"Score seasonality: {_e147}")
+
+
+# sub148 — Vol of Vol (Risk Monitors)
+if _active_sub == 148:
+    try:
+        import plotly.graph_objects as _go148
+        import numpy as _np148
+        if "vix" in df.columns and "vix_change_5d" in df.columns:
+            _vix148 = df["vix"].dropna()
+            _vxchg148 = df["vix_change_5d"].dropna()
+            # Vol of vol = rolling std of VIX 5d change
+            _vov148 = _vxchg148.rolling(21, min_periods=10).std()
+            # Percentile
+            _vov_pct = _vov148.rolling(504, min_periods=63).apply(
+                lambda x: float((x[:-1] < x[-1]).mean() * 100) if len(x) > 1 else _np148.nan,
+                raw=True
+            )
+            def _vov_regime(v):
+                if _np148.isnan(v): return "Unknown"
+                if v < 1.5:  return "Calm"
+                if v < 3.0:  return "Normal"
+                if v < 5.0:  return "Elevated"
+                return "Turbulent"
+            _VOV_COLORS = {"Calm": "#10b981", "Normal": "#3b82f6", "Elevated": "#f59e0b",
+                           "Turbulent": "#ef4444", "Unknown": "#6b7280"}
+
+            _fig148a = _go148.Figure()
+            _fig148a.add_trace(_go148.Scatter(
+                x=_vov148.index, y=_vov148.values,
+                mode="lines", line=dict(color="#ec4899", width=1.2),
+                fill="tozeroy", fillcolor="rgba(236,72,153,0.07)",
+                hovertemplate="%{x|%Y-%m-%d}: VoV=%{y:.2f}<extra></extra>",
+            ))
+            _fig148a.add_hline(y=3.0, line_color="#f59e0b", line_width=1, line_dash="dot",
+                               annotation_text="Elevated (3.0)", annotation_font=dict(color="#f59e0b", size=8))
+            _fig148a.add_hline(y=5.0, line_color="#ef4444", line_width=1, line_dash="dot",
+                               annotation_text="Turbulent (5.0)", annotation_font=dict(color="#ef4444", size=8))
+            _fig148a.update_layout(
+                height=230, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="Vol of Vol: Rolling 21d Std of VIX 5-Day Change (VoV)", font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="VoV"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig148a, use_container_width=True)
+
+            # Percentile
+            _fig148b = _go148.Figure()
+            _fig148b.add_trace(_go148.Scatter(
+                x=_vov_pct.index, y=_vov_pct.values,
+                mode="lines", line=dict(color="#ec4899", width=0.9),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.0f}th pct<extra></extra>",
+            ))
+            _fig148b.add_hline(y=80, line_color="#ef4444", line_width=1, line_dash="dot")
+            _fig148b.update_layout(
+                height=160, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                title=dict(text="VoV Percentile vs 2-Year Rolling History", font=dict(size=11, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Percentile", range=[0, 100]),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig148b, use_container_width=True)
+
+            # VoV vs HY spread
+            if "hy_spread" in df.columns:
+                _j148 = _vov148.to_frame("vov").join(df["hy_spread"].to_frame("hy"), how="inner").dropna()
+                _fig148c = _go148.Figure()
+                _fig148c.add_trace(_go148.Scatter(
+                    x=_j148["vov"], y=_j148["hy"],
+                    mode="markers",
+                    marker=dict(color="#ec4899", size=2.5, opacity=0.3),
+                    hovertemplate="VoV: %{x:.2f}<br>HY: %{y:.0f}bps<extra></extra>",
+                ))
+                _fig148c.update_layout(
+                    height=200, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="Vol of Vol vs HY Spread Scatter (full history)", font=dict(size=11, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="VoV"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="HY (bps)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig148c, use_container_width=True)
+            _curr_vov = float(_vov148.iloc[-1]) if _vov148.notna().any() else None
+            _curr_vov_pct = float(_vov_pct.iloc[-1]) if _vov_pct.notna().any() else None
+            _curr_vov_reg = _vov_regime(_curr_vov if _curr_vov is not None else float("nan"))
+            st.caption(
+                f"Current VoV: **{f'{_curr_vov:.2f}' if _curr_vov else 'N/A'}** "
+                f"({f'{_curr_vov_pct:.0f}th pct' if _curr_vov_pct else 'N/A'}) — Regime: **{_curr_vov_reg}**. "
+                "High VoV precedes sharp credit moves by ~1–3 weeks — a leading indicator of regime instability."
+            )
+        else:
+            st.info("vix or vix_change_5d not found — run the feature pipeline.")
+    except Exception as _e148:
+        st.caption(f"Vol of vol: {_e148}")
+
+
+# sub149 — HY Multi-Horizon Momentum (Credit Markets)
+if _active_sub == 149:
+    try:
+        import plotly.graph_objects as _go149
+        import numpy as _np149
+        _horizon_cols = [
+            ("5d", "hy_change_5d"),
+            ("30d", "hy_change_30d"),
+            ("90d", "hy_change_90d"),
+        ]
+        _available149 = [(lbl, col) for lbl, col in _horizon_cols if col in df.columns]
+        if _available149:
+            _colors149 = {"5d": "#06b6d4", "30d": "#f59e0b", "90d": "#ef4444"}
+            # Multi-horizon overlay
+            _fig149a = _go149.Figure()
+            for lbl, col in _available149:
+                _s = df[col].dropna()
+                _fig149a.add_trace(_go149.Scatter(
+                    x=_s.index, y=_s.values,
+                    mode="lines", name=f"HY Δ{lbl}",
+                    line=dict(color=_colors149[lbl], width=1.1),
+                    hovertemplate=f"Δ{lbl}: %{{y:+.0f}}bps<extra></extra>",
+                ))
+            _fig149a.add_hline(y=0, line_color="#4b5563", line_width=1)
+            _fig149a.update_layout(
+                height=250, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text="HY Spread: Multi-Horizon Momentum (5d / 30d / 90d Change)",
+                           font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Spread Change (bps)", zeroline=True, zerolinecolor="#4b5563"),
+                legend=dict(orientation="h", y=-0.3, x=0, font=dict(size=9)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig149a, use_container_width=True)
+
+            # Momentum alignment: are all horizons pointing same direction?
+            _last149 = {}
+            for lbl, col in _available149:
+                _s = df[col].dropna()
+                if len(_s): _last149[lbl] = float(_s.iloc[-1])
+            if _last149:
+                _all_widen = all(v > 5 for v in _last149.values())
+                _all_tight = all(v < -5 for v in _last149.values())
+                _mixed = not _all_widen and not _all_tight
+                _align_txt = ("🔴 All horizons widening — broad spread pressure" if _all_widen
+                               else ("🟢 All horizons tightening — broad credit improvement" if _all_tight
+                                     else "🟡 Mixed — horizons not aligned"))
+                st.info(_align_txt)
+                _import149 = __import__("pandas")
+                _snap149 = _import149.DataFrame(
+                    [{"Horizon": lbl, "Change (bps)": round(_last149[lbl], 0),
+                      "Direction": "Widening" if _last149[lbl] > 5 else ("Tightening" if _last149[lbl] < -5 else "Flat")}
+                     for lbl in _last149],
+                ).set_index("Horizon")
+                st.dataframe(_snap149, use_container_width=True)
+
+            # Scatter: 5d vs 90d — short-term shock vs long-term trend
+            if "hy_change_5d" in df.columns and "hy_change_90d" in df.columns:
+                _j149 = df[["hy_change_5d","hy_change_90d"]].dropna()
+                _fig149b = _go149.Figure()
+                _fig149b.add_trace(_go149.Scatter(
+                    x=_j149["hy_change_90d"], y=_j149["hy_change_5d"],
+                    mode="markers",
+                    marker=dict(color="#f59e0b", size=2.5, opacity=0.3),
+                    hovertemplate="90d: %{x:+.0f}<br>5d: %{y:+.0f}<extra></extra>",
+                ))
+                _fig149b.add_hline(y=0, line_color="#4b5563", line_width=1)
+                _fig149b.add_vline(x=0, line_color="#4b5563", line_width=1)
+                _fig149b.update_layout(
+                    height=210, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=30, b=8),
+                    title=dict(text="5d vs 90d HY Change: Short-Term Shock vs Long-Term Trend (bps)",
+                               font=dict(size=11, color="#9aa0aa")),
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="90d Δ (bps)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280", title="5d Δ (bps)"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_fig149b, use_container_width=True)
+                st.caption("Q1 (top-right): short + long widening = momentum. Q3 (bottom-left): both tightening. "
+                           "Q2 (top-left): short spike vs long tightening = potential reversal. "
+                           "Q4 (bottom-right): short easing vs long widening = late-cycle.")
+        else:
+            st.info("hy_change_5d / hy_change_30d / hy_change_90d not found — run the feature pipeline.")
+    except Exception as _e149:
+        st.caption(f"HY multi-horizon: {_e149}")
+
+
+# sub150 — Score Ensemble Conviction (Signal Lab)
+if _active_sub == 150:
+    try:
+        import plotly.graph_objects as _go150
+        import numpy as _np150
+        import pandas as _pd150
+        from src.regime_attribution import SCORE_COLS, COMPOSITE_WEIGHTS, DISPLAY_NAMES
+        _sc150_cols = [(k, v) for k, v in SCORE_COLS.items() if v in df.columns]
+        if len(_sc150_cols) >= 3 and "hy_spread" in df.columns:
+            _hy150 = df["hy_spread"].dropna()
+            # Agreement score: count of sub-scores >= 50
+            _agree_df = df[[v for _, v in _sc150_cols]].dropna(how="all")
+            _n_above50 = (_agree_df >= 50).sum(axis=1)
+            _n_above70 = (_agree_df >= 70).sum(axis=1)
+            _n_total = len(_sc150_cols)
+
+            _fig150a = _go150.Figure()
+            _fig150a.add_trace(_go150.Scatter(
+                x=_n_above50.index, y=_n_above50.values,
+                mode="lines", name="Scores ≥50",
+                line=dict(color="#f59e0b", width=1.2),
+                fill="tozeroy", fillcolor="rgba(245,158,11,0.08)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y} of " + str(_n_total) + " scores ≥50<extra></extra>",
+            ))
+            _fig150a.add_trace(_go150.Scatter(
+                x=_n_above70.index, y=_n_above70.values,
+                mode="lines", name="Scores ≥70",
+                line=dict(color="#ef4444", width=1.0),
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.06)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y} of " + str(_n_total) + " scores ≥70<extra></extra>",
+            ))
+            _fig150a.add_hline(y=_n_total // 2, line_color="#6b7280", line_width=1, line_dash="dot",
+                               annotation_text="Majority", annotation_font=dict(color="#6b7280", size=8))
+            _fig150a.update_layout(
+                height=210, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa", size=10), margin=dict(l=8, r=8, t=40, b=8),
+                title=dict(text=f"Score Ensemble Agreement: # of {_n_total} Sub-Scores Above Threshold",
+                           font=dict(size=12, color="#9aa0aa")),
+                xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#6b7280",
+                           title="Count", range=[0, _n_total + 1]),
+                legend=dict(orientation="h", y=-0.3, x=0, font=dict(size=9)),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            )
+            st.plotly_chart(_fig150a, use_container_width=True)
+
+            # Forward HY outcomes by agreement level
+            _j150 = _n_above50.to_frame("n_agree").join(_hy150.to_frame("hy"), how="inner").dropna()
+            _j150["hy_fwd_21d"] = _j150["hy"].diff(21).shift(-21)
+            _j150 = _j150.dropna()
+            _bins150 = [(0, 1, "0–1 (No consensus)"), (2, 3, "2–3 (Weak)"),
+                        (4, 5, "4–5 (Majority)"), (6, _n_total, f"6–{_n_total} (Strong)")]
+            _rows150 = []
+            for lo, hi, label in _bins150:
+                _sub = _j150[(_j150["n_agree"] >= lo) & (_j150["n_agree"] <= hi)]["hy_fwd_21d"].dropna()
+                if len(_sub) < 5: continue
+                _rows150.append({
+                    "Agreement": label, "N": len(_sub),
+                    "Median Fwd HY Δ (bps)": round(float(_sub.median()), 0),
+                    "Mean Fwd HY Δ (bps)": round(float(_sub.mean()), 0),
+                    "% Widening": f"{(_sub > 0).mean()*100:.0f}%",
+                })
+            if _rows150:
+                st.markdown("**Ensemble Conviction → Forward 21d HY Spread Change**")
+                st.dataframe(_pd150.DataFrame(_rows150).set_index("Agreement"), use_container_width=True)
+
+            # Current snapshot
+            _curr_agree50 = int(_n_above50.iloc[-1]) if _n_above50.notna().any() else 0
+            _curr_agree70 = int(_n_above70.iloc[-1]) if _n_above70.notna().any() else 0
+            _agree_pct50 = _curr_agree50 / _n_total * 100
+            st.caption(
+                f"Current: **{_curr_agree50}/{_n_total}** scores ≥50 ({_agree_pct50:.0f}% consensus) · "
+                f"**{_curr_agree70}/{_n_total}** ≥70 (high-stress). "
+                "Strong ensemble agreement historically leads to more reliable HY spread widening signals."
+            )
+        else:
+            st.info("Need at least 3 sub-score columns and hy_spread — run the full scoring pipeline.")
+    except Exception as _e150:
+        st.caption(f"Score ensemble: {_e150}")
