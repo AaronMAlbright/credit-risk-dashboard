@@ -3169,6 +3169,10 @@ if _active_section == "Portfolio":
             st.json(_samples)
 
 
+# Ensure analytics content blocks get a DatetimeIndex df
+if "date" in df.columns and not isinstance(df.index, pd.DatetimeIndex):
+    df = df.set_index(pd.to_datetime(df["date"])).drop(columns=["date"])
+
 if _active_sub == 1:
     wf_windows, wf_regimes = load_walk_forward()
     render_validation_section(
@@ -21334,7 +21338,6 @@ if _active_sub == 167:
         import plotly.graph_objects as _go167
         import numpy as _np167
         import pandas as _pd167
-        from scipy import stats as _stats167
         _df167 = df.copy() if "df" in dir() else None
         _has167 = _df167 is not None and "hy_change_5d" in _df167.columns
         if not _has167:
