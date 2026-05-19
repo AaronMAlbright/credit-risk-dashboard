@@ -155,7 +155,7 @@ from src.swap_spread_monitor import run_swap_spread_monitor
 from src.cross_currency_basis import run_cross_currency_basis
 from src.cre_stress import run_cre_stress
 from src.primary_market_issuance import run_primary_market_issuance
-from src.distressed_debt import run_distressed_debt_analysis
+from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
 from src.clo_monitor import run_clo_monitor
 from src.financial_conditions import run_fci_analysis
 from src.credit_impulse import run_credit_impulse_analysis
