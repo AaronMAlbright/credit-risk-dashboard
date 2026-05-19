@@ -1299,6 +1299,7 @@ _ANALYTICS_VIEWS = {
         ("Credit Beta", 146), ("HY Multi-Horizon", 149),
         ("Spread Dispersion", 151), ("Carry Decomp", 156),
         ("Credit Cycle Clock", 157), ("Spread Velocity", 158),
+        ("Risk Appetite", 163), ("Carry Efficiency", 164),
     ],
     "Rates & Macro": [
         ("Regime Returns", 23), ("X-Asset Momentum", 38), ("Macro Surprise", 41),
@@ -1332,6 +1333,7 @@ _ANALYTICS_VIEWS = {
         ("Enhanced Funding", 119), ("Equity Returns", 124),
         ("VIX Context", 127), ("Drawdown Anatomy", 133), ("Alert History", 139),
         ("Vol of Vol", 148), ("Corr Regime", 154),
+        ("Tail Skew", 167),
     ],
     "Signal Lab": [
         ("Validation", 1), ("Attribution", 2), ("Timeline", 3),
@@ -1349,6 +1351,7 @@ _ANALYTICS_VIEWS = {
         ("Seasonality", 147), ("Score Ensemble", 150),
         ("Score Bootstrap CI", 153), ("Score Calendar", 159),
         ("Factor Corr Scan", 160), ("Score Lead-Lag", 162),
+        ("Score Drawdown", 165),
     ],
     "Regime": [
         ("Performance", 8), ("Regime Validity", 10), ("Failure Analysis", 11),
@@ -1356,7 +1359,8 @@ _ANALYTICS_VIEWS = {
         ("Traffic Light", 32), ("Shock Simulation", 33), ("Alert Backtest", 34),
         ("Regime Forecast", 36), ("Regime Age", 43), ("Drawdown", 49),
         ("Recession Analog", 131), ("Transition Matrix", 134),
-        ("Regime Dwell", 155),
+        ("Regime Dwell", 155), ("Macro Scorecard", 166),
+        ("Quant Analogs", 168),
     ],
     "Models": [
         ("Sensitivity", "m1"), ("Transitions", "m2"), ("Regimes", "m3"),
@@ -20972,3 +20976,529 @@ if _active_sub == 162:
                     st.caption("Leading sub-scores: " + ", ".join(_leaders162))
     except Exception as _e162:
         st.caption(f"Score lead-lag map: {_e162}")
+
+if _active_sub == 163:
+    try:
+        import plotly.graph_objects as _go163
+        import numpy as _np163
+        import pandas as _pd163
+        _df163 = df.copy() if "df" in dir() else None
+        _has163 = (_df163 is not None
+                   and "hy_spread" in _df163.columns
+                   and "vix" in _df163.columns
+                   and "sp500_drawdown" in _df163.columns)
+        if not _has163:
+            st.info("hy_spread, vix, and sp500_drawdown required.")
+        else:
+            st.subheader("Credit Risk Appetite Index")
+            st.caption("Composite risk appetite indicator: combines HY/VIX ratio (credit vs equity fear) and SP500 drawdown depth. High index = investors are reaching for credit risk (tight spreads relative to equity vol, shallow drawdown). Low index = de-risking. Tracks investor willingness to hold credit risk.")
+            _hy163 = _df163["hy_spread"].dropna()
+            _vix163 = _df163["vix"].dropna()
+            _dd163 = _df163["sp500_drawdown"].dropna()
+            _j163 = _hy163.to_frame("hy").join(_vix163.to_frame("vix"), how="inner").join(
+                _dd163.to_frame("dd"), how="inner").dropna().tail(1260)
+            # HY/VIX ratio — lower = more appetite (tight spreads per unit of VIX)
+            _ratio163 = _j163["hy"] / _j163["vix"]
+            # Normalize ratio: invert and scale 0-100 (low ratio = high appetite)
+            _ratio_z163 = (_ratio163.rolling(252).rank(pct=True) * 100).rsub(100)  # invert
+            # Drawdown component: shallow drawdown = high appetite
+            _dd_z163 = (_j163["dd"].rolling(252).rank(pct=True) * 100).rsub(100)  # invert (less negative = higher)
+            # Composite: 60% ratio, 40% drawdown
+            _appetite163 = 0.6 * _ratio_z163 + 0.4 * _dd_z163
+            _fig163 = _go163.Figure()
+            _fig163.add_trace(_go163.Scatter(
+                x=_appetite163.index, y=_appetite163.values,
+                line=dict(color="#22c55e", width=1.5),
+                fill="tozeroy", fillcolor="rgba(34,197,94,0.08)",
+                name="Risk Appetite Index"
+            ))
+            _fig163.add_hline(y=70, line_dash="dash", line_color="#22c55e",
+                              annotation_text="High appetite (70)", annotation_position="right")
+            _fig163.add_hline(y=30, line_dash="dash", line_color="#ef4444",
+                              annotation_text="Low appetite (30)", annotation_position="right")
+            _fig163.add_hline(y=50, line_color="#9aa0aa", line_width=0.5)
+            _fig163.update_layout(
+                title="Credit Risk Appetite Index (0=Max Fear, 100=Max Greed)",
+                height=360, yaxis_title="Index", yaxis=dict(range=[0, 100]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig163, use_container_width=True)
+            # HY/VIX ratio chart
+            _fig163b = _go163.Figure()
+            _fig163b.add_trace(_go163.Scatter(
+                x=_ratio163.index, y=_ratio163.values,
+                line=dict(color="#6366f1", width=1), name="HY/VIX Ratio"
+            ))
+            _fig163b.update_layout(
+                title="HY Spread / VIX Ratio (lower = more appetite)",
+                height=220, yaxis_title="Ratio",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig163b, use_container_width=True)
+            _cur_app163 = float(_appetite163.iloc[-1]) if _appetite163.notna().any() else float("nan")
+            _cur_ratio163 = float(_ratio163.iloc[-1]) if _ratio163.notna().any() else float("nan")
+            if not _np163.isnan(_cur_app163):
+                _app_label163 = ("Extreme Greed" if _cur_app163 > 80 else
+                                 ("Greed" if _cur_app163 > 60 else
+                                  ("Neutral" if _cur_app163 > 40 else
+                                   ("Fear" if _cur_app163 > 20 else "Extreme Fear"))))
+                st.caption(
+                    f"Current risk appetite: **{_cur_app163:.0f}/100** — {_app_label163}. "
+                    f"HY/VIX ratio: {_cur_ratio163:.1f}."
+                )
+    except Exception as _e163:
+        st.caption(f"Risk appetite: {_e163}")
+
+if _active_sub == 164:
+    try:
+        import plotly.graph_objects as _go164
+        import numpy as _np164
+        import pandas as _pd164
+        _df164 = df.copy() if "df" in dir() else None
+        _has164 = _df164 is not None and "hy_spread" in _df164.columns
+        if not _has164:
+            st.info("hy_spread required.")
+        else:
+            st.subheader("Carry Efficiency (Sharpe-like)")
+            st.caption("HY spread level divided by its rolling 63-day realized volatility — a credit Sharpe ratio. High ratio = spread is large relative to its volatility (attractive carry-per-unit-of-risk). Low ratio = spreads are tight or unusually volatile (poor compensation). Rolling percentile tracks richness/cheapness.")
+            _hy164 = _df164["hy_spread"].dropna()
+            _hy_vol164 = _hy164.rolling(63).std()
+            _carry_eff164 = (_hy164 / (_hy_vol164 + 1e-9)).replace([_np164.inf, -_np164.inf], _np164.nan)
+            _eff_pct164 = _carry_eff164.rolling(252).rank(pct=True) * 100
+            _c1_164, _c2_164 = st.columns(2)
+            with _c1_164:
+                _fig164a = _go164.Figure()
+                _fig164a.add_trace(_go164.Scatter(
+                    x=_carry_eff164.tail(504).index, y=_carry_eff164.tail(504).values,
+                    line=dict(color="#22c55e", width=1.5), name="Carry Efficiency"
+                ))
+                _fig164a.update_layout(
+                    title="Carry Efficiency Ratio (HY / 63d Vol)",
+                    height=300, yaxis_title="Ratio",
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    showlegend=False
+                )
+                st.plotly_chart(_fig164a, use_container_width=True)
+            with _c2_164:
+                _fig164b = _go164.Figure()
+                _fig164b.add_trace(_go164.Scatter(
+                    x=_eff_pct164.tail(504).index, y=_eff_pct164.tail(504).values,
+                    fill="tozeroy", fillcolor="rgba(34,197,94,0.1)",
+                    line=dict(color="#22c55e", width=1), name="Efficiency Percentile"
+                ))
+                _fig164b.add_hline(y=70, line_dash="dash", line_color="#22c55e",
+                                   annotation_text="Cheap (70)", annotation_position="right")
+                _fig164b.add_hline(y=30, line_dash="dash", line_color="#ef4444",
+                                   annotation_text="Rich (30)", annotation_position="right")
+                _fig164b.update_layout(
+                    title="Carry Efficiency Percentile (252d)",
+                    height=300, yaxis_title="Pct", yaxis=dict(range=[0, 100]),
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    showlegend=False
+                )
+                st.plotly_chart(_fig164b, use_container_width=True)
+            # Distribution
+            _eff_hist164 = _carry_eff164.dropna()
+            _fig164c = _go164.Figure()
+            _fig164c.add_trace(_go164.Histogram(
+                x=_eff_hist164.values, nbinsx=40,
+                marker_color="#6366f1", opacity=0.7, name="Distribution"
+            ))
+            _cur_eff164 = float(_carry_eff164.iloc[-1]) if _carry_eff164.notna().any() else float("nan")
+            if not _np164.isnan(_cur_eff164):
+                _fig164c.add_vline(x=_cur_eff164, line_color="white", line_width=2,
+                                   annotation_text=f"Now: {_cur_eff164:.2f}")
+            _fig164c.update_layout(
+                title="Carry Efficiency Distribution (full history)",
+                height=240, xaxis_title="Efficiency Ratio",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig164c, use_container_width=True)
+            _cur_pct164 = float(_eff_pct164.iloc[-1]) if _eff_pct164.notna().any() else float("nan")
+            if not _np164.isnan(_cur_eff164):
+                _val164 = ("Cheap (high carry/vol)" if _cur_pct164 > 70 else
+                           ("Rich (low carry/vol)" if _cur_pct164 < 30 else "Fair"))
+                st.caption(
+                    f"Current carry efficiency: **{_cur_eff164:.2f}** ({_cur_pct164:.0f}th pct) — {_val164}."
+                )
+    except Exception as _e164:
+        st.caption(f"Carry efficiency: {_e164}")
+
+if _active_sub == 165:
+    try:
+        import plotly.graph_objects as _go165
+        import numpy as _np165
+        import pandas as _pd165
+        _df165 = df.copy() if "df" in dir() else None
+        _has165 = _df165 is not None and "composite_risk_score_smooth" in _df165.columns
+        if not _has165:
+            st.info("composite_risk_score_smooth required.")
+        else:
+            st.subheader("Score Drawdown Profile")
+            st.caption("Drawdown analysis applied to the composite risk score itself: how far does the score fall from its rolling peak, and how long does recovery take? Identifies 'score exhaustion' periods — after stress spikes, does the score recover quickly or stay elevated?")
+            _comp165 = _df165["composite_risk_score_smooth"].dropna()
+            _peak165 = _comp165.cummax()
+            _dd165 = (_comp165 - _peak165)  # always ≤ 0
+            # For score: drawdown means score fell from its high
+            _fig165a = _go165.Figure()
+            _fig165a.add_trace(_go165.Scatter(
+                x=_comp165.index, y=_comp165.values,
+                line=dict(color="#6366f1", width=1.5), name="Composite Score"
+            ))
+            _fig165a.add_trace(_go165.Scatter(
+                x=_peak165.index, y=_peak165.values,
+                line=dict(color="#ef4444", width=1, dash="dot"), name="Rolling Peak"
+            ))
+            _fig165a.add_hline(y=50, line_dash="dash", line_color="#9aa0aa")
+            _fig165a.update_layout(
+                title="Composite Score vs Rolling Peak",
+                height=300, yaxis_title="Score",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(_fig165a, use_container_width=True)
+            _fig165b = _go165.Figure()
+            _fig165b.add_trace(_go165.Scatter(
+                x=_dd165.index, y=_dd165.values,
+                fill="tozeroy", fillcolor="rgba(239,68,68,0.12)",
+                line=dict(color="#ef4444", width=1), name="Score Drawdown"
+            ))
+            _fig165b.update_layout(
+                title="Score Drawdown from Peak (points below rolling high)",
+                height=220, yaxis_title="Drawdown (pts)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig165b, use_container_width=True)
+            # Identify drawdown episodes (where score retreated >10 pts from peak)
+            _ep_rows165 = []
+            _in_dd165 = False
+            _ep_start165 = None
+            _ep_min165 = 0.0
+            for _dt165, _v165 in _dd165.items():
+                if _v165 < -10:
+                    if not _in_dd165:
+                        _in_dd165 = True
+                        _ep_start165 = _dt165
+                        _ep_min165 = float(_v165)
+                    else:
+                        _ep_min165 = min(_ep_min165, float(_v165))
+                else:
+                    if _in_dd165:
+                        _ep_rows165.append({
+                            "Start": str(_ep_start165.date()),
+                            "End": str(_dt165.date()),
+                            "Max Drawdown (pts)": round(_ep_min165, 1),
+                            "Duration (d)": ((_dt165 - _ep_start165).days),
+                        })
+                        _in_dd165 = False
+            if _ep_rows165:
+                _ep_df165 = _pd165.DataFrame(_ep_rows165).sort_values("Max Drawdown (pts)").reset_index(drop=True)
+                st.markdown("**Score Drawdown Episodes (>10 pts from peak)**")
+                st.dataframe(_ep_df165, use_container_width=True, hide_index=True)
+            _cur_dd165 = float(_dd165.iloc[-1])
+            _max_dd165 = float(_dd165.min())
+            st.caption(
+                f"Current score drawdown: **{_cur_dd165:.1f} pts** from peak. "
+                f"Worst ever: {_max_dd165:.1f} pts. "
+                f"Episodes >10 pts: {len(_ep_rows165)}."
+            )
+    except Exception as _e165:
+        st.caption(f"Score drawdown: {_e165}")
+
+if _active_sub == 166:
+    try:
+        import pandas as _pd166
+        _df166 = df.copy() if "df" in dir() else None
+        if _df166 is None:
+            st.info("Dataset required.")
+        else:
+            st.subheader("Macro Traffic Light Scorecard")
+            st.caption("Multi-dimensional scorecard summarizing current conditions across six macro-financial channels. Each row evaluates one channel against its historical distribution and assigns a risk status.")
+
+            def _safe166(col, default=float("nan")):
+                if col in _df166.columns and _df166[col].notna().any():
+                    return float(_df166[col].dropna().iloc[-1])
+                return default
+
+            def _pct166(col):
+                if col not in _df166.columns:
+                    return float("nan")
+                s = _df166[col].dropna()
+                if len(s) < 10:
+                    return float("nan")
+                v = float(s.iloc[-1])
+                return float((s < v).mean() * 100)
+
+            def _status166(pct, invert=False):
+                if _pd166.isna(pct):
+                    return "—"
+                p = 100 - pct if invert else pct
+                if p >= 75: return "🔴 High Risk"
+                if p >= 50: return "🟡 Elevated"
+                if p >= 25: return "🟢 Moderate"
+                return "🟢 Low Risk"
+
+            _rows166 = []
+
+            # Growth
+            _sahm166 = _safe166("sahm_like")
+            _u_pct166 = _pct166("unemployment_change_90d")
+            _grow_status166 = (_status166(_u_pct166) if not _pd166.isna(_u_pct166) else "—")
+            _rows166.append({"Channel": "Growth / Labor",
+                             "Key Metric": f"Sahm-like: {_sahm166:.2f}" if not _pd166.isna(_sahm166) else "—",
+                             "Percentile": f"{_u_pct166:.0f}" if not _pd166.isna(_u_pct166) else "—",
+                             "Status": _grow_status166,
+                             "Note": "Sahm ≥0.5 = recession risk elevated"})
+
+            # Inflation / Rates
+            _be166 = _safe166("breakeven_10y")
+            _ry166 = _safe166("real_yield_proxy")
+            _ry_pct166 = _pct166("real_yield_z")
+            _rows166.append({"Channel": "Inflation / Real Rates",
+                             "Key Metric": f"Breakeven: {_be166:.1f}% | Real: {_ry166:.2f}" if not _pd166.isna(_be166) else "—",
+                             "Percentile": f"{_ry_pct166:.0f}" if not _pd166.isna(_ry_pct166) else "—",
+                             "Status": _status166(_ry_pct166),
+                             "Note": "High real yields stress debt servicing"})
+
+            # Financial Conditions
+            _nfci166 = _safe166("nfci")
+            _nfci_pct166 = _pct166("nfci")
+            _rows166.append({"Channel": "Financial Conditions",
+                             "Key Metric": f"NFCI: {_nfci166:.3f}" if not _pd166.isna(_nfci166) else "—",
+                             "Percentile": f"{_nfci_pct166:.0f}" if not _pd166.isna(_nfci_pct166) else "—",
+                             "Status": _status166(_nfci_pct166),
+                             "Note": "NFCI > 0 = tighter than average"})
+
+            # Credit
+            _hy166 = _safe166("hy_spread")
+            _hy_pct166 = _pct166("hy_spread")
+            _rows166.append({"Channel": "Credit Spreads",
+                             "Key Metric": f"HY OAS: {_hy166:.0f} bps" if not _pd166.isna(_hy166) else "—",
+                             "Percentile": f"{_hy_pct166:.0f}" if not _pd166.isna(_hy_pct166) else "—",
+                             "Status": _status166(_hy_pct166),
+                             "Note": "Wide spreads = credit stress"})
+
+            # Volatility
+            _vix166 = _safe166("vix")
+            _vix_pct166 = _pct166("vix")
+            _rows166.append({"Channel": "Equity Volatility",
+                             "Key Metric": f"VIX: {_vix166:.1f}" if not _pd166.isna(_vix166) else "—",
+                             "Percentile": f"{_vix_pct166:.0f}" if not _pd166.isna(_vix_pct166) else "—",
+                             "Status": _status166(_vix_pct166),
+                             "Note": "VIX > 25 historically = stress regime"})
+
+            # Yield Curve
+            _curve166 = _safe166("spread")
+            _curve_pct166 = _pct166("spread")
+            _rows166.append({"Channel": "Yield Curve (2s10s)",
+                             "Key Metric": f"Spread: {_curve166:.2f}%" if not _pd166.isna(_curve166) else "—",
+                             "Percentile": f"{_curve_pct166:.0f}" if not _pd166.isna(_curve_pct166) else "—",
+                             "Status": _status166(100 - _curve_pct166 if not _pd166.isna(_curve_pct166) else float("nan")),
+                             "Note": "Inverted curve (low pct) = recession signal"})
+
+            _sc166 = _pd166.DataFrame(_rows166)
+            st.dataframe(_sc166, use_container_width=True, hide_index=True)
+
+            _red_count166 = sum("🔴" in str(r) for r in _sc166["Status"])
+            _yellow_count166 = sum("🟡" in str(r) for r in _sc166["Status"])
+            st.caption(
+                f"Scorecard: **{_red_count166}** high-risk · **{_yellow_count166}** elevated · "
+                f"{6 - _red_count166 - _yellow_count166} moderate/low. "
+                "Percentiles computed vs full available history."
+            )
+    except Exception as _e166:
+        st.caption(f"Macro scorecard: {_e166}")
+
+if _active_sub == 167:
+    try:
+        import plotly.graph_objects as _go167
+        import numpy as _np167
+        import pandas as _pd167
+        from scipy import stats as _stats167
+        _df167 = df.copy() if "df" in dir() else None
+        _has167 = _df167 is not None and "hy_change_5d" in _df167.columns
+        if not _has167:
+            st.info("hy_change_5d required.")
+        else:
+            st.subheader("Tail Skew Monitor")
+            st.caption("Rolling skewness and kurtosis of HY 5-day changes. Negative skew = left tail is fatter (more frequent large widening moves). Excess kurtosis > 0 = fat tails relative to normal. Both are early warnings of tail-risk build-up before stress episodes.")
+            _hyd167 = _df167["hy_change_5d"].dropna()
+            _roll_skew167 = _hyd167.rolling(63).skew()
+            _roll_kurt167 = _hyd167.rolling(63).kurt()  # excess kurtosis
+            _c1_167, _c2_167 = st.columns(2)
+            with _c1_167:
+                _fig167a = _go167.Figure()
+                _fig167a.add_trace(_go167.Scatter(
+                    x=_roll_skew167.index, y=_roll_skew167.values,
+                    line=dict(color="#f59e0b", width=1.5), name="Rolling Skew"
+                ))
+                _fig167a.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+                _fig167a.add_hline(y=-1, line_dash="dash", line_color="#ef4444",
+                                   annotation_text="Left-tail warning")
+                _fig167a.update_layout(
+                    title="Rolling 63d Skewness of HY 5d Changes",
+                    height=300, yaxis_title="Skewness",
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    showlegend=False
+                )
+                st.plotly_chart(_fig167a, use_container_width=True)
+            with _c2_167:
+                _fig167b = _go167.Figure()
+                _fig167b.add_trace(_go167.Scatter(
+                    x=_roll_kurt167.index, y=_roll_kurt167.values,
+                    line=dict(color="#8b5cf6", width=1.5), name="Rolling Kurtosis"
+                ))
+                _fig167b.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+                _fig167b.add_hline(y=3, line_dash="dash", line_color="#ef4444",
+                                   annotation_text="Fat tail warning")
+                _fig167b.update_layout(
+                    title="Rolling 63d Excess Kurtosis of HY 5d Changes",
+                    height=300, yaxis_title="Excess Kurtosis",
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    showlegend=False
+                )
+                st.plotly_chart(_fig167b, use_container_width=True)
+            # Full history distribution with QQ-ish comparison
+            _full_vals167 = _hyd167.values
+            _p5_167, _p95_167 = float(_np167.percentile(_full_vals167, 5)), float(_np167.percentile(_full_vals167, 95))
+            _p1_167, _p99_167 = float(_np167.percentile(_full_vals167, 1)), float(_np167.percentile(_full_vals167, 99))
+            _fig167c = _go167.Figure()
+            _fig167c.add_trace(_go167.Histogram(
+                x=_full_vals167, nbinsx=60,
+                marker_color="#6366f1", opacity=0.7
+            ))
+            for _v167, _lbl167 in [(_p1_167, "P1"), (_p5_167, "P5"), (_p95_167, "P95"), (_p99_167, "P99")]:
+                _fig167c.add_vline(x=_v167, line_dash="dash", line_color="#f59e0b",
+                                   annotation_text=_lbl167, annotation_position="top")
+            _fig167c.update_layout(
+                title="Full Distribution of HY 5d Changes",
+                height=260, xaxis_title="5d Change (bps)",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False
+            )
+            st.plotly_chart(_fig167c, use_container_width=True)
+            _cur_skew167 = float(_roll_skew167.iloc[-1]) if _roll_skew167.notna().any() else float("nan")
+            _cur_kurt167 = float(_roll_kurt167.iloc[-1]) if _roll_kurt167.notna().any() else float("nan")
+            if not _np167.isnan(_cur_skew167):
+                _tail_warn167 = _cur_skew167 < -1 or _cur_kurt167 > 3
+                st.caption(
+                    f"Current 63d skew: **{_cur_skew167:.2f}** · excess kurtosis: **{_cur_kurt167:.2f}** · "
+                    f"Tail risk {'⚠️ ELEVATED' if _tail_warn167 else 'within normal range'}. "
+                    f"5th/95th pct (full history): {_p5_167:.1f} / {_p95_167:.1f} bps."
+                )
+    except Exception as _e167:
+        st.caption(f"Tail skew: {_e167}")
+
+if _active_sub == 168:
+    try:
+        import plotly.graph_objects as _go168
+        import numpy as _np168
+        import pandas as _pd168
+        _df168 = df.copy() if "df" in dir() else None
+        _feat_cols168 = [c for c in [
+            "vix", "hy_spread", "spread", "unemployment", "nfci",
+            "sp500_drawdown", "real_yield_proxy", "breakeven_10y",
+            "hy_change_30d", "sahm_like",
+        ] if _df168 is not None and c in _df168.columns]
+        _has168 = _df168 is not None and len(_feat_cols168) >= 4 and "hy_spread" in _df168.columns
+        if not _has168:
+            st.info("At least 4 feature columns including hy_spread required.")
+        else:
+            st.subheader("Quantitative Regime Analogs")
+            st.caption("Euclidean distance from today's standardized feature vector to every historical observation. Top similar dates = quantitative analogs. Forward outcomes (HY spread change at +21, +63d) reveal what historically followed the most similar macro-financial configurations.")
+            _feat_df168 = _df168[_feat_cols168].dropna()
+            # Standardize
+            _mu168 = _feat_df168.mean()
+            _sd168 = _feat_df168.std().replace(0, 1)
+            _std_df168 = (_feat_df168 - _mu168) / _sd168
+            _cur_vec168 = _std_df168.iloc[-1].values
+            # Distances to all historical rows (exclude last 63 days to avoid self-match)
+            _hist_std168 = _std_df168.iloc[:-63]
+            _dists168 = _np168.sqrt((((_hist_std168.values - _cur_vec168) ** 2)).sum(axis=1))
+            _dist_s168 = _pd168.Series(_dists168, index=_hist_std168.index)
+            _top168 = _dist_s168.nsmallest(10)
+            # Forward HY outcomes
+            _hy168 = _df168["hy_spread"]
+            _analog_rows168 = []
+            for _dt168, _d168 in _top168.items():
+                _fwd21168 = float("nan")
+                _fwd63168 = float("nan")
+                try:
+                    _loc168 = _hy168.index.get_loc(_dt168)
+                    if _loc168 + 21 < len(_hy168):
+                        _fwd21168 = float(_hy168.iloc[_loc168 + 21]) - float(_hy168.iloc[_loc168])
+                    if _loc168 + 63 < len(_hy168):
+                        _fwd63168 = float(_hy168.iloc[_loc168 + 63]) - float(_hy168.iloc[_loc168])
+                except Exception:
+                    pass
+                _analog_rows168.append({
+                    "Analog Date": str(_dt168.date()),
+                    "Distance": round(float(_d168), 2),
+                    "HY at Analog": round(float(_hy168.get(_dt168, float("nan"))), 0),
+                    "Fwd 21d HY Δ": round(_fwd21168, 0) if not _np168.isnan(_fwd21168) else None,
+                    "Fwd 63d HY Δ": round(_fwd63168, 0) if not _np168.isnan(_fwd63168) else None,
+                })
+            _analog_df168 = _pd168.DataFrame(_analog_rows168)
+            st.dataframe(_analog_df168, use_container_width=True, hide_index=True)
+            # Summary of forward outcomes
+            _fwd21_vals168 = [r["Fwd 21d HY Δ"] for r in _analog_rows168 if r["Fwd 21d HY Δ"] is not None]
+            _fwd63_vals168 = [r["Fwd 63d HY Δ"] for r in _analog_rows168 if r["Fwd 63d HY Δ"] is not None]
+            # Scatter of analog forward outcomes
+            if _fwd21_vals168 and _fwd63_vals168:
+                _fig168 = _go168.Figure()
+                _fig168.add_trace(_go168.Scatter(
+                    x=_fwd21_vals168, y=_fwd63_vals168[:len(_fwd21_vals168)],
+                    mode="markers+text",
+                    text=[r["Analog Date"][:7] for r in _analog_rows168[:len(_fwd21_vals168)]],
+                    textposition="top center",
+                    marker=dict(color="#6366f1", size=10), name="Analog"
+                ))
+                _fig168.add_vline(x=0, line_color="#9aa0aa", line_width=0.5)
+                _fig168.add_hline(y=0, line_color="#9aa0aa", line_width=0.5)
+                _fig168.update_layout(
+                    title="Analog Forward Outcomes: 21d vs 63d HY Change (bps)",
+                    height=340,
+                    xaxis_title="Fwd 21d HY Δ (bps)",
+                    yaxis_title="Fwd 63d HY Δ (bps)",
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                    showlegend=False
+                )
+                st.plotly_chart(_fig168, use_container_width=True)
+            _med21_168 = float(_np168.median(_fwd21_vals168)) if _fwd21_vals168 else float("nan")
+            _med63_168 = float(_np168.median(_fwd63_vals168)) if _fwd63_vals168 else float("nan")
+            _pct_wide21_168 = sum(v > 0 for v in _fwd21_vals168) / len(_fwd21_vals168) * 100 if _fwd21_vals168 else float("nan")
+            if not _np168.isnan(_med21_168):
+                st.caption(
+                    f"Top {len(_analog_rows168)} analogs: median fwd 21d HY Δ = **{_med21_168:+.0f} bps**, "
+                    f"63d = **{_med63_168:+.0f} bps**. "
+                    f"{_pct_wide21_168:.0f}% of analogs showed HY widening over 21d. "
+                    f"Features used: {', '.join(_feat_cols168)}."
+                )
+    except Exception as _e168:
+        st.caption(f"Quant analogs: {_e168}")
