@@ -1285,6 +1285,7 @@ with st.sidebar.expander("⚙ Model Config"):
 # ── Sidebar Navigation ────────────────────────────────────────────────────────
 _ANALYTICS_VIEWS = {
     "Credit Markets": [
+        ("Overview", "ov_cm"),
         ("Defaults", 19), ("Fwd Sim", 20), ("CDX Proxy", 21),
         ("Default Cycle", 24), ("Spread Vol", 27), ("Fallen Angel", 28),
         ("Global Credit", 29), ("Corp Leverage", 30), ("Seasonality", 31),
@@ -1303,6 +1304,7 @@ _ANALYTICS_VIEWS = {
         ("HY Term Structure", 172), ("Credit Diffusion", 174),
     ],
     "Rates & Macro": [
+        ("Overview", "ov_rm"),
         ("Regime Returns", 23), ("X-Asset Momentum", 38), ("Macro Surprise", 41),
         ("Inflation Regime", 45), ("Fed Liquidity", 53), ("G4 Divergence", 54),
         ("Swap Spreads", 57), ("XCcy Basis", 58), ("FCI", 63),
@@ -1320,6 +1322,7 @@ _ANALYTICS_VIEWS = {
         ("Credit-Labor Div", 152), ("Liquidity-Credit", 161),
     ],
     "Risk Monitors": [
+        ("Overview", "ov_risk"),
         ("Tail Risk", 6), ("Stress Test", 7), ("Contagion", 12),
         ("Vol Regime", 39), ("Deleveraging", 44), ("Sector Stress", 46),
         ("Put/Call", 47), ("Tail Dependency", 52), ("Portfolio Stress", 55),
@@ -1337,6 +1340,7 @@ _ANALYTICS_VIEWS = {
         ("Tail Skew", 167), ("Vol Clustering", 170),
     ],
     "Signal Lab": [
+        ("Overview", "ov_sl"),
         ("Validation", 1), ("Attribution", 2), ("Timeline", 3),
         ("Signal Decay", 4), ("Orthogonality", 5), ("Factors", 9),
         ("Granger Causality", 18), ("EQ-Credit Corr", 22), ("Correlation Heatmap", 26),
@@ -1356,6 +1360,7 @@ _ANALYTICS_VIEWS = {
         ("Score Inflection", 173),
     ],
     "Regime": [
+        ("Overview", "ov_reg"),
         ("Performance", 8), ("Regime Validity", 10), ("Failure Analysis", 11),
         ("Analogs", 13), ("Persistence", 14), ("Compare Dates", 25),
         ("Traffic Light", 32), ("Shock Simulation", 33), ("Alert Backtest", 34),
@@ -1365,6 +1370,7 @@ _ANALYTICS_VIEWS = {
         ("Quant Analogs", 168), ("Stress Probability", 171),
     ],
     "Models": [
+        ("Overview", "ov_mod"),
         ("Sensitivity", "m1"), ("Transitions", "m2"), ("Regimes", "m3"),
         ("Monte Carlo", "m4"), ("Sub-period", "m5"), ("Sizing", "m6"),
         ("Scenarios", "m7"), ("OOS Splits", "m8"), ("Thresholds", "m9"),
@@ -22024,3 +22030,329 @@ if _active_sub == 174:
             )
     except Exception as _e174:
         st.caption(f"Credit diffusion: {_e174}")
+
+# ── Section Overview Pages ───────────────────────────────────────────────────
+
+if _active_sub == "ov_cm":
+    try:
+        import plotly.graph_objects as _go_ov_cm
+        import numpy as _np_ov_cm
+        st.subheader("Credit Markets — Section Overview")
+        st.caption("Current snapshot across key credit market indicators. Select any sub-view from the sidebar to drill in.")
+        _d = df
+        def _pct_rank(col):
+            s = _d[col].dropna()
+            if len(s) < 10: return float("nan")
+            return float((s < float(s.iloc[-1])).mean() * 100)
+        def _last(col):
+            s = _d[col].dropna()
+            return float(s.iloc[-1]) if len(s) else float("nan")
+        def _chg(col, n=21):
+            s = _d[col].dropna()
+            if len(s) < n + 1: return float("nan")
+            return float(s.iloc[-1]) - float(s.iloc[-n - 1])
+        _c1, _c2, _c3, _c4 = st.columns(4)
+        _hy_lvl = _last("hy_spread"); _hy_pct = _pct_rank("hy_spread"); _hy_chg = _chg("hy_spread")
+        _c1.metric("HY OAS", f"{_hy_lvl:.0f} bps" if not _np_ov_cm.isnan(_hy_lvl) else "—",
+                   delta=f"{_hy_chg:+.0f} 21d" if not _np_ov_cm.isnan(_hy_chg) else None,
+                   delta_color="inverse")
+        _ig_lvl = _last("ig_spread"); _ig_chg = _chg("ig_spread")
+        _c2.metric("IG OAS", f"{_ig_lvl:.0f} bps" if not _np_ov_cm.isnan(_ig_lvl) else "—",
+                   delta=f"{_ig_chg:+.0f} 21d" if not _np_ov_cm.isnan(_ig_chg) else None,
+                   delta_color="inverse")
+        _hyi_lvl = _last("hy_ig_ratio"); _hyi_pct = _pct_rank("hy_ig_ratio")
+        _c3.metric("HY/IG Ratio", f"{_hyi_lvl:.2f}" if not _np_ov_cm.isnan(_hyi_lvl) else "—",
+                   delta=f"{_hyi_pct:.0f}th pct" if not _np_ov_cm.isnan(_hyi_pct) else None,
+                   delta_color="off")
+        _cs_lvl = _last("credit_market_risk_score_smooth")
+        _cs_chg = _chg("credit_market_risk_score_smooth")
+        _c4.metric("Credit Risk Score", f"{_cs_lvl:.1f}" if not _np_ov_cm.isnan(_cs_lvl) else "—",
+                   delta=f"{_cs_chg:+.1f} 21d" if not _np_ov_cm.isnan(_cs_chg) else None,
+                   delta_color="inverse")
+        st.divider()
+        # HY sparkline + regime
+        _hy_s = _d["hy_spread"].dropna().tail(252)
+        _ig_s = _d["ig_spread"].dropna().tail(252) if "ig_spread" in _d.columns else None
+        _fig_ov_cm = _go_ov_cm.Figure()
+        _fig_ov_cm.add_trace(_go_ov_cm.Scatter(x=_hy_s.index, y=_hy_s.values,
+            name="HY OAS", line=dict(color="#ef4444", width=2)))
+        if _ig_s is not None:
+            _fig_ov_cm.add_trace(_go_ov_cm.Scatter(x=_ig_s.index, y=_ig_s.values,
+                name="IG OAS", line=dict(color="#6366f1", width=1.5)))
+        _fig_ov_cm.update_layout(
+            title="HY & IG Spreads — Last 252 Trading Days",
+            height=280, yaxis_title="Bps",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            legend=dict(bgcolor="rgba(0,0,0,0)"),
+            margin=dict(t=40, b=20))
+        st.plotly_chart(_fig_ov_cm, use_container_width=True)
+        # Valuation summary
+        _hy_val = "Rich" if _hy_pct < 30 else ("Cheap" if _hy_pct > 70 else "Fair")
+        st.info(f"HY at **{_hy_pct:.0f}th** historical percentile — **{_hy_val}**. "
+                f"30 sub-views available: default cycle, carry decomp, credit cycle clock, momentum, and more.")
+    except Exception as _e_ov_cm:
+        st.caption(f"Credit Markets overview: {_e_ov_cm}")
+
+if _active_sub == "ov_rm":
+    try:
+        import plotly.graph_objects as _go_ov_rm
+        import numpy as _np_ov_rm
+        st.subheader("Rates & Macro — Section Overview")
+        st.caption("Current snapshot of yield curve, inflation, labor, and financial conditions. Select any sub-view from the sidebar to drill in.")
+        _d = df
+        def _last_rm(col):
+            s = _d[col].dropna(); return float(s.iloc[-1]) if len(s) else float("nan")
+        def _chg_rm(col, n=21):
+            s = _d[col].dropna()
+            if len(s) < n + 1: return float("nan")
+            return float(s.iloc[-1]) - float(s.iloc[-n - 1])
+        def _pct_rm(col):
+            s = _d[col].dropna()
+            if len(s) < 10: return float("nan")
+            return float((s < float(s.iloc[-1])).mean() * 100)
+        _c1, _c2, _c3, _c4 = st.columns(4)
+        _curve = _last_rm("spread"); _curve_chg = _chg_rm("spread")
+        _c1.metric("2s10s Curve", f"{_curve:.2f}%" if not _np_ov_rm.isnan(_curve) else "—",
+                   delta=f"{_curve_chg:+.2f}pp 21d" if not _np_ov_rm.isnan(_curve_chg) else None)
+        _be = _last_rm("breakeven_10y"); _be_chg = _chg_rm("breakeven_10y")
+        _c2.metric("10y Breakeven", f"{_be:.2f}%" if not _np_ov_rm.isnan(_be) else "—",
+                   delta=f"{_be_chg:+.2f}pp 21d" if not _np_ov_rm.isnan(_be_chg) else None)
+        _nfci = _last_rm("nfci"); _nfci_pct = _pct_rm("nfci")
+        _c3.metric("NFCI", f"{_nfci:.3f}" if not _np_ov_rm.isnan(_nfci) else "—",
+                   delta=f"{_nfci_pct:.0f}th pct" if not _np_ov_rm.isnan(_nfci_pct) else None,
+                   delta_color="inverse")
+        _sahm = _last_rm("sahm_like")
+        _c4.metric("Sahm-like", f"{_sahm:.2f}" if not _np_ov_rm.isnan(_sahm) else "—",
+                   delta="⚠ Elevated" if not _np_ov_rm.isnan(_sahm) and _sahm >= 0.3 else "Normal",
+                   delta_color="inverse" if not _np_ov_rm.isnan(_sahm) and _sahm >= 0.3 else "off")
+        st.divider()
+        # Yield curve + real yield chart
+        _fig_ov_rm = _go_ov_rm.Figure()
+        _curve_s = _d["spread"].dropna().tail(504)
+        _fig_ov_rm.add_trace(_go_ov_rm.Scatter(x=_curve_s.index, y=_curve_s.values,
+            name="2s10s", line=dict(color="#6366f1", width=2), fill="tozeroy",
+            fillcolor="rgba(99,102,241,0.08)"))
+        _fig_ov_rm.add_hline(y=0, line_color="#ef4444", line_dash="dash", annotation_text="Inversion")
+        if "real_yield_proxy" in _d.columns:
+            _ry_s = _d["real_yield_proxy"].dropna().tail(504)
+            _fig_ov_rm.add_trace(_go_ov_rm.Scatter(x=_ry_s.index, y=_ry_s.values,
+                name="Real Yield", line=dict(color="#f59e0b", width=1.5), yaxis="y2"))
+        _fig_ov_rm.update_layout(
+            title="Yield Curve (2s10s) & Real Yield — Last 2 Years",
+            height=280, yaxis=dict(title="Curve (%)"),
+            yaxis2=dict(title="Real Yield (%)", overlaying="y", side="right"),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            legend=dict(bgcolor="rgba(0,0,0,0)"), margin=dict(t=40, b=20))
+        st.plotly_chart(_fig_ov_rm, use_container_width=True)
+        _regime_label = "Inverted" if not _np_ov_rm.isnan(_curve) and _curve < 0 else "Normal"
+        st.info(f"Yield curve: **{_regime_label}** ({_curve:.2f}%). "
+                f"37 sub-views available: real rates, NFCI, Sahm rule, credit impulse, Taylor rule, and more.")
+    except Exception as _e_ov_rm:
+        st.caption(f"Rates & Macro overview: {_e_ov_rm}")
+
+if _active_sub == "ov_risk":
+    try:
+        import plotly.graph_objects as _go_ov_risk
+        import numpy as _np_ov_risk
+        st.subheader("Risk Monitors — Section Overview")
+        st.caption("Current reading across volatility, tail risk, and systemic stress indicators. Select any sub-view from the sidebar.")
+        _d = df
+        def _last_r(col): s = _d[col].dropna(); return float(s.iloc[-1]) if len(s) else float("nan")
+        def _pct_r(col):
+            s = _d[col].dropna()
+            if len(s) < 10: return float("nan")
+            return float((s < float(s.iloc[-1])).mean() * 100)
+        _c1, _c2, _c3, _c4 = st.columns(4)
+        _vix = _last_r("vix"); _vix_pct = _pct_r("vix")
+        _c1.metric("VIX", f"{_vix:.1f}" if not _np_ov_risk.isnan(_vix) else "—",
+                   delta=f"{_vix_pct:.0f}th pct" if not _np_ov_risk.isnan(_vix_pct) else None,
+                   delta_color="inverse")
+        _move = _last_r("move_index"); _move_pct = _pct_r("move_index")
+        _c2.metric("MOVE Index", f"{_move:.0f}" if not _np_ov_risk.isnan(_move) else "—",
+                   delta=f"{_move_pct:.0f}th pct" if not _np_ov_risk.isnan(_move_pct) else None,
+                   delta_color="inverse")
+        _dd = _last_r("sp500_drawdown")
+        _c3.metric("SP500 Drawdown", f"{_dd:.1%}" if not _np_ov_risk.isnan(_dd) else "—",
+                   delta_color="inverse")
+        _comp = _last_r("composite_risk_score_smooth")
+        _c4.metric("Composite Score", f"{_comp:.1f}" if not _np_ov_risk.isnan(_comp) else "—",
+                   delta_color="inverse")
+        st.divider()
+        _fig_ov_risk = _go_ov_risk.Figure()
+        _vix_s = _d["vix"].dropna().tail(252)
+        _fig_ov_risk.add_trace(_go_ov_risk.Scatter(x=_vix_s.index, y=_vix_s.values,
+            name="VIX", line=dict(color="#ef4444", width=2)))
+        if "move_index" in _d.columns:
+            _move_s = _d["move_index"].dropna().tail(252)
+            _move_scaled = _move_s / _move_s.max() * _vix_s.max()
+            _fig_ov_risk.add_trace(_go_ov_risk.Scatter(x=_move_scaled.index, y=_move_scaled.values,
+                name="MOVE (scaled)", line=dict(color="#f59e0b", width=1.5, dash="dot")))
+        _fig_ov_risk.add_hline(y=25, line_dash="dash", line_color="#f59e0b", annotation_text="Stress (25)")
+        _fig_ov_risk.update_layout(
+            title="VIX & MOVE Index — Last 252 Trading Days",
+            height=280, yaxis_title="Level",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#9aa0aa"),
+            hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+            legend=dict(bgcolor="rgba(0,0,0,0)"), margin=dict(t=40, b=20))
+        st.plotly_chart(_fig_ov_risk, use_container_width=True)
+        _risk_label = ("Elevated" if not _np_ov_risk.isnan(_vix) and _vix > 25
+                       else ("Moderate" if not _np_ov_risk.isnan(_vix) and _vix > 18 else "Low"))
+        st.info(f"Volatility regime: **{_risk_label}** (VIX {_vix:.1f}). "
+                f"37 sub-views available: tail risk, funding stress, contagion, drawdown anatomy, and more.")
+    except Exception as _e_ov_risk:
+        st.caption(f"Risk Monitors overview: {_e_ov_risk}")
+
+if _active_sub == "ov_sl":
+    try:
+        import plotly.graph_objects as _go_ov_sl
+        import numpy as _np_ov_sl
+        st.subheader("Signal Lab — Section Overview")
+        st.caption("Composite score health, sub-score breakdown, and signal diagnostics at a glance. Select any sub-view from the sidebar.")
+        _d = df
+        _score_cols_sl = [c for c in [
+            "macro_risk_score_smooth", "credit_market_risk_score_smooth",
+            "complacency_score_smooth", "liquidity_regime_score_smooth",
+            "treasury_stress_score_smooth", "fx_commodity_score_smooth",
+            "enhanced_funding_stress_score_smooth", "cross_asset_divergence_score_smooth",
+            "mean_reversion_score_smooth",
+        ] if c in _d.columns]
+        _comp_sl = float(_d["composite_risk_score_smooth"].dropna().iloc[-1]) if "composite_risk_score_smooth" in _d.columns else float("nan")
+        _comp_s = _d["composite_risk_score_smooth"].dropna() if "composite_risk_score_smooth" in _d.columns else None
+        _comp_chg = (float(_comp_s.iloc[-1]) - float(_comp_s.iloc[-22])) if _comp_s is not None and len(_comp_s) >= 22 else float("nan")
+        _comp_pct = (float((_comp_s < _comp_sl).mean() * 100)) if _comp_s is not None else float("nan")
+        _c1, _c2, _c3, _c4 = st.columns(4)
+        _c1.metric("Composite Score", f"{_comp_sl:.1f}" if not _np_ov_sl.isnan(_comp_sl) else "—",
+                   delta=f"{_comp_chg:+.1f} 21d" if not _np_ov_sl.isnan(_comp_chg) else None,
+                   delta_color="inverse")
+        _c2.metric("Score Percentile", f"{_comp_pct:.0f}th" if not _np_ov_sl.isnan(_comp_pct) else "—",
+                   delta_color="off")
+        _regime_sl = ("High Stress" if _comp_sl >= 70 else ("Elevated" if _comp_sl >= 50
+                       else ("Moderate" if _comp_sl >= 30 else "Low Stress")))
+        _c3.metric("Regime", _regime_sl)
+        _n_above50 = sum(1 for c in _score_cols_sl
+                         if len(_d[c].dropna()) and float(_d[c].dropna().iloc[-1]) >= 50)
+        _c4.metric("Sub-scores ≥50", f"{_n_above50}/{len(_score_cols_sl)}")
+        st.divider()
+        # Sub-score bar chart (current values)
+        if _score_cols_sl:
+            _vals_sl = [float(_d[c].dropna().iloc[-1]) if len(_d[c].dropna()) else float("nan")
+                        for c in _score_cols_sl]
+            _labels_sl = [c.replace("_score_smooth", "").replace("_risk", "").replace("_", " ").title()
+                          for c in _score_cols_sl]
+            _fig_ov_sl = _go_ov_sl.Figure()
+            _fig_ov_sl.add_trace(_go_ov_sl.Bar(
+                x=_labels_sl, y=_vals_sl,
+                marker_color=["#ef4444" if v >= 70 else "#f59e0b" if v >= 50 else "#22c55e"
+                              for v in _vals_sl],
+                text=[f"{v:.0f}" for v in _vals_sl], textposition="outside"
+            ))
+            _fig_ov_sl.add_hline(y=50, line_dash="dash", line_color="#f59e0b", annotation_text="Stress threshold")
+            _fig_ov_sl.add_hline(y=70, line_dash="dash", line_color="#ef4444")
+            _fig_ov_sl.update_layout(
+                title="Current Sub-Score Readings",
+                height=300, yaxis_title="Score", yaxis=dict(range=[0, 105]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False, xaxis=dict(tickangle=-25), margin=dict(t=40, b=20))
+            st.plotly_chart(_fig_ov_sl, use_container_width=True)
+        st.info(f"Composite at **{_comp_sl:.1f}** ({_regime_sl}). "
+                f"35 sub-views: validation, PCA, bootstrap CI, lead-lag map, factor decomp, and more.")
+    except Exception as _e_ov_sl:
+        st.caption(f"Signal Lab overview: {_e_ov_sl}")
+
+if _active_sub == "ov_reg":
+    try:
+        import plotly.graph_objects as _go_ov_reg
+        import numpy as _np_ov_reg
+        st.subheader("Regime — Section Overview")
+        st.caption("Current regime classification, dwell time, and historical regime distribution. Select any sub-view from the sidebar.")
+        _d = df
+        def _last_reg(col): s = _d[col].dropna(); return float(s.iloc[-1]) if len(s) else float("nan")
+        _comp_reg = _last_reg("composite_risk_score_smooth")
+        _reg_label = ("High Stress" if _comp_reg >= 70 else ("Elevated" if _comp_reg >= 50
+                       else ("Moderate" if _comp_reg >= 30 else "Low Stress")))
+        _reg_col = {"High Stress": "#ef4444", "Elevated": "#f59e0b",
+                    "Moderate": "#6366f1", "Low Stress": "#22c55e"}.get(_reg_label, "#9aa0aa")
+        # Dwell time
+        _comp_s_reg = _d["composite_risk_score_smooth"].dropna() if "composite_risk_score_smooth" in _d.columns else None
+        _dwell_reg = 0
+        if _comp_s_reg is not None:
+            for i in range(len(_comp_s_reg) - 1, -1, -1):
+                v = float(_comp_s_reg.iloc[i])
+                lbl = ("High Stress" if v >= 70 else ("Elevated" if v >= 50
+                        else ("Moderate" if v >= 30 else "Low Stress")))
+                if lbl == _reg_label:
+                    _dwell_reg += 1
+                else:
+                    break
+        _c1, _c2, _c3, _c4 = st.columns(4)
+        _c1.metric("Current Regime", _reg_label)
+        _c2.metric("Composite Score", f"{_comp_reg:.1f}" if not _np_ov_reg.isnan(_comp_reg) else "—")
+        _c3.metric("Dwell Time", f"{_dwell_reg}d")
+        # Regime distribution
+        if _comp_s_reg is not None:
+            _n_high = int((_comp_s_reg >= 70).sum())
+            _n_total = len(_comp_s_reg)
+            _c4.metric("% Time High Stress", f"{_n_high/_n_total:.0%}" if _n_total else "—")
+        st.divider()
+        # Score history colored by regime
+        if _comp_s_reg is not None:
+            _fig_ov_reg = _go_ov_reg.Figure()
+            _cs_tail = _comp_s_reg.tail(504)
+            _fig_ov_reg.add_trace(_go_ov_reg.Scatter(
+                x=_cs_tail.index, y=_cs_tail.values,
+                line=dict(color="#6366f1", width=2), name="Composite Score"))
+            for _thresh, _col, _lbl in [(70, "rgba(239,68,68,0.15)", "High Stress"),
+                                         (50, "rgba(245,158,11,0.10)", "Elevated")]:
+                _fig_ov_reg.add_hrect(y0=_thresh, y1=100, fillcolor=_col, line_width=0,
+                                      annotation_text=_lbl, annotation_position="right")
+            _fig_ov_reg.add_hline(y=50, line_dash="dash", line_color="#9aa0aa")
+            _fig_ov_reg.update_layout(
+                title="Composite Score — Regime Bands (Last 2 Years)",
+                height=300, yaxis_title="Score", yaxis=dict(range=[0, 100]),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#9aa0aa"),
+                hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                showlegend=False, margin=dict(t=40, b=20))
+            st.plotly_chart(_fig_ov_reg, use_container_width=True)
+        st.info(f"Currently in **{_reg_label}** for {_dwell_reg} days. "
+                f"16 sub-views: performance, analogs, transition matrix, dwell time, quant analogs, and more.")
+    except Exception as _e_ov_reg:
+        st.caption(f"Regime overview: {_e_ov_reg}")
+
+if _active_sub == "ov_mod":
+    try:
+        import pandas as _pd_ov_mod
+        st.subheader("Models — Section Overview")
+        st.caption("Model validation, sensitivity analysis, and portfolio construction tools. Select any sub-view from the sidebar.")
+        _d = df
+        # Model health summary
+        _comp_mod = float(_d["composite_risk_score_smooth"].dropna().iloc[-1]) if "composite_risk_score_smooth" in _d.columns else float("nan")
+        _conf_col = "model_confidence" if "model_confidence" in _d.columns else None
+        _conf_val = float(_d[_conf_col].dropna().iloc[-1]) if _conf_col else float("nan")
+        _c1, _c2, _c3 = st.columns(3)
+        _c1.metric("Composite Score", f"{_comp_mod:.1f}" if not _pd_ov_mod.isna(_comp_mod) else "—")
+        _c2.metric("Model Confidence", f"{_conf_val:.1%}" if not _pd_ov_mod.isna(_conf_val) else "—")
+        _n_scores = sum(1 for c in _d.columns if c.endswith("_score_smooth"))
+        _c3.metric("Active Sub-scores", str(_n_scores))
+        st.divider()
+        _rows_mod = [
+            {"Category": "Validation", "Views": "Sensitivity, OOS Splits, Walk-Forward, Transitions",
+             "Purpose": "Test model robustness and avoid overfitting"},
+            {"Category": "Risk", "Views": "Monte Carlo, Scenarios, Stress Test",
+             "Purpose": "Forward simulation and tail risk quantification"},
+            {"Category": "Portfolio", "Views": "Kelly Sizing, Risk Parity, Efficient Frontier",
+             "Purpose": "Translate signals into position sizes"},
+            {"Category": "Research", "Views": "Merton DD, Regimes, Sub-period",
+             "Purpose": "Deep-dive model diagnostics and period analysis"},
+        ]
+        st.dataframe(_pd_ov_mod.DataFrame(_rows_mod), use_container_width=True, hide_index=True)
+        st.info("14 sub-views covering model validation, scenario analysis, and portfolio construction.")
+    except Exception as _e_ov_mod:
+        st.caption(f"Models overview: {_e_ov_mod}")
