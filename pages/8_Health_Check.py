@@ -76,7 +76,7 @@ _total   = len(_inv_df)
 _n_errs  = (_inv_df["Status"] == "Error").sum()
 st.caption(f"{_total} total views · {_n_errs} errors recorded this session")
 st.dataframe(
-    _inv_df.style.applymap(
+    _inv_df.style.map(
         lambda v: "color: #ef4444; font-weight: bold" if v == "Error" else "",
         subset=["Status"]
     ),

@@ -155,7 +155,10 @@ from src.swap_spread_monitor import run_swap_spread_monitor
 from src.cross_currency_basis import run_cross_currency_basis
 from src.cre_stress import run_cre_stress
 from src.primary_market_issuance import run_primary_market_issuance
-from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
+try:
+    from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
+except Exception:
+    run_distressed_debt_analysis = None
 from src.clo_monitor import run_clo_monitor
 from src.financial_conditions import run_fci_analysis
 from src.credit_impulse import run_credit_impulse_analysis
@@ -935,6 +938,8 @@ def load_primary_market_issuance(_df):
 
 @st.cache_data
 def load_distressed_debt(_df):
+    if run_distressed_debt_analysis is None:
+        return {}
     return run_distressed_debt_analysis(_df)
 
 
@@ -1707,35 +1712,12 @@ _VIEW_INSIGHT = {
 
 st.sidebar.divider()
 st.sidebar.markdown("**Navigate**")
-_nav_type = st.sidebar.radio(
-    "_nav_type", ["Core", "Analytics"],
-    horizontal=True, label_visibility="collapsed",
+_active_section = st.sidebar.radio(
+    "_nav_core", _CORE_SECTIONS, label_visibility="collapsed",
 )
-if _nav_type == "Core":
-    _active_section = st.sidebar.radio(
-        "_nav_core", _CORE_SECTIONS, label_visibility="collapsed",
-    )
-    _active_sub = None
-else:
-    _active_section = st.sidebar.radio(
-        "_nav_analytics", _ANALYTICS_SECTIONS, label_visibility="collapsed",
-    )
-    _av_list = _ANALYTICS_VIEWS[_active_section]
-    _vsearch = st.sidebar.text_input(
-        "_vsearch", placeholder="Search views...", label_visibility="collapsed",
-        key="_vsearch_views"
-    )
-    _av_list_show = (
-        [(n, s) for n, s in _av_list if _vsearch.strip().lower() in n.lower()]
-        if _vsearch.strip() else _av_list
-    ) or _av_list
-    _av_label = st.sidebar.selectbox(
-        "_nav_view", [v[0] for v in _av_list_show], label_visibility="collapsed",
-    )
-    _active_sub = dict(_av_list_show).get(_av_label, _av_list[0][1])
-    _vdesc = _VIEW_DESC.get(_active_sub, "")
-    if _vdesc:
-        st.sidebar.caption(_vdesc)
+_active_sub = None
+st.sidebar.divider()
+st.sidebar.caption("📊 Analytics views → use the section pages above")
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Executive Overview ───────────────────────────────────────────────────────
@@ -3515,7 +3497,7 @@ if "date" in df.columns and not isinstance(df.index, pd.DatetimeIndex):
     df = df.set_index(pd.to_datetime(df["date"])).drop(columns=["date"])
 
 # ── Analytics UI: live signal bar + sidebar badges + view insight expander ────
-if _nav_type == "Analytics" and _active_sub is not None:
+if _active_sub is not None:
     try:
         _lhy = float(df["hy_spread"].dropna().iloc[-1])
         _lhy_pct = float((df["hy_spread"].dropna() < _lhy).mean() * 100)
@@ -3896,7 +3878,7 @@ if _active_section == "Backtest":
             return {"ret": ann_ret, "sharpe": sharpe, "dd": max_dd, "vol": ann_vol}
 
         _cutoff_ts2 = pd.Timestamp(OOS_CUTOFF)
-        _bt_dates   = pd.to_datetime(_bt_live["date"])
+        _bt_dates   = pd.to_datetime(_bt_live["date"] if "date" in _bt_live.columns else _bt_live.index)
         _is_m  = (_bt_dates < _cutoff_ts2).values
         _oos_m = (_bt_dates >= _cutoff_ts2).values
         _all_m = pd.Series([True] * len(_bt_live)).values
@@ -8158,7 +8140,7 @@ if _active_sub == 18:
 
                 _styled = _gr_disp.style.format(_gr_fmt, na_rep="—")
                 if "p_value" in _gr_disp.columns:
-                    _styled = _styled.applymap(_gr_sig_color, subset=["p_value"])
+                    _styled = _styled.map(_gr_sig_color, subset=["p_value"])
                 st.dataframe(_styled, use_container_width=True, hide_index=True)
                 st.caption(
                     "Green = p < 0.05 (significant at 5% level). "
@@ -9197,7 +9179,7 @@ if _active_sub == 32:
                         return colors.get(val, "")
 
                     st.dataframe(
-                        _tl_display.style.applymap(_tl_color_cell, subset=["Status"]),
+                        _tl_display.style.map(_tl_color_cell, subset=["Status"]),
                         use_container_width=True, hide_index=True,
                     )
                     st.caption(f"Last updated: {_tl_updated} · Percentile vs full history · Lower risk signals prefer bottom percentiles")
@@ -10704,9 +10686,9 @@ if _active_sub == 52:
                 with st.expander("Stress Correlation vs Unconditional Correlation"):
                     _tc1, _tc2 = st.columns(2)
                     _tc1.write("**Stress Correlation** (when either asset is in tail)")
-                    _tc1.dataframe(_td_stress.applymap(lambda x: f"{x:.2f}"), use_container_width=True)
+                    _tc1.dataframe(_td_stress.map(lambda x: f"{x:.2f}"), use_container_width=True)
                     _tc2.write("**Unconditional Correlation**")
-                    _tc2.dataframe(_td_uncond.applymap(lambda x: f"{x:.2f}"), use_container_width=True)
+                    _tc2.dataframe(_td_uncond.map(lambda x: f"{x:.2f}"), use_container_width=True)
         else:
             st.info("Tail dependency unavailable — requires ≥3 asset columns and ≥252 rows.")
     except Exception as _td_e:
@@ -14565,7 +14547,7 @@ if _active_section == "Health":
                     "Unavailable": "background-color: rgba(231,76,60,0.15)",
                 }.get(val, "")
             st.dataframe(
-                _sh_df.style.applymap(_sh_status_color, subset=["Status"]),
+                _sh_df.style.map(_sh_status_color, subset=["Status"]),
                 use_container_width=True, hide_index=True,
             )
 

@@ -159,7 +159,10 @@ from src.swap_spread_monitor import run_swap_spread_monitor
 from src.cross_currency_basis import run_cross_currency_basis
 from src.cre_stress import run_cre_stress
 from src.primary_market_issuance import run_primary_market_issuance
-from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
+try:
+    from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
+except Exception:
+    run_distressed_debt_analysis = None
 from src.clo_monitor import run_clo_monitor
 from src.financial_conditions import run_fci_analysis
 from src.credit_impulse import run_credit_impulse_analysis
@@ -270,7 +273,7 @@ except Exception:
     pass
 
 # ── Analytics UI: live signal bar + sidebar badges + view insight expander ────
-if _nav_type == "Analytics" and _active_sub is not None:
+if _active_sub is not None:
     try:
         _lhy = float(df["hy_spread"].dropna().iloc[-1])
         _lhy_pct = float((df["hy_spread"].dropna() < _lhy).mean() * 100)
@@ -657,7 +660,7 @@ if _active_section == "Backtest":
             return {"ret": ann_ret, "sharpe": sharpe, "dd": max_dd, "vol": ann_vol}
 
         _cutoff_ts2 = pd.Timestamp(OOS_CUTOFF)
-        _bt_dates   = pd.to_datetime(_bt_live["date"])
+        _bt_dates   = pd.to_datetime(_bt_live["date"] if "date" in _bt_live.columns else _bt_live.index)
         _is_m  = (_bt_dates < _cutoff_ts2).values
         _oos_m = (_bt_dates >= _cutoff_ts2).values
         _all_m = pd.Series([True] * len(_bt_live)).values
@@ -2176,7 +2179,7 @@ if _active_sub == 18:
 
                 _styled = _gr_disp.style.format(_gr_fmt, na_rep="—")
                 if "p_value" in _gr_disp.columns:
-                    _styled = _styled.applymap(_gr_sig_color, subset=["p_value"])
+                    _styled = _styled.map(_gr_sig_color, subset=["p_value"])
                 st.dataframe(_styled, use_container_width=True, hide_index=True)
                 st.caption(
                     "Green = p < 0.05 (significant at 5% level). "

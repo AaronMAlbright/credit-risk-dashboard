@@ -159,7 +159,10 @@ from src.swap_spread_monitor import run_swap_spread_monitor
 from src.cross_currency_basis import run_cross_currency_basis
 from src.cre_stress import run_cre_stress
 from src.primary_market_issuance import run_primary_market_issuance
-from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
+try:
+    from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
+except Exception:
+    run_distressed_debt_analysis = None
 from src.clo_monitor import run_clo_monitor
 from src.financial_conditions import run_fci_analysis
 from src.credit_impulse import run_credit_impulse_analysis
@@ -270,7 +273,7 @@ except Exception:
     pass
 
 # ── Analytics UI: live signal bar + sidebar badges + view insight expander ────
-if _nav_type == "Analytics" and _active_sub is not None:
+if _active_sub is not None:
     try:
         _lhy = float(df["hy_spread"].dropna().iloc[-1])
         _lhy_pct = float((df["hy_spread"].dropna() < _lhy).mean() * 100)
@@ -1153,7 +1156,7 @@ if _active_sub == 32:
                         return colors.get(val, "")
 
                     st.dataframe(
-                        _tl_display.style.applymap(_tl_color_cell, subset=["Status"]),
+                        _tl_display.style.map(_tl_color_cell, subset=["Status"]),
                         use_container_width=True, hide_index=True,
                     )
                     st.caption(f"Last updated: {_tl_updated} · Percentile vs full history · Lower risk signals prefer bottom percentiles")

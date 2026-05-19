@@ -159,7 +159,10 @@ from src.swap_spread_monitor import run_swap_spread_monitor
 from src.cross_currency_basis import run_cross_currency_basis
 from src.cre_stress import run_cre_stress
 from src.primary_market_issuance import run_primary_market_issuance
-from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
+try:
+    from src.distressed_debt import run_distressed_debt as run_distressed_debt_analysis
+except Exception:
+    run_distressed_debt_analysis = None
 from src.clo_monitor import run_clo_monitor
 from src.financial_conditions import run_fci_analysis
 from src.credit_impulse import run_credit_impulse_analysis
@@ -270,7 +273,7 @@ except Exception:
     pass
 
 # ── Analytics UI: live signal bar + sidebar badges + view insight expander ────
-if _nav_type == "Analytics" and _active_sub is not None:
+if _active_sub is not None:
     try:
         _lhy = float(df["hy_spread"].dropna().iloc[-1])
         _lhy_pct = float((df["hy_spread"].dropna() < _lhy).mean() * 100)
@@ -1045,9 +1048,9 @@ if _active_sub == 52:
                 with st.expander("Stress Correlation vs Unconditional Correlation"):
                     _tc1, _tc2 = st.columns(2)
                     _tc1.write("**Stress Correlation** (when either asset is in tail)")
-                    _tc1.dataframe(_td_stress.applymap(lambda x: f"{x:.2f}"), use_container_width=True)
+                    _tc1.dataframe(_td_stress.map(lambda x: f"{x:.2f}"), use_container_width=True)
                     _tc2.write("**Unconditional Correlation**")
-                    _tc2.dataframe(_td_uncond.applymap(lambda x: f"{x:.2f}"), use_container_width=True)
+                    _tc2.dataframe(_td_uncond.map(lambda x: f"{x:.2f}"), use_container_width=True)
         else:
             st.info("Tail dependency unavailable — requires ≥3 asset columns and ≥252 rows.")
     except Exception as _td_e:
@@ -2557,7 +2560,7 @@ if _active_section == "Health":
                     "Unavailable": "background-color: rgba(231,76,60,0.15)",
                 }.get(val, "")
             st.dataframe(
-                _sh_df.style.applymap(_sh_status_color, subset=["Status"]),
+                _sh_df.style.map(_sh_status_color, subset=["Status"]),
                 use_container_width=True, hide_index=True,
             )
 
