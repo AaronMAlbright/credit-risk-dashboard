@@ -16,6 +16,15 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
+from src.channel_attribution import channel_contribution_table
+from src.credit_channel_validation import channel_validation_table
+from src.credit_positioning import positioning_table
+from src.credit_presentation import build_credit_brief
+from src.credit_relative_value import relative_value_table
+from src.credit_tearsheet import credit_market_tearsheet
+from src.rating_bucket_proxy import rating_bucket_proxy_table
+from src.refinancing_wall import refinancing_wall_table, refinancing_wall_summary
+
 # ---------------------------------------------------------------------------
 # Decision color map (matches regime_charts.py)
 # ---------------------------------------------------------------------------
@@ -153,6 +162,111 @@ def _build_signal_section(latest: pd.Series) -> str:
         </div>
       </div>
       <p style="margin-top:12px;font-size:12px;color:#888">Data as of {date_val}</p>
+    </div>"""
+
+
+def _build_institutional_credit_section(df: pd.DataFrame) -> str:
+    if df.empty:
+        return ""
+
+    brief = build_credit_brief(df)
+    rv = relative_value_table(df)
+    pos = positioning_table(df)
+    contrib = channel_contribution_table(df)
+    tear = credit_market_tearsheet(df)
+    buckets = rating_bucket_proxy_table(df)
+    refi = refinancing_wall_table(df)
+    refi_summary = refinancing_wall_summary(df)
+
+    headline = brief.get("headline", "Credit brief unavailable.")
+    stance_rows = ""
+    if not pos.empty:
+        for row in pos.head(7).itertuples():
+            stance_rows += f"<tr><td><b>{row.dimension}</b></td><td>{row.stance}</td></tr>"
+
+    rv_rows = ""
+    if not rv.empty:
+        for row in rv.itertuples():
+            level = "—" if pd.isna(row.level) else _fmt(row.level, 2)
+            pct = "—" if pd.isna(row.percentile) else _fmt(row.percentile, 0)
+            valuation = _safe_str(row.valuation, "—")
+            rv_rows += f"<tr><td><b>{row.metric}</b></td><td>{level}</td><td>{pct}</td><td>{valuation}</td></tr>"
+
+    contrib_rows = ""
+    if not contrib.empty:
+        for row in contrib.head(6).itertuples():
+            contrib_rows += (
+                f"<tr><td><b>{row.channel}</b></td><td>{_fmt(row.score)}</td>"
+                f"<td>{_fmt(row.contribution)}</td><td>{_pct(row.contribution_share, 0)}</td>"
+                f"<td>{_fmt(row.score_change_1m) if row.score_change_1m is not None else '—'}</td></tr>"
+            )
+
+    validation = channel_validation_table(df)
+    validation_rows = ""
+    if not validation.empty:
+        for row in validation.itertuples():
+            validation_rows += (
+                f"<tr><td><b>{row.channel}</b></td><td>{row.horizon_days}d</td>"
+                f"<td>{_fmt(row.score_threshold, 1)}</td><td>{int(row.observations)}</td>"
+                f"<td>{_pct(row.avg_sp500_return, 1)}</td><td>{_pct(row.worst_5pct_sp500_return, 1)}</td>"
+                f"<td>{_fmt(row.avg_hy_spread_change, 2)}</td><td>{_fmt(row.avg_ig_spread_change, 2)}</td>"
+                f"<td>{_pct(row.hit_rate_sp500_down, 0)}</td><td>{_pct(row.hit_rate_hy_widening, 0)}</td>"
+                f"<td>{_pct(row.hit_rate_ig_widening, 0)}</td><td>{row.confidence}</td></tr>"
+            )
+
+    tear_rows = ""
+    if not tear.empty:
+        for row in tear.itertuples():
+            tear_rows += (
+                f"<tr><td><b>{row.metric}</b></td><td>{_fmt(row.level, 1)}</td>"
+                f"<td>{_fmt(row.percentile, 0)}</td><td>{_fmt(row.change_1m, 1)}</td>"
+                f"<td>{_safe_str(row.valuation, '—')}</td><td>{row.action}</td></tr>"
+            )
+
+    bucket_rows = ""
+    if not buckets.empty:
+        for row in buckets.itertuples():
+            bucket_rows += (
+                f"<tr><td><b>{row.bucket}</b></td><td>{row.proxy}</td>"
+                f"<td>{_fmt(row.level, 1)}</td><td>{_fmt(row.change_1m, 1)}</td>"
+                f"<td>{row.regime}</td></tr>"
+            )
+
+    refi_rows = ""
+    if not refi.empty:
+        for row in refi.itertuples():
+            amount = "—" if pd.isna(row.amount) else _fmt(row.amount, 1)
+            share = "—" if pd.isna(row.share) else _pct(row.share, 0)
+            refi_rows += f"<tr><td><b>{row.bucket}</b></td><td>{amount}</td><td>{share}</td><td>{row.risk_note}</td></tr>"
+
+    return f"""
+    <div class="section">
+      <h2>Institutional Credit View</h2>
+      <p style="font-size:14px;margin-bottom:12px"><b>{headline}</b></p>
+      <div class="signal-grid" style="grid-template-columns:repeat(2,1fr)">
+        <div>
+          <h3 style="font-size:12px;margin-bottom:8px">Positioning</h3>
+          <table>{stance_rows}</table>
+        </div>
+        <div>
+          <h3 style="font-size:12px;margin-bottom:8px">Relative Value</h3>
+          <table><tr><th>Metric</th><th>Level</th><th>Pctile</th><th>Valuation</th></tr>{rv_rows}</table>
+        </div>
+      </div>
+      <h3 style="font-size:12px;margin:16px 0 8px">Channel Contribution</h3>
+      <table><tr><th>Channel</th><th>Score</th><th>Contribution</th><th>Share</th><th>1M Δ</th></tr>{contrib_rows}</table>
+      <h3 style="font-size:12px;margin:16px 0 8px">Channel Forward Validation</h3>
+      <table>
+        <tr><th>Channel</th><th>Horizon</th><th>Threshold</th><th>N</th><th>Avg SP500 Return</th><th>Worst 5%</th><th>Avg HY Δ</th><th>Avg IG Δ</th><th>SP500 Down Hit Rate</th><th>HY Widen Hit Rate</th><th>IG Widen Hit Rate</th><th>Confidence</th></tr>
+        {validation_rows}
+      </table>
+      <h3 style="font-size:12px;margin:16px 0 8px">Credit Market Tear Sheet</h3>
+      <table><tr><th>Metric</th><th>Level</th><th>Pctile</th><th>1M Δ</th><th>Valuation</th><th>Action</th></tr>{tear_rows}</table>
+      <h3 style="font-size:12px;margin:16px 0 8px">Rating Bucket Proxy</h3>
+      <table><tr><th>Bucket</th><th>Proxy</th><th>Level</th><th>1M Δ</th><th>Regime</th></tr>{bucket_rows}</table>
+      <h3 style="font-size:12px;margin:16px 0 8px">Refinancing Wall Framework</h3>
+      <p style="font-size:12px;color:#888;margin-bottom:8px">{refi_summary}</p>
+      <table><tr><th>Bucket</th><th>Amount</th><th>Share</th><th>Risk Note</th></tr>{refi_rows}</table>
     </div>"""
 
 
@@ -643,6 +757,7 @@ def generate_html_report(
 
     sections = "".join([
         _build_signal_section(latest),
+        _build_institutional_credit_section(df),
         _build_regime_prob_section(regime_prob),
         _build_position_sizing_section(position_sizing),
         _build_confidence_section(audit),
@@ -760,6 +875,14 @@ def generate_excel_report(
             pd.DataFrame(summary_rows, columns=["Metric", "Value"]).to_excel(
                 writer, sheet_name="Summary", index=False
             )
+
+            positioning_table(df).to_excel(writer, sheet_name="Credit Positioning", index=False)
+            credit_market_tearsheet(df).to_excel(writer, sheet_name="Credit Tear Sheet", index=False)
+            relative_value_table(df).to_excel(writer, sheet_name="Credit RV", index=False)
+            channel_contribution_table(df).to_excel(writer, sheet_name="Credit Channels", index=False)
+            channel_validation_table(df).to_excel(writer, sheet_name="Credit Validation", index=False)
+            rating_bucket_proxy_table(df).to_excel(writer, sheet_name="Rating Buckets", index=False)
+            refinancing_wall_table(df).to_excel(writer, sheet_name="Refi Wall", index=False)
 
         # ── Sheet 2: Component Score History ──────────────────────────────
         score_cols = [

@@ -226,7 +226,8 @@ def fetch_move(
     if _cache_valid(path):
         cached = pd.read_parquet(path).squeeze()
         cached.name = "MOVE"
-        return cached
+        if not cached.dropna().empty:
+            return cached
 
     try:
         import yfinance as yf
@@ -237,6 +238,8 @@ def fetch_move(
             s = raw["Close"]
         s.index = pd.DatetimeIndex(s.index).normalize()
         s = s.dropna()
+        if s.empty:
+            raise RuntimeError("yfinance returned empty MOVE series")
         s.name = "MOVE"
         s.to_frame().to_parquet(path)
         return s
@@ -324,7 +327,8 @@ def fetch_sp500(
     if _cache_valid(path):
         cached = pd.read_parquet(path).squeeze()
         cached.name = "SP500"
-        return cached
+        if not cached.dropna().empty:
+            return cached
 
     try:
         import yfinance as yf
@@ -336,6 +340,8 @@ def fetch_sp500(
             s = raw["Close"]
         s.index = pd.DatetimeIndex(s.index).normalize()
         s = s.dropna()
+        if s.empty:
+            raise RuntimeError("yfinance returned empty SP500 series")
         s.name = "SP500"
         s.to_frame().to_parquet(path)
         return s

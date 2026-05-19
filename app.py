@@ -106,6 +106,14 @@ from src.utils import (
 
 from src.run_logger import log_model_run
 from src.composite_engine import build_composite_risk
+from src.credit_taxonomy import compute_channel_scores
+from src.credit_feature_proxies import add_credit_feature_proxies
+from src.credit_regime_performance import add_forward_market_moves
+from src.spread_decomposition import decompose_spreads
+from src.credit_strategy_memo import generate_credit_strategy_memo
+from src.credit_relative_value import compute_credit_relative_value
+from src.credit_presentation import credit_brief_markdown
+from src.credit_tearsheet import credit_tearsheet_markdown
 
 import matplotlib.pyplot as plt
 
@@ -287,6 +295,8 @@ if "ig_yield" in df.columns and "ig_spread" in df.columns:
         df["ig_yield"].shift(1) / 100 / 252
         - _IG_DUR * df["ig_spread"].diff(1) / 100
     )
+
+df = add_credit_feature_proxies(df)
 
 # Drop rows missing any of the core SCORED columns needed by risk engine
 # (90d diffs require at least 90 rows; 252d rolling requires 126 with min_periods)
@@ -669,6 +679,27 @@ df["sp500_future_min_60d"] = df["sp500"].shift(-1).rolling(60).min().shift(-59)
 df["sp500_future_drawdown_30d"] = df["sp500_future_min_30d"] / df["sp500"] - 1
 df["sp500_future_drawdown_60d"] = df["sp500_future_min_60d"] / df["sp500"] - 1
 
+# Institutional credit framework: channel taxonomy, spread compensation, and
+# standard forward-market moves for regime validation.
+channel_scores = compute_channel_scores(df)
+if not channel_scores.empty:
+    df = df.join(channel_scores)
+
+spread_decomp = decompose_spreads(df)
+if not spread_decomp.empty:
+    df = df.join(spread_decomp)
+
+relative_value = compute_credit_relative_value(df)
+if not relative_value.empty:
+    rv_new_cols = [c for c in relative_value.columns if c not in df.columns]
+    if rv_new_cols:
+        df = df.join(relative_value[rv_new_cols])
+
+forward_moves = add_forward_market_moves(df)
+new_forward_cols = [c for c in forward_moves.columns if c not in df.columns]
+if new_forward_cols:
+    df = df.join(forward_moves[new_forward_cols])
+
 df["strategy_forward_30d_return"] = df.apply(assign_strategy_return, axis=1)
 df = build_strategy_backtest(df)
 backtest_summary = compute_backtest_summary(df)
@@ -706,6 +737,9 @@ latest = df.iloc[-1]
 log_model_run(latest)
 shock_scenario = simulate_shock(latest)
 scenario_summary = summarize_scenario(latest, shock_scenario)
+credit_strategy_memo = generate_credit_strategy_memo(df)
+credit_brief = credit_brief_markdown(df)
+credit_tearsheet = credit_tearsheet_markdown(df)
 
 
 # =====================
@@ -795,6 +829,9 @@ print(f"Environment: {decision['environment']}")
 print(f"Action: {decision['action']}")
 print(f"Buy Trigger: {decision['buy_trigger']}")
 print(f"Risk-Off Trigger: {decision['risk_off_trigger']}")
+
+print("\n=== INSTITUTIONAL CREDIT VIEW ===")
+print(credit_strategy_memo)
 
 print("\n=== SIGNAL ATTRIBUTION ===")
 for name, value in format_top_contributions(latest["signal_contributions"]):
@@ -925,10 +962,19 @@ HISTORICAL ANALOGS
 MODEL CONFIDENCE
 Confidence: {latest['model_confidence']}
 {chr(10).join(["- " + reason for reason in latest["model_confidence_reasons"]])}
+
+INSTITUTIONAL CREDIT VIEW
+{credit_strategy_memo}
 """
 
 with open(f"{OUTPUT_REPORT_DIR}/latest_signal_report.txt", "w") as f:
     f.write(report)
+
+with open(f"{OUTPUT_REPORT_DIR}/credit_brief.md", "w") as f:
+    f.write(credit_brief)
+
+with open(f"{OUTPUT_REPORT_DIR}/credit_market_tearsheet.md", "w") as f:
+    f.write(credit_tearsheet)
 
 
 # =====================

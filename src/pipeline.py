@@ -47,6 +47,14 @@ from src.liquidity_engine import (
 
 from src.composite_engine import build_composite_risk
 from src.portfolio_engine import generate_portfolio_weights
+from src.credit_taxonomy import compute_channel_scores
+from src.credit_feature_proxies import add_credit_feature_proxies
+from src.credit_regime_performance import add_forward_market_moves
+from src.spread_decomposition import decompose_spreads
+from src.credit_strategy_memo import generate_credit_strategy_memo
+from src.credit_relative_value import compute_credit_relative_value
+from src.credit_presentation import credit_brief_markdown
+from src.credit_tearsheet import credit_tearsheet_markdown
 
 from src.model_health_check import (
     run_model_health_check,
@@ -378,6 +386,30 @@ def run_analytics(df: pd.DataFrame) -> tuple:
     df["sp500_future_drawdown_60d"] = df["sp500_future_min_60d"] / df["sp500"] - 1
 
     # -------------------------
+    # Institutional credit framework
+    # -------------------------
+    df = add_credit_feature_proxies(df)
+
+    channel_scores = compute_channel_scores(df)
+    if not channel_scores.empty:
+        df = df.join(channel_scores)
+
+    spread_decomp = decompose_spreads(df)
+    if not spread_decomp.empty:
+        df = df.join(spread_decomp)
+
+    relative_value = compute_credit_relative_value(df)
+    if not relative_value.empty:
+        rv_new_cols = [c for c in relative_value.columns if c not in df.columns]
+        if rv_new_cols:
+            df = df.join(relative_value[rv_new_cols])
+
+    forward_moves = add_forward_market_moves(df)
+    new_forward_cols = [c for c in forward_moves.columns if c not in df.columns]
+    if new_forward_cols:
+        df = df.join(forward_moves[new_forward_cols])
+
+    # -------------------------
     # Backtest
     # -------------------------
     df["strategy_forward_30d_return"] = df.apply(assign_strategy_return, axis=1)
@@ -412,6 +444,9 @@ def run_outputs(
     """
     latest   = df.iloc[-1]
     decision = latest["final_decision_obj"]
+    credit_strategy_memo = generate_credit_strategy_memo(df)
+    credit_brief = credit_brief_markdown(df)
+    credit_tearsheet = credit_tearsheet_markdown(df)
 
     trigger_distances = calculate_trigger_distances(
         latest["vix"],
@@ -508,6 +543,9 @@ def run_outputs(
     print(f"Action: {decision['action']}")
     print(f"Buy Trigger: {decision['buy_trigger']}")
     print(f"Risk-Off Trigger: {decision['risk_off_trigger']}")
+
+    print("\n=== INSTITUTIONAL CREDIT VIEW ===")
+    print(credit_strategy_memo)
 
     print("\n=== SIGNAL ATTRIBUTION ===")
     for name, value in format_top_contributions(latest["signal_contributions"]):
@@ -617,10 +655,19 @@ HISTORICAL ANALOGS
 MODEL CONFIDENCE
 Confidence: {latest['model_confidence']}
 {chr(10).join(["- " + reason for reason in latest["model_confidence_reasons"]])}
+
+INSTITUTIONAL CREDIT VIEW
+{credit_strategy_memo}
 """
 
     with open(f"{OUTPUT_REPORT_DIR}/latest_signal_report.txt", "w") as f:
         f.write(report)
+
+    with open(f"{OUTPUT_REPORT_DIR}/credit_brief.md", "w") as f:
+        f.write(credit_brief)
+
+    with open(f"{OUTPUT_REPORT_DIR}/credit_market_tearsheet.md", "w") as f:
+        f.write(credit_tearsheet)
 
 
 def run(show_charts: bool = False) -> pd.DataFrame:
