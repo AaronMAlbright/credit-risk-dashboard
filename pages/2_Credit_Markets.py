@@ -664,15 +664,42 @@ if _active_sub == 24:
         _dc = load_default_cycle(df)
         if _dc.get("available"):
             _dcc = _dc.get("current", {})
-            _d1, _d2, _d3, _d4 = st.columns(4)
-            _d1.metric("Implied Default Rate", f"{_dcc.get('current_implied_pct', 0):.2f}%",
-                       help="Jarrow-Turnbull: HY spread / (100 × LGD)")
-            _d2.metric("Phase", _dcc.get("current_phase", "—"))
-            _d3.metric("% of GFC Peak", f"{_dcc.get('pct_of_gfc_peak', 0):.0f}%")
-            _d4.metric("% of COVID Peak", f"{_dcc.get('pct_of_covid_peak', 0):.0f}%")
+            _has_actual = _dcc.get("has_actual_data", False)
+
+            # Metrics row — add actual columns if data is present
+            if _has_actual:
+                _d1, _d2, _d3, _d4, _d5, _d6 = st.columns(6)
+                _d1.metric("Implied Default Rate", f"{_dcc.get('current_implied_pct', 0):.2f}%",
+                           help="Jarrow-Turnbull: HY spread / (100 × LGD)")
+                _d2.metric("Phase", _dcc.get("current_phase", "—"))
+                _co = _dcc.get("actual_chargeoff_pct")
+                _dq = _dcc.get("actual_delinq_pct")
+                _d3.metric("Charge-Off Rate", f"{_co:.2f}%" if _co and not pd.isna(_co) else "—",
+                           help="Fed H.8: Charge-Off Rate on Business Loans (quarterly)")
+                _d4.metric("C&I Delinquency", f"{_dq:.2f}%" if _dq and not pd.isna(_dq) else "—",
+                           help="Fed H.8: Delinquency Rate on C&I Loans (quarterly)")
+                _gap = _dcc.get("implied_vs_actual_gap")
+                _d5.metric("Implied vs Actual Gap", f"{_gap:+.2f}pp" if _gap and not pd.isna(_gap) else "—",
+                           help="Positive = market pricing more stress than realized; negative = losses outpacing market pricing")
+                _d6.metric("% of GFC Peak", f"{_dcc.get('pct_of_gfc_peak', 0):.0f}%")
+            else:
+                _d1, _d2, _d3, _d4 = st.columns(4)
+                _d1.metric("Implied Default Rate", f"{_dcc.get('current_implied_pct', 0):.2f}%",
+                           help="Jarrow-Turnbull: HY spread / (100 × LGD)")
+                _d2.metric("Phase", _dcc.get("current_phase", "—"))
+                _d3.metric("% of GFC Peak", f"{_dcc.get('pct_of_gfc_peak', 0):.0f}%")
+                _d4.metric("% of COVID Peak", f"{_dcc.get('pct_of_covid_peak', 0):.0f}%")
 
             if _dcc.get("interpretation"):
                 st.info(_dcc["interpretation"])
+
+            if _has_actual:
+                st.caption(
+                    "**Actual data source:** Fed H.8 — Charge-Off Rate on Business Loans (`CORBLACBS`) "
+                    "and Delinquency Rate on Business Loans (`DRBLACBS`). Quarterly; forward-filled between releases. "
+                    "Implied = Jarrow-Turnbull (HY spread / LGD). "
+                    "Gap > 0 = market pricing excess stress; Gap < 0 = realized losses exceeding implied."
+                )
 
             # Cycle comparison table
             _dc_cc = _dc.get("cycle_comparison")
@@ -680,27 +707,69 @@ if _active_sub == 24:
                 with st.expander("Historical Cycle Comparison", expanded=True):
                     st.dataframe(_dc_cc, use_container_width=True)
 
-            # Time series chart
+            # Time series chart — implied + actual lines when data is present
             _dc_ts = _dc.get("time_series")
-            if _dc_ts is not None and not _dc_ts.empty and "implied_default_pct" in _dc_ts.columns:
+            if _dc_ts is not None and not _dc_ts.empty and "default_cycle_pct" in _dc_ts.columns:
                 _dc_fig = _go_dc.Figure()
-                _dc_ts_idx = pd.to_datetime(_dc_ts.index if _dc_ts.index.dtype != object else _dc_ts.get("date", _dc_ts.index))
+                _dc_ts_idx = pd.to_datetime(
+                    _dc_ts.index if _dc_ts.index.dtype != object
+                    else _dc_ts.get("date", _dc_ts.index)
+                )
                 _dc_fig.add_trace(_go_dc.Scatter(
-                    x=_dc_ts_idx, y=_dc_ts["implied_default_pct"],
+                    x=_dc_ts_idx, y=_dc_ts["default_cycle_pct"],
                     name="Implied Default Rate", line=dict(color="#e74c3c", width=2),
                     fill="tozeroy", fillcolor="rgba(231,76,60,0.10)",
-                    hovertemplate="%{x|%Y-%m-%d}<br>Implied Default: %{y:.2f}%<extra></extra>",
+                    hovertemplate="%{x|%Y-%m-%d}<br>Implied: %{y:.2f}%<extra></extra>",
                 ))
+                if "actual_chargeoff_pct" in _dc_ts.columns and _dc_ts["actual_chargeoff_pct"].notna().any():
+                    _dc_fig.add_trace(_go_dc.Scatter(
+                        x=_dc_ts_idx, y=_dc_ts["actual_chargeoff_pct"],
+                        name="Actual Charge-Off Rate", line=dict(color="#f59e0b", width=2, dash="dot"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>Charge-Off: %{y:.2f}%<extra></extra>",
+                    ))
+                if "actual_delinq_pct" in _dc_ts.columns and _dc_ts["actual_delinq_pct"].notna().any():
+                    _dc_fig.add_trace(_go_dc.Scatter(
+                        x=_dc_ts_idx, y=_dc_ts["actual_delinq_pct"],
+                        name="C&I Delinquency Rate", line=dict(color="#8b5cf6", width=1.5, dash="dash"),
+                        hovertemplate="%{x|%Y-%m-%d}<br>Delinquency: %{y:.2f}%<extra></extra>",
+                    ))
                 _dc_fig.update_layout(
-                    height=220, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    height=260, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                     font=dict(color="#9aa0aa", size=11),
                     margin=dict(l=8, r=8, t=8, b=8),
+                    legend=dict(orientation="h", y=1.08, font=dict(size=10)),
                     yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
-                               color="#6b7280", title="Implied Default Rate (%)"),
+                               color="#6b7280", title="Default Rate (%)"),
                     xaxis=dict(showgrid=False, color="#6b7280"),
                     hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
                 )
                 st.plotly_chart(_dc_fig, use_container_width=True)
+
+            # Gap chart — implied minus actual (shows risk premium vs realized stress)
+            if _dc_ts is not None and "implied_vs_actual_gap" in _dc_ts.columns and _dc_ts["implied_vs_actual_gap"].notna().any():
+                _gap_fig = _go_dc.Figure()
+                _gap_vals = _dc_ts["implied_vs_actual_gap"]
+                _gap_fig.add_trace(_go_dc.Bar(
+                    x=_dc_ts_idx, y=_gap_vals,
+                    name="Implied vs Actual Gap",
+                    marker_color=[
+                        "rgba(239,68,68,0.6)" if v > 0 else "rgba(245,158,11,0.6)"
+                        for v in _gap_vals.fillna(0)
+                    ],
+                    hovertemplate="%{x|%Y-%m-%d}<br>Gap: %{y:+.2f}pp<extra></extra>",
+                ))
+                _gap_fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
+                _gap_fig.update_layout(
+                    height=150, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#9aa0aa", size=11),
+                    margin=dict(l=8, r=8, t=4, b=4),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                               color="#6b7280", title="Gap (pp)", zeroline=False),
+                    xaxis=dict(showgrid=False, color="#6b7280"),
+                    hoverlabel=dict(bgcolor="#1a1f2e", bordercolor="#2d3550", font=dict(color="#e2e8f0")),
+                )
+                st.plotly_chart(_gap_fig, use_container_width=True)
+                st.caption("Red = implied > actual (market pricing excess stress / risk premium). Amber = actual > implied (realized losses outpacing market pricing).")
         else:
             st.info("Default cycle unavailable — requires HY spread data.")
     except Exception as _dc_e:

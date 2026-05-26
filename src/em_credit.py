@@ -236,7 +236,7 @@ def get_em_snapshot() -> dict:
     # --- Regime --------------------------------------------------------------
     regime = _classify_em_stress_regime(ratio_30d_chg, dxy_30d_chg)
 
-    available = not (pd.isna(emb_latest) and pd.isna(hyg_latest))
+    available = bool(not (pd.isna(emb_latest) and pd.isna(hyg_latest)))
 
     return {
         "emb_price": emb_latest,
@@ -413,9 +413,9 @@ def run_em_credit_analysis(df: pd.DataFrame) -> dict:
             "performance or dollar transmission stress."
         )
 
-    available = snapshot.get("available", False) or (
+    available = bool(snapshot.get("available", False) or (
         enriched["em_hyg_ratio"].notna().any()
-    )
+    ))
 
     return {
         "snapshot": snapshot,

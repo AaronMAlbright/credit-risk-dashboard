@@ -104,14 +104,22 @@ def compute_default_cycle(df: pd.DataFrame) -> pd.DataFrame:
     """
     Enrich the DataFrame with default-cycle positioning columns.
 
-    Added columns
-    -------------
+    Added columns (implied, from HY spreads)
+    -----------------------------------------
     implied_default_rate        : decimal (e.g., 0.092)
     default_cycle_pct           : implied default rate as % (e.g., 9.2)
     default_vs_historical_mean  : z-score vs 252-day rolling mean/std
     default_cycle_phase         : string label (Trough / Rising / Elevated / Peak)
     default_cycle_percentile    : rolling 252-day percentile rank (0–100)
     default_cycle_momentum_30d  : 30-day change in implied_default_rate (decimal)
+
+    Added columns (actual observed, from FRED — present only when available)
+    -------------------------------------------------------------------------
+    actual_chargeoff_pct        : business charge-off rate from Fed H.8 (%)
+    actual_delinq_pct           : C&I loan delinquency rate from Fed H.8 (%)
+    implied_vs_actual_gap       : implied_default_rate_pct minus actual_chargeoff_pct
+                                  positive = market pricing more stress than realized
+                                  negative = realized losses exceeding market pricing
 
     Parameters
     ----------
@@ -125,7 +133,6 @@ def compute_default_cycle(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
     if "hy_spread" not in out.columns:
-        # Graceful degradation — return copy without cycle columns
         return out
 
     idr = _implied_default_rate(out["hy_spread"])
@@ -163,6 +170,23 @@ def compute_default_cycle(df: pd.DataFrame) -> pd.DataFrame:
 
     # 30-day momentum
     out["default_cycle_momentum_30d"] = idr.diff(30)
+
+    # Actual observed default-cycle data (from FRED via market_data.py).
+    # business_chargeoff_rate = Charge-Off Rate on Business Loans (quarterly, %)
+    # ci_loan_delinquency     = Delinquency Rate on C&I Loans (quarterly, %)
+    if "business_chargeoff_rate" in out.columns:
+        out["actual_chargeoff_pct"] = pd.to_numeric(
+            out["business_chargeoff_rate"], errors="coerce"
+        )
+    if "ci_loan_delinquency" in out.columns:
+        out["actual_delinq_pct"] = pd.to_numeric(
+            out["ci_loan_delinquency"], errors="coerce"
+        )
+
+    # Gap: implied minus actual — positive means market is pricing more stress than realized.
+    # A large positive gap = credit risk premium; a negative gap = losses outpacing pricing.
+    if "actual_chargeoff_pct" in out.columns:
+        out["implied_vs_actual_gap"] = out["default_cycle_pct"] - out["actual_chargeoff_pct"]
 
     return out
 
@@ -298,6 +322,11 @@ def get_cycle_position(df: pd.DataFrame) -> dict:
     )
     interpretation = " ".join(interpretation_parts)
 
+    # Actual observed rates (FRED H.8) — available only when data was fetched
+    actual_chargeoff = float(last.get("actual_chargeoff_pct", np.nan))
+    actual_delinq    = float(last.get("actual_delinq_pct", np.nan))
+    implied_vs_actual = float(last.get("implied_vs_actual_gap", np.nan))
+
     return {
         "available": True,
         "current_implied_pct": current_pct,
@@ -309,6 +338,11 @@ def get_cycle_position(df: pd.DataFrame) -> dict:
         "upside_to_peak": upside_to_peak,
         "nearest_peak": nearest_peak,
         "interpretation": interpretation,
+        # Actual observed data from FRED (NaN if not fetched)
+        "actual_chargeoff_pct": actual_chargeoff,
+        "actual_delinq_pct": actual_delinq,
+        "implied_vs_actual_gap": implied_vs_actual,
+        "has_actual_data": not (np.isnan(actual_chargeoff) and np.isnan(actual_delinq)),
     }
 
 
@@ -375,11 +409,13 @@ def run_default_cycle_analysis(df: pd.DataFrame) -> dict:
 
     cycle_comparison = pd.DataFrame(comparison_rows).set_index("cycle_name")
 
-    # Time series slice (last 252 trading days)
-    ts_cols = [c for c in ["default_cycle_pct", "implied_default_rate",
-                            "default_cycle_phase", "default_cycle_percentile",
-                            "default_cycle_momentum_30d"]
-               if c in enriched.columns]
+    # Time series slice (last 252 trading days) — include actual observed data when present
+    ts_cols = [c for c in [
+        "default_cycle_pct", "implied_default_rate",
+        "default_cycle_phase", "default_cycle_percentile",
+        "default_cycle_momentum_30d",
+        "actual_chargeoff_pct", "actual_delinq_pct", "implied_vs_actual_gap",
+    ] if c in enriched.columns]
     if "date" in enriched.columns:
         ts_cols = ["date"] + ts_cols
     time_series = enriched[ts_cols].tail(252).copy()

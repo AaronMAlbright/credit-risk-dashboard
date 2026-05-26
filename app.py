@@ -280,6 +280,15 @@ if "ig_spread" in df.columns:
 if "sloos_ci" in df.columns:
     df["sloos_change_90d"] = df["sloos_ci"].diff(90)
 
+# Actual default-cycle indicators (quarterly Fed H.8 data).
+# business_chargeoff_rate: realized credit losses at banks — lagging but real.
+# ci_loan_delinquency: C&I loan delinquencies — leads charge-offs by 1-2 quarters.
+if "business_chargeoff_rate" in df.columns:
+    df["chargeoff_change_90d"] = df["business_chargeoff_rate"].diff(90)
+    df["chargeoff_change_1y"]  = df["business_chargeoff_rate"].diff(252)
+if "ci_loan_delinquency" in df.columns:
+    df["delinquency_change_90d"] = df["ci_loan_delinquency"].diff(90)
+
 # Daily total return approximation for HY and IG.
 # Formula: (all-in yield / 252) - modified_duration × d(OAS) / 100
 # HY modified duration ≈ 4.0 yrs; IG modified duration ≈ 7.0 yrs

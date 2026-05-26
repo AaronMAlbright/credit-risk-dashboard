@@ -242,7 +242,7 @@ def get_global_credit_snapshot() -> dict:
     regime = _classify_divergence_regime(divergence_30d)
     stress_origin = _classify_stress_origin(regime, us_30d, intl_30d)
 
-    available = not (pd.isna(hyg_latest) and pd.isna(hyxu_latest))
+    available = bool(not (pd.isna(hyg_latest) and pd.isna(hyxu_latest)))
 
     return {
         "hyg_price": hyg_latest,
@@ -381,7 +381,7 @@ def run_global_credit_analysis(df: pd.DataFrame) -> dict:
         lead_signal = ""
 
     # ---- Available ----------------------------------------------------------
-    available = (
+    available = bool(
         snapshot.get("available", False)
         or enriched["us_intl_ratio"].notna().any()
     )

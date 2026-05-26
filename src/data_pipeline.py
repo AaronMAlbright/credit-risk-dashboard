@@ -47,6 +47,8 @@ _FRED_SERIES: dict[str, str] = {
     "BAMLH0A0HYM2EY":   "HY Effective Yield",
     "BAMLC0A0CMEY":       "IG Effective Yield",
     "DRTSCILM":           "SLOOS (C&I Tightening)",
+    "DRBLACBS":           "Business Loan Delinquency Rate",
+    "CORBLACBS":          "Business Charge-Off Rate",
 }
 
 _DEFAULT_TIMEOUT  = 360     # seconds — pipeline can be slow on first run

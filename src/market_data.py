@@ -68,6 +68,9 @@ _FFILL_LIMITS: dict[str, int] = {
     "BAMLC0A0CMEY":    5,   # IG effective yield
     # Quarterly SLOOS survey — ffill up to one quarter + buffer
     "DRTSCILM": 95,
+    # Quarterly default / charge-off series (Fed H.8 / Fed FR Y-14) — same ffill budget
+    "DRBLACBS": 95,   # Delinquency Rate on Business Loans
+    "CORBLACBS": 95,  # Charge-Off Rate on Business Loans
 }
 
 # Calibration ratio: median(BAMLH0A0HYM2 / BAA10Y) over 748-row overlap (2023-05-08 onward).
@@ -108,6 +111,9 @@ _COL_NAMES: dict[str, str] = {
     "BAMLH0A0HYM2EY": "hy_yield",        # HY all-in effective yield
     "BAMLC0A0CMEY":    "ig_yield",         # IG all-in effective yield
     "DRTSCILM":        "sloos_ci",         # SLOOS — % banks tightening C&I standards
+    # Actual observed default-cycle indicators (quarterly, Fed H.8)
+    "DRBLACBS":        "ci_loan_delinquency",    # Delinquency Rate on Business Loans (%)
+    "CORBLACBS":       "business_chargeoff_rate", # Charge-Off Rate on Business Loans (%)
 }
 
 
@@ -418,6 +424,8 @@ def load_all_series(
         # Credit spread complex + SLOOS
         "BAMLC0A0CM", "BAMLC0A4CBBB", "BAMLH0A0HYM2EY", "BAMLC0A0CMEY",
         "DRTSCILM",
+        # Actual default-cycle data (quarterly, Fed H.8)
+        "DRBLACBS", "CORBLACBS",
     ]
 
     for sid in fred_ids_required + fred_ids_optional:
