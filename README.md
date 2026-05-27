@@ -66,6 +66,8 @@ The project currently relies on public data sources and proxies:
 
 Public proxies are explicitly treated as proxies. A production-grade institutional version should use bond-level index data, TRACE liquidity, issuer fundamentals, rating-bucket OAS, sector OAS, CDX HY/IG, default data, and maturity schedules.
 
+See `docs/data_dictionary.md` for the source registry, quality labels, transforms, and limitations used by the dashboard.
+
 ## Validation
 
 Validation modules include:

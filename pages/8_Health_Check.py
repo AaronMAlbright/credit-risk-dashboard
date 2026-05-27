@@ -12,6 +12,7 @@ st.set_page_config(
 )
 
 from utils.shared import load_data, _ANALYTICS_VIEWS
+from src.data_sources import source_rows
 
 st.title("🩺 Dashboard Health Check")
 
@@ -35,6 +36,19 @@ try:
         st.success("Data is current.")
 except Exception as _de:
     st.error(f"Could not load data: {_de}")
+
+st.divider()
+
+# -- Data source registry -----------------------------------------------------
+st.subheader("Data Source Registry")
+_source_df = pd.DataFrame(source_rows())
+st.caption("Quality marks distinguish observed series from proxy or synthetic history.")
+st.dataframe(
+    _source_df,
+    use_container_width=True,
+    hide_index=True,
+    height=320,
+)
 
 st.divider()
 

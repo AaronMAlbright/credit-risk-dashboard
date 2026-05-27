@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.data_sources import fred_source_labels
+
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -33,23 +35,7 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-_FRED_SERIES: dict[str, str] = {
-    "DGS10":              "10Y Treasury Yield",
-    "DGS2":               "2Y Treasury Yield",
-    "UNRATE":             "Unemployment Rate",
-    "NFCI":               "NFCI (Liquidity)",
-    "BAMLH0A0HYM2":       "HY Credit Spread",
-    "SP500":              "SP500",
-    "VIXCLS":             "VIX",
-    "T10YIE":             "10Y Breakeven",
-    "BAMLC0A0CM":         "IG OAS",
-    "BAMLC0A4CBBB":       "BBB OAS",
-    "BAMLH0A0HYM2EY":   "HY Effective Yield",
-    "BAMLC0A0CMEY":       "IG Effective Yield",
-    "DRTSCILM":           "SLOOS (C&I Tightening)",
-    "DRBLACBS":           "Business Loan Delinquency Rate",
-    "CORBLACBS":          "Business Charge-Off Rate",
-}
+_FRED_SERIES: dict[str, str] = fred_source_labels()
 
 _DEFAULT_TIMEOUT  = 360     # seconds — pipeline can be slow on first run
 _CSV_PATH         = Path("data/scored_macro_credit_data.csv")

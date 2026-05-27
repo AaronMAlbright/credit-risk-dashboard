@@ -694,9 +694,12 @@ if _active_sub == 24:
                 st.info(_dcc["interpretation"])
 
             if _has_actual:
+                from src.data_sources import format_source_note
+
                 st.caption(
-                    "**Actual data source:** Fed H.8 — Charge-Off Rate on Business Loans (`CORBLACBS`) "
-                    "and Delinquency Rate on Business Loans (`DRBLACBS`). Quarterly; forward-filled between releases. "
+                    "**Observed source status:** "
+                    + format_source_note("CORBLACBS", "DRBLACBS")
+                    + " "
                     "Implied = Jarrow-Turnbull (HY spread / LGD). "
                     "Gap > 0 = market pricing excess stress; Gap < 0 = realized losses exceeding implied."
                 )
