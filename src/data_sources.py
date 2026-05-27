@@ -114,6 +114,27 @@ def get_source(series_id: str) -> DataSource:
     return SOURCES[series_id]
 
 
+def source_by_column(column: str) -> DataSource | None:
+    """Return source metadata for a generated data column, if registered."""
+    for source in SOURCES.values():
+        if source.column == column:
+            return source
+    return None
+
+
+def column_quality(column: str) -> str:
+    """Return source quality for a generated data column, or 'derived/unregistered'."""
+    source = source_by_column(column)
+    if source is None:
+        return "derived/unregistered"
+    return source.quality
+
+
+def registered_columns() -> set[str]:
+    """Return all non-null generated columns covered by source metadata."""
+    return {source.column for source in SOURCES.values() if source.column is not None}
+
+
 def source_rows() -> list[dict[str, str | None]]:
     """Return source metadata as table-ready dictionaries."""
     return [
