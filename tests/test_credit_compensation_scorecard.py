@@ -1,0 +1,115 @@
+import pandas as pd
+
+from src.credit_compensation_scorecard import build_credit_compensation_scorecard
+
+
+def _df(**overrides):
+    idx = pd.date_range("2024-01-01", periods=4, freq="B")
+    data = {
+        "hy_spread": [3.0, 3.2, 3.4, 6.0],
+        "ig_spread_bps": [120, 125, 130, 150],
+        "hy_yield": [7.0, 7.1, 7.2, 8.0],
+        "ig_yield": [5.0, 5.1, 5.2, 5.4],
+        "hy_spread_percentile": [30, 35, 40, 80],
+        "final_decision": ["Neutral", "Neutral", "Neutral", "Neutral"],
+        "composite_risk_score_smooth": [30, 32, 34, 35],
+        "default_cycle_pct": [4.5, 4.7, 4.9, 5.1],
+        "actual_chargeoff_pct": [1.0, 1.0, 1.0, 1.0],
+        "actual_delinq_pct": [1.2, 1.2, 1.2, 1.2],
+        "implied_vs_actual_gap": [3.5, 3.7, 3.9, 4.1],
+        "sloos_change_90d": [-5.0, -4.0, -3.0, -2.0],
+        "chargeoff_change_90d": [0.0, 0.0, 0.0, 0.0],
+        "delinquency_change_90d": [0.0, 0.0, 0.0, 0.0],
+    }
+    data.update(overrides)
+    return pd.DataFrame(data, index=idx)
+
+
+def test_scorecard_available_and_table_shaped():
+    result = build_credit_compensation_scorecard(_df())
+    assert result["available"] is True
+    assert result["recommendation"] in {"Add", "Hold", "Upgrade Quality", "Hedge", "De-risk"}
+    assert {"metric", "value", "interpretation"}.issubset(result["table"].columns)
+    assert {"decision", "guidance", "why it matters"}.issubset(result["action_table"].columns)
+    assert {"section", "view"}.issubset(result["memo_table"].columns)
+    assert {"trigger", "condition", "portfolio action"}.issubset(result["trigger_table"].columns)
+
+
+def test_scorecard_adds_when_compensation_is_high_and_conditions_stable():
+    result = build_credit_compensation_scorecard(_df())
+    assert result["recommendation"] == "Add"
+    assert result["allocation"]["credit_beta"] == "Overweight credit beta selectively"
+    assert result["memo"]["Trade Expression"].startswith("Favor BB/B carry")
+
+
+def test_scorecard_upgrades_quality_when_spreads_are_very_rich():
+    result = build_credit_compensation_scorecard(_df(
+        hy_spread=[2.5, 2.4, 2.3, 2.2],
+        hy_spread_percentile=[10, 9, 8, 5],
+    ))
+    assert result["recommendation"] == "Upgrade Quality"
+
+
+def test_scorecard_derisks_when_rich_and_fundamentals_worsen():
+    result = build_credit_compensation_scorecard(_df(
+        hy_spread=[2.5, 2.4, 2.3, 2.2],
+        hy_spread_percentile=[10, 9, 8, 5],
+        sloos_change_90d=[4, 5, 6, 7],
+        chargeoff_change_90d=[0.0, 0.1, 0.1, 0.1],
+    ))
+    assert result["recommendation"] == "De-risk"
+
+
+def test_scorecard_defensive_composite_derisks():
+    result = build_credit_compensation_scorecard(_df(
+        composite_risk_score_smooth=[60, 65, 72, 80],
+    ))
+    assert result["recommendation"] == "De-risk"
+
+
+def test_scorecard_unavailable_without_spreads():
+    result = build_credit_compensation_scorecard(pd.DataFrame(index=pd.date_range("2024-01-01", periods=3)))
+    assert result["available"] is False
+
+
+def test_scorecard_uses_raw_observed_default_columns():
+    result = build_credit_compensation_scorecard(_df(
+        actual_chargeoff_pct=[None, None, None, None],
+        actual_delinq_pct=[None, None, None, None],
+        business_chargeoff_rate=[1.0, 1.1, 1.2, 1.3],
+        ci_loan_delinquency=[1.4, 1.5, 1.6, 1.7],
+    ))
+    current = result["current"]
+    assert current["actual_chargeoff_pct"] == 1.3
+    assert current["business_loan_delinquency_pct"] == 1.7
+    assert current["implied_default_pct"] is not None
+
+
+def test_scorecard_adds_portfolio_guidance_for_quality_pressure():
+    result = build_credit_compensation_scorecard(_df(
+        hy_spread_percentile=[60, 65, 70, 75],
+        ig_spread_percentile=[30, 35, 40, 45],
+        hy_ig_ratio=[3.5, 3.7, 3.9, 4.1],
+        bbb_ig_ratio=[1.1, 1.2, 1.3, 1.5],
+    ))
+    assert result["current"]["hy_ig_spread_ratio"] is not None
+    assert "BBB pressure" in result["allocation"]["quality_bias"]
+    assert "HY screens cheaper" in result["allocation"]["hy_ig_tilt"]
+    assert "Watch level" in set(result["action_table"]["decision"])
+
+
+def test_scorecard_adds_trade_memo_and_mind_change_triggers():
+    result = build_credit_compensation_scorecard(_df(
+        hy_spread=[2.5, 2.4, 2.3, 2.2],
+        hy_spread_percentile=[10, 9, 8, 5],
+    ))
+    assert set(result["memo"]) == {
+        "Current View",
+        "What Changed",
+        "Why It Matters",
+        "Trade Expression",
+        "Invalidation Level",
+    }
+    assert "Wait for HY OAS" in result["triggers"]["add_risk"]
+    assert "Add risk" in set(result["trigger_table"]["trigger"])
+    assert result["memo"]["Invalidation Level"] == result["triggers"]["add_risk"]

@@ -182,6 +182,7 @@ from src.credit_regime_performance import summarize_by_regime, latest_regime_per
 from src.credit_channel_validation import channel_validation_table, latest_channel_validation_snapshot
 from src.credit_positioning import positioning_table, current_positioning
 from src.spread_decomposition import latest_spread_snapshot
+from src.credit_compensation_scorecard import build_credit_compensation_scorecard
 from src.credit_relative_value import latest_relative_value_snapshot, relative_value_table
 from src.channel_attribution import channel_contribution_table, top_channel_drivers
 from src.credit_presentation import (
@@ -380,6 +381,47 @@ if _active_sub is not None:
     if _insight_text:
         with st.expander("What does this show?", expanded=False):
             st.markdown(_insight_text)
+
+    try:
+        _ccs = build_credit_compensation_scorecard(df)
+        if _ccs.get("available"):
+            _cur = _ccs["current"]
+            _rec = _ccs.get("recommendation", "Hold")
+            _rec_color = {
+                "Add": "#22c55e",
+                "Hold": "#9aa0aa",
+                "Upgrade Quality": "#f59e0b",
+                "Hedge": "#f97316",
+                "De-risk": "#ef4444",
+            }.get(_rec, "#9aa0aa")
+            st.subheader("Credit Compensation Scorecard")
+            _m1, _m2, _m3, _m4, _m5 = st.columns(5)
+            _m1.metric("HY OAS", f"{_cur.get('hy_oas_bps'):.0f} bps" if _cur.get("hy_oas_bps") is not None else "-")
+            _m2.metric("Excess Spread", f"{_cur.get('excess_spread_bps'):.0f} bps" if _cur.get("excess_spread_bps") is not None else "-")
+            _m3.metric("Comp Ratio", f"{_cur.get('spread_compensation_ratio'):.2f}x" if _cur.get("spread_compensation_ratio") is not None else "-")
+            _m4.metric("HY Breakeven", f"{_cur.get('carry_breakeven_hy_bps'):.0f} bps" if _cur.get("carry_breakeven_hy_bps") is not None else "-")
+            _m5.markdown(
+                f'<div style="padding:0.45rem 0 0.25rem;color:#6b7280;font-size:0.78rem">Recommendation</div>'
+                f'<div style="color:{_rec_color};font-weight:800;font-size:1.55rem;line-height:1.1">{_rec}</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(_ccs.get("summary", ""))
+            _memo_table = _ccs.get("memo_table")
+            if _memo_table is not None and not _memo_table.empty:
+                st.markdown("**PM Trade Memo**")
+                st.dataframe(_memo_table, use_container_width=True, hide_index=True)
+            _action_table = _ccs.get("action_table")
+            if _action_table is not None and not _action_table.empty:
+                st.markdown("**Portfolio Expression**")
+                st.dataframe(_action_table, use_container_width=True, hide_index=True)
+            _trigger_table = _ccs.get("trigger_table")
+            if _trigger_table is not None and not _trigger_table.empty:
+                st.markdown("**What Changes Our Mind**")
+                st.dataframe(_trigger_table, use_container_width=True, hide_index=True)
+            with st.expander("Scorecard detail", expanded=False):
+                st.dataframe(_ccs["table"], use_container_width=True, hide_index=True)
+    except Exception as _ccs_e:
+        st.caption(f"Credit compensation scorecard unavailable: {_ccs_e}")
 
 
 if _active_sub == 19:
