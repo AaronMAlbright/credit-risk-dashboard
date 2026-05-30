@@ -427,6 +427,10 @@ if _active_sub is not None:
             if _risk_reward_table is not None and not _risk_reward_table.empty:
                 st.markdown("**Allocation Risk / Reward**")
                 st.dataframe(_risk_reward_table, use_container_width=True, hide_index=True)
+            _marginal_table = _ccs.get("marginal_allocation_table")
+            if _marginal_table is not None and not _marginal_table.empty:
+                st.markdown("**Marginal Allocation Advice**")
+                st.dataframe(_marginal_table, use_container_width=True, hide_index=True)
             _assumptions_table = _ccs.get("bucket_assumptions_table")
             if _assumptions_table is not None and not _assumptions_table.empty:
                 with st.expander("Bucket model assumptions", expanded=False):

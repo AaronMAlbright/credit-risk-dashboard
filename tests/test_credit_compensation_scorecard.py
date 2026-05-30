@@ -76,6 +76,15 @@ def test_scorecard_available_and_table_shaped():
     }.issubset(result["bucket_return_table"].columns)
     assert {"metric", "value", "interpretation"}.issubset(result["risk_reward_table"].columns)
     assert {
+        "action",
+        "bucket",
+        "suggested_shift",
+        "funding_source",
+        "reason",
+        "expected_return_impact_bps",
+        "stress_impact_bps",
+    }.issubset(result["marginal_allocation_table"].columns)
+    assert {
         "bucket",
         "spread_source",
         "spread_carry_factor",
@@ -257,3 +266,28 @@ def test_scorecard_blends_historical_analogs_into_bucket_return_model():
     assert summary["expected_hy_spread_change_bps"] < 0
     assert "blended historical analogs" in result["bucket_return_summary_text"]
     assert table.loc["BB", "expected_spread_mtm_bps"] > 0
+
+
+def test_scorecard_adds_marginal_allocation_advice():
+    result = build_credit_compensation_scorecard(_df())
+    advice = result["marginal_allocation_table"]
+    primary = advice.iloc[0]
+    assert primary["action"] == "Add"
+    assert primary["suggested_shift"] == "+5%"
+    assert primary["bucket"] in {"IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"}
+    assert primary["funding_source"] != primary["bucket"]
+    assert primary["expected_return_impact_bps"] != 0
+    assert "stress-adjusted compensation" in primary["reason"]
+
+
+def test_scorecard_marginal_advice_flags_tail_beta_when_stress_share_high():
+    result = build_credit_compensation_scorecard(_df())
+    advice = result["marginal_allocation_table"]
+    tail_trims = advice[
+        (advice["action"] == "Trim")
+        & (advice["bucket"].isin(["B", "CCC"]))
+        & (advice["funding_source"] == "Hedge")
+    ]
+    assert result["risk_reward_summary"]["tail_stress_share_pct"] >= 35.0
+    assert not tail_trims.empty
+    assert tail_trims.iloc[0]["stress_impact_bps"] < 0

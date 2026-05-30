@@ -665,6 +665,118 @@ def _risk_reward_metrics(
     return rows, summary
 
 
+def _marginal_allocation_advice(
+    *,
+    bucket_return_table: pd.DataFrame,
+    rating_weights: dict[str, float],
+    risk_reward_summary: dict,
+) -> pd.DataFrame:
+    table = bucket_return_table.copy()
+    table["expected_excess_return_bps"] = pd.to_numeric(table["expected_excess_return_bps"], errors="coerce")
+    table["recession_stress_loss_bps"] = pd.to_numeric(table["recession_stress_loss_bps"], errors="coerce")
+    table["stress_adjusted_score"] = table["expected_excess_return_bps"] / table["recession_stress_loss_bps"].abs().replace(0, pd.NA)
+
+    credit = table[table["bucket"].isin(["IG", "BBB", "BB", "B", "CCC"])].copy()
+    tail_stress_share = risk_reward_summary.get("tail_stress_share_pct") or 0.0
+    eligible_adds = credit[
+        (credit["expected_excess_return_bps"] > 0)
+        & (credit["bucket"].ne("CCC") | (tail_stress_share < 30.0))
+    ]
+    if eligible_adds.empty:
+        add_row = table.loc[table["bucket"].isin(["Cash", "Hedge"])].sort_values(
+            ["expected_excess_return_bps"], ascending=False
+        ).iloc[0]
+    else:
+        add_row = eligible_adds.sort_values(
+            ["stress_adjusted_score", "expected_excess_return_bps"], ascending=False
+        ).iloc[0]
+
+    trim_candidates = table[
+        (table["target_weight"] > 0)
+        & table["bucket"].ne(add_row["bucket"])
+        & table["bucket"].ne("Hedge")
+    ].copy()
+    if add_row["bucket"] in {"IG", "BBB", "BB", "B", "CCC"}:
+        trim_candidates["funding_rank"] = trim_candidates.apply(
+            lambda row: (
+                0 if row["bucket"] == "Cash" else
+                1 if row["expected_excess_return_bps"] < 0 else
+                2
+            ),
+            axis=1,
+        )
+        fund_row = trim_candidates.sort_values(
+            ["funding_rank", "stress_adjusted_score", "expected_excess_return_bps"],
+            ascending=[True, True, True],
+        ).iloc[0]
+    else:
+        fund_row = trim_candidates.sort_values(
+            ["stress_adjusted_score", "expected_excess_return_bps"],
+            ascending=[True, True],
+        ).iloc[0]
+
+    def _impact(add, fund) -> tuple[float, float]:
+        expected = (add["expected_excess_return_bps"] - fund["expected_excess_return_bps"]) * 0.05
+        stress = (add["recession_stress_loss_bps"] - fund["recession_stress_loss_bps"]) * 0.05
+        return round(float(expected), 1), round(float(stress), 1)
+
+    expected_impact, stress_impact = _impact(add_row, fund_row)
+    rows = [
+        {
+            "action": "Add",
+            "bucket": add_row["bucket"],
+            "suggested_shift": "+5%",
+            "funding_source": fund_row["bucket"],
+            "reason": "Best marginal stress-adjusted compensation among eligible buckets",
+            "expected_return_impact_bps": expected_impact,
+            "stress_impact_bps": stress_impact,
+        }
+    ]
+
+    if tail_stress_share >= 35.0:
+        tail = table[
+            table["bucket"].isin(["B", "CCC"])
+            & (table["target_weight"] > 0)
+        ].sort_values(["stress_adjusted_score", "recession_stress_loss_bps"], ascending=[True, False])
+        if not tail.empty:
+            hedge = table.loc[table["bucket"] == "Hedge"].iloc[0]
+            trim = tail.iloc[0]
+            expected_impact, stress_impact = _impact(hedge, trim)
+            rows.append(
+                {
+                    "action": "Trim",
+                    "bucket": trim["bucket"],
+                    "suggested_shift": "-5%",
+                    "funding_source": "Hedge",
+                    "reason": "B/CCC stress share is elevated; use hedge to reduce tail beta",
+                    "expected_return_impact_bps": expected_impact,
+                    "stress_impact_bps": stress_impact,
+                }
+            )
+
+    weak_credit = credit[
+        (credit["target_weight"] > 0)
+        & (credit["expected_excess_return_bps"] < 0)
+    ].sort_values("expected_excess_return_bps")
+    if not weak_credit.empty:
+        weak = weak_credit.iloc[0]
+        cash = table.loc[table["bucket"] == "Cash"].iloc[0]
+        expected_impact, stress_impact = _impact(cash, weak)
+        rows.append(
+            {
+                "action": "Trim",
+                "bucket": weak["bucket"],
+                "suggested_shift": "-5%",
+                "funding_source": "Cash",
+                "reason": "Negative expected excess return does not justify incremental credit beta",
+                "expected_return_impact_bps": expected_impact,
+                "stress_impact_bps": stress_impact,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def _historical_forward_outcomes(
     df: pd.DataFrame,
     *,
@@ -938,6 +1050,11 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         bucket_return_table=bucket_return_table,
         rating_weights=rating_weights,
     )
+    marginal_allocation_table = _marginal_allocation_advice(
+        bucket_return_table=bucket_return_table,
+        rating_weights=rating_weights,
+        risk_reward_summary=risk_reward_summary,
+    )
     assumptions_table = _bucket_assumptions_table()
     largest_rating_overweights = [
         f"{row.bucket} {row.target_weight:.1f}%"
@@ -976,6 +1093,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "forward_outcomes": forward_outcomes,
         "bucket_return_summary": bucket_return_summary,
         "risk_reward_summary": risk_reward_summary,
+        "marginal_allocation_table": marginal_allocation_table,
     }
 
     rows = pd.DataFrame([
@@ -1024,6 +1142,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "bucket_return_summary_text": bucket_return_summary["interpretation"],
         "risk_reward_table": risk_reward_table,
         "risk_reward_summary": risk_reward_summary,
+        "marginal_allocation_table": marginal_allocation_table,
         "bucket_assumptions_table": assumptions_table,
         "forward_outcomes": forward_outcomes,
         "forward_outcomes_table": forward_outcomes.get("table", pd.DataFrame()),
