@@ -86,6 +86,16 @@ def test_scorecard_available_and_table_shaped():
     }.issubset(result["marginal_allocation_table"].columns)
     assert {
         "bucket",
+        "target_weight",
+        "+25bps_loss_bps",
+        "+50bps_loss_bps",
+        "+100bps_loss_bps",
+        "weighted_+25bps_bps",
+        "weighted_+50bps_bps",
+        "weighted_+100bps_bps",
+    }.issubset(result["spread_shock_table"].columns)
+    assert {
+        "bucket",
         "spread_source",
         "spread_carry_factor",
         "spread_beta",
@@ -95,6 +105,7 @@ def test_scorecard_available_and_table_shaped():
     }.issubset(result["bucket_assumptions_table"].columns)
     assert set(result["rating_weights"]) == {"IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"}
     assert round(sum(result["rating_weights"].values()), 1) == 100.0
+    assert result["pm_final_verdict"]
 
 
 def test_scorecard_adds_when_compensation_is_high_and_conditions_stable():
@@ -291,3 +302,26 @@ def test_scorecard_marginal_advice_flags_tail_beta_when_stress_share_high():
     assert result["risk_reward_summary"]["tail_stress_share_pct"] >= 35.0
     assert not tail_trims.empty
     assert tail_trims.iloc[0]["stress_impact_bps"] < 0
+
+
+def test_scorecard_adds_spread_shock_sensitivity():
+    result = build_credit_compensation_scorecard(_df())
+    shocks = result["spread_shock_table"].set_index("bucket")
+    summary = result["spread_shock_summary"]
+    assert shocks.loc["BB", "+100bps_loss_bps"] > shocks.loc["IG", "+100bps_loss_bps"]
+    assert shocks.loc["Hedge", "+100bps_loss_bps"] < 0
+    assert shocks.loc["Portfolio", "weighted_+100bps_bps"] == summary["portfolio_+100bps_loss_bps"]
+    assert summary["portfolio_+100bps_loss_bps"] > 0
+    assert summary["hedge_+100bps_offset_bps"] > 0
+    assert "+100 bps spread shock" in summary["interpretation"]
+
+
+def test_scorecard_adds_pm_final_verdict():
+    result = build_credit_compensation_scorecard(_df())
+    verdict = result["pm_final_verdict"]
+    primary = result["marginal_allocation_table"].iloc[0]
+    assert result["recommendation"] in verdict
+    assert str(primary["bucket"]) in verdict
+    assert "expected excess return" in verdict
+    assert "+100 bps spread shock" in verdict
+    assert "key risk trigger" in verdict

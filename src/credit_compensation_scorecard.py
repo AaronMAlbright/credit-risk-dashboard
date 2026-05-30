@@ -777,6 +777,72 @@ def _marginal_allocation_advice(
     return pd.DataFrame(rows)
 
 
+def _spread_shock_sensitivity(rating_weights: dict[str, float]) -> tuple[pd.DataFrame, dict]:
+    shocks = [25, 50, 100]
+    rows = []
+    totals = {shock: 0.0 for shock in shocks}
+    hedge_offsets = {shock: 0.0 for shock in shocks}
+
+    for bucket in RATING_BUCKETS:
+        assumptions = BUCKET_ANALYTICS[bucket]
+        weight = rating_weights.get(bucket, 0.0)
+        row = {"bucket": bucket, "target_weight": round(weight, 1)}
+        for shock in shocks:
+            loss = assumptions["duration"] * assumptions["spread_beta"] * shock
+            weighted_loss = loss * weight / 100.0
+            row[f"+{shock}bps_loss_bps"] = round(float(loss), 1)
+            row[f"weighted_+{shock}bps_bps"] = round(float(weighted_loss), 1)
+            totals[shock] += weighted_loss
+            if bucket == "Hedge":
+                hedge_offsets[shock] += -weighted_loss
+        rows.append(row)
+
+    total_row = {"bucket": "Portfolio", "target_weight": round(sum(rating_weights.values()), 1)}
+    for shock in shocks:
+        total_row[f"+{shock}bps_loss_bps"] = None
+        total_row[f"weighted_+{shock}bps_bps"] = round(float(totals[shock]), 1)
+    rows.append(total_row)
+
+    summary = {
+        f"portfolio_+{shock}bps_loss_bps": round(float(totals[shock]), 1)
+        for shock in shocks
+    }
+    summary.update({
+        f"hedge_+{shock}bps_offset_bps": round(float(hedge_offsets[shock]), 1)
+        for shock in shocks
+    })
+    summary["interpretation"] = (
+        f"A parallel +100 bps spread shock implies about {totals[100]:.0f} bps portfolio loss, "
+        f"with hedges offsetting about {hedge_offsets[100]:.0f} bps."
+    )
+    return pd.DataFrame(rows), summary
+
+
+def _pm_final_verdict(
+    *,
+    recommendation: str,
+    marginal_allocation_table: pd.DataFrame,
+    bucket_return_summary: dict,
+    shock_summary: dict,
+    triggers: dict,
+) -> str:
+    primary_trade = "hold current risk budget"
+    if marginal_allocation_table is not None and not marginal_allocation_table.empty:
+        row = marginal_allocation_table.iloc[0]
+        primary_trade = (
+            f"{str(row['action']).lower()} {row['suggested_shift']} {row['bucket']} "
+            f"funded from {row['funding_source']}"
+        )
+
+    expected = bucket_return_summary.get("portfolio_expected_excess_return_bps")
+    shock = shock_summary.get("portfolio_+100bps_loss_bps")
+    trigger = triggers.get("hedge_or_exit") or triggers.get("reduce_risk") or "Monitor credit triggers"
+    return (
+        f"{recommendation}: {primary_trade}; expected excess return {expected:.0f} bps, "
+        f"+100 bps spread shock {shock:.0f} bps, key risk trigger: {trigger}."
+    )
+
+
 def _historical_forward_outcomes(
     df: pd.DataFrame,
     *,
@@ -1055,6 +1121,14 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         rating_weights=rating_weights,
         risk_reward_summary=risk_reward_summary,
     )
+    spread_shock_table, spread_shock_summary = _spread_shock_sensitivity(rating_weights)
+    pm_final_verdict = _pm_final_verdict(
+        recommendation=rec,
+        marginal_allocation_table=marginal_allocation_table,
+        bucket_return_summary=bucket_return_summary,
+        shock_summary=spread_shock_summary,
+        triggers=triggers,
+    )
     assumptions_table = _bucket_assumptions_table()
     largest_rating_overweights = [
         f"{row.bucket} {row.target_weight:.1f}%"
@@ -1094,6 +1168,8 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "bucket_return_summary": bucket_return_summary,
         "risk_reward_summary": risk_reward_summary,
         "marginal_allocation_table": marginal_allocation_table,
+        "spread_shock_summary": spread_shock_summary,
+        "pm_final_verdict": pm_final_verdict,
     }
 
     rows = pd.DataFrame([
@@ -1143,6 +1219,10 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "risk_reward_table": risk_reward_table,
         "risk_reward_summary": risk_reward_summary,
         "marginal_allocation_table": marginal_allocation_table,
+        "spread_shock_table": spread_shock_table,
+        "spread_shock_summary": spread_shock_summary,
+        "spread_shock_summary_text": spread_shock_summary["interpretation"],
+        "pm_final_verdict": pm_final_verdict,
         "bucket_assumptions_table": assumptions_table,
         "forward_outcomes": forward_outcomes,
         "forward_outcomes_table": forward_outcomes.get("table", pd.DataFrame()),

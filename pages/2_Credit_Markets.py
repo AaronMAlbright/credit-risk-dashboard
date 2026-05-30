@@ -423,6 +423,10 @@ if _active_sub is not None:
                 st.markdown("**Expected Return & Stress by Rating Bucket**")
                 st.caption(_ccs.get("bucket_return_summary_text", ""))
                 st.dataframe(_bucket_return_table, use_container_width=True, hide_index=True)
+            _pm_verdict = _ccs.get("pm_final_verdict")
+            if _pm_verdict:
+                st.markdown("**PM Final Verdict**")
+                st.caption(_pm_verdict)
             _risk_reward_table = _ccs.get("risk_reward_table")
             if _risk_reward_table is not None and not _risk_reward_table.empty:
                 st.markdown("**Allocation Risk / Reward**")
@@ -431,6 +435,11 @@ if _active_sub is not None:
             if _marginal_table is not None and not _marginal_table.empty:
                 st.markdown("**Marginal Allocation Advice**")
                 st.dataframe(_marginal_table, use_container_width=True, hide_index=True)
+            _shock_table = _ccs.get("spread_shock_table")
+            if _shock_table is not None and not _shock_table.empty:
+                st.markdown("**Spread Shock Sensitivity**")
+                st.caption(_ccs.get("spread_shock_summary_text", ""))
+                st.dataframe(_shock_table, use_container_width=True, hide_index=True)
             _assumptions_table = _ccs.get("bucket_assumptions_table")
             if _assumptions_table is not None and not _assumptions_table.empty:
                 with st.expander("Bucket model assumptions", expanded=False):
