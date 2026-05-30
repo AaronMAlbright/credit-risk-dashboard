@@ -423,6 +423,14 @@ if _active_sub is not None:
                 st.markdown("**Expected Return & Stress by Rating Bucket**")
                 st.caption(_ccs.get("bucket_return_summary_text", ""))
                 st.dataframe(_bucket_return_table, use_container_width=True, hide_index=True)
+            _risk_reward_table = _ccs.get("risk_reward_table")
+            if _risk_reward_table is not None and not _risk_reward_table.empty:
+                st.markdown("**Allocation Risk / Reward**")
+                st.dataframe(_risk_reward_table, use_container_width=True, hide_index=True)
+            _assumptions_table = _ccs.get("bucket_assumptions_table")
+            if _assumptions_table is not None and not _assumptions_table.empty:
+                with st.expander("Bucket model assumptions", expanded=False):
+                    st.dataframe(_assumptions_table, use_container_width=True, hide_index=True)
             _forward_table = _ccs.get("forward_outcomes_table")
             if _forward_table is not None and not _forward_table.empty:
                 st.markdown("**Historical Forward Outcomes**")

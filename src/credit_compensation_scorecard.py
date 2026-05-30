@@ -517,6 +517,94 @@ def _bucket_return_and_stress(
     return table, summary
 
 
+def _bucket_assumptions_table() -> pd.DataFrame:
+    rows = []
+    for bucket in RATING_BUCKETS:
+        assumptions = BUCKET_ANALYTICS[bucket]
+        rows.append(
+            {
+                "bucket": bucket,
+                "spread_source": assumptions["source"],
+                "spread_carry_factor": assumptions["spread_factor"],
+                "spread_beta": assumptions["spread_beta"],
+                "loss_factor": assumptions["loss_factor"],
+                "spread_duration": assumptions["duration"],
+                "recession_widening_bps": assumptions["stress_widen_bps"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _risk_reward_metrics(
+    *,
+    bucket_return_table: pd.DataFrame,
+    rating_weights: dict[str, float],
+) -> tuple[pd.DataFrame, dict]:
+    expected_return = pd.to_numeric(
+        bucket_return_table["weighted_expected_return_bps"], errors="coerce"
+    ).sum()
+    stress_loss = pd.to_numeric(
+        bucket_return_table["weighted_stress_loss_bps"], errors="coerce"
+    ).sum()
+    carry = (
+        pd.to_numeric(bucket_return_table["spread_carry_bps"], errors="coerce")
+        * pd.to_numeric(bucket_return_table["target_weight"], errors="coerce")
+        / 100.0
+    ).sum()
+    hedge_benefit = -pd.to_numeric(
+        bucket_return_table.loc[bucket_return_table["bucket"] == "Hedge", "weighted_stress_loss_bps"],
+        errors="coerce",
+    ).sum()
+    tail_weight = sum(rating_weights.get(bucket, 0.0) for bucket in ["B", "CCC"])
+    tail_stress = pd.to_numeric(
+        bucket_return_table.loc[
+            bucket_return_table["bucket"].isin(["B", "CCC"]),
+            "weighted_stress_loss_bps",
+        ],
+        errors="coerce",
+    ).sum()
+    risk_reward = expected_return / stress_loss if stress_loss > 0 else None
+    carry_to_stress = carry / stress_loss if stress_loss > 0 else None
+    tail_stress_share = tail_stress / stress_loss if stress_loss > 0 else None
+    hedge_coverage = hedge_benefit / stress_loss if stress_loss > 0 else None
+
+    rows = pd.DataFrame([
+        {
+            "metric": "Expected return / stress loss",
+            "value": "-" if risk_reward is None else f"{risk_reward:.2f}x",
+            "interpretation": "Higher means more expected compensation per unit of recession loss",
+        },
+        {
+            "metric": "Carry / stress loss",
+            "value": "-" if carry_to_stress is None else f"{carry_to_stress:.2f}x",
+            "interpretation": "Annual spread carry relative to modeled recession drawdown",
+        },
+        {
+            "metric": "B/CCC tail weight",
+            "value": f"{tail_weight:.1f}%",
+            "interpretation": "Lower-quality exposure that can dominate default and liquidity beta",
+        },
+        {
+            "metric": "B/CCC stress share",
+            "value": "-" if tail_stress_share is None else f"{tail_stress_share * 100.0:.1f}%",
+            "interpretation": "Share of recession loss coming from lower-quality HY buckets",
+        },
+        {
+            "metric": "Hedge stress offset",
+            "value": "-" if hedge_coverage is None else f"{hedge_coverage * 100.0:.1f}%",
+            "interpretation": "Modeled recession stress absorbed by explicit hedge exposure",
+        },
+    ])
+    summary = {
+        "risk_reward_ratio": None if risk_reward is None else round(float(risk_reward), 2),
+        "carry_to_stress_ratio": None if carry_to_stress is None else round(float(carry_to_stress), 2),
+        "tail_weight_pct": round(float(tail_weight), 1),
+        "tail_stress_share_pct": None if tail_stress_share is None else round(float(tail_stress_share * 100.0), 1),
+        "hedge_stress_offset_pct": None if hedge_coverage is None else round(float(hedge_coverage * 100.0), 1),
+    }
+    return rows, summary
+
+
 def _historical_forward_outcomes(
     df: pd.DataFrame,
     *,
@@ -785,6 +873,11 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         chargeoff_change_90d=chargeoff_change_90d,
         delinquency_change_90d=delinquency_change_90d,
     )
+    risk_reward_table, risk_reward_summary = _risk_reward_metrics(
+        bucket_return_table=bucket_return_table,
+        rating_weights=rating_weights,
+    )
+    assumptions_table = _bucket_assumptions_table()
     largest_rating_overweights = [
         f"{row.bucket} {row.target_weight:.1f}%"
         for row in rating_table.itertuples()
@@ -821,6 +914,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "rating_weights": rating_weights,
         "forward_outcomes": forward_outcomes,
         "bucket_return_summary": bucket_return_summary,
+        "risk_reward_summary": risk_reward_summary,
     }
 
     rows = pd.DataFrame([
@@ -867,6 +961,9 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "bucket_return_table": bucket_return_table,
         "bucket_return_summary": bucket_return_summary,
         "bucket_return_summary_text": bucket_return_summary["interpretation"],
+        "risk_reward_table": risk_reward_table,
+        "risk_reward_summary": risk_reward_summary,
+        "bucket_assumptions_table": assumptions_table,
         "forward_outcomes": forward_outcomes,
         "forward_outcomes_table": forward_outcomes.get("table", pd.DataFrame()),
         "forward_outcomes_summary": forward_outcomes.get("interpretation", forward_outcomes.get("reason", "")),

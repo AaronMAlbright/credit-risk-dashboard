@@ -74,6 +74,16 @@ def test_scorecard_available_and_table_shaped():
         "weighted_expected_return_bps",
         "weighted_stress_loss_bps",
     }.issubset(result["bucket_return_table"].columns)
+    assert {"metric", "value", "interpretation"}.issubset(result["risk_reward_table"].columns)
+    assert {
+        "bucket",
+        "spread_source",
+        "spread_carry_factor",
+        "spread_beta",
+        "loss_factor",
+        "spread_duration",
+        "recession_widening_bps",
+    }.issubset(result["bucket_assumptions_table"].columns)
     assert set(result["rating_weights"]) == {"IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"}
     assert round(sum(result["rating_weights"].values()), 1) == 100.0
 
@@ -220,3 +230,17 @@ def test_scorecard_bucket_returns_penalize_rich_tightening_credit():
     assert result["recommendation"] == "De-risk"
     assert result["bucket_return_summary"]["expected_hy_spread_change_bps"] > 0
     assert table.loc["B", "expected_excess_return_bps"] < table.loc["IG", "expected_excess_return_bps"]
+
+
+def test_scorecard_surfaces_risk_reward_and_assumptions():
+    result = build_credit_compensation_scorecard(_df())
+    metrics = result["risk_reward_summary"]
+    assumptions = result["bucket_assumptions_table"].set_index("bucket")
+    table_metrics = set(result["risk_reward_table"]["metric"])
+    assert "Expected return / stress loss" in table_metrics
+    assert "B/CCC tail weight" in table_metrics
+    assert metrics["risk_reward_ratio"] > 0
+    assert metrics["tail_weight_pct"] == result["rating_weights"]["B"] + result["rating_weights"]["CCC"]
+    assert metrics["hedge_stress_offset_pct"] > 0
+    assert assumptions.loc["CCC", "spread_beta"] > assumptions.loc["BB", "spread_beta"]
+    assert assumptions.loc["Hedge", "recession_widening_bps"] < 0
