@@ -25,6 +25,36 @@ def _df(**overrides):
     return pd.DataFrame(data, index=idx)
 
 
+def _forward_df(**overrides):
+    periods = 14
+    idx = pd.date_range("2024-01-01", periods=periods, freq="B")
+    data = {
+        "hy_spread": [5.6, 5.8, 6.0, 6.2, 5.9, 6.1, 5.7, 6.3, 5.8, 6.0, 5.9, 6.1, 6.0, 6.0],
+        "ig_spread_bps": [130, 132, 135, 136, 134, 137, 133, 138, 134, 136, 135, 137, 136, 136],
+        "hy_yield": [8.0] * periods,
+        "ig_yield": [5.2] * periods,
+        "hy_spread_percentile": [70, 75, 80, 82, 78, 79, 74, 83, 76, 81, 77, 80, 79, 80],
+        "ig_spread_percentile": [45, 48, 50, 52, 49, 51, 46, 53, 49, 52, 48, 51, 50, 50],
+        "final_decision": ["Neutral"] * periods,
+        "composite_risk_score_smooth": [35] * periods,
+        "default_cycle_pct": [5.0] * periods,
+        "actual_chargeoff_pct": [1.0] * periods,
+        "actual_delinq_pct": [1.2] * periods,
+        "implied_vs_actual_gap": [4.0] * periods,
+        "sloos_change_90d": [-2.0] * periods,
+        "chargeoff_change_90d": [0.0] * periods,
+        "delinquency_change_90d": [0.0] * periods,
+        "hy_spread_forward_21d_change": [-30, -25, -20, -15, -35, -10, -40, -5, -22, -18, -28, -16, -12, None],
+        "hy_spread_forward_63d_change": [-45, -35, -25, -20, -50, -18, -55, -12, -30, -24, -38, -22, -16, None],
+        "hy_spread_forward_126d_change": [-60, -45, -30, -25, -70, -20, -75, -15, -35, -28, -42, -26, -20, None],
+        "ig_spread_forward_21d_change": [-5, -4, -3, -2, -6, -2, -7, -1, -4, -3, -5, -2, -2, None],
+        "ig_spread_forward_63d_change": [-8, -6, -4, -3, -9, -3, -10, -2, -5, -4, -7, -3, -3, None],
+        "ig_spread_forward_126d_change": [-10, -8, -5, -4, -12, -4, -14, -3, -6, -5, -9, -4, -4, None],
+    }
+    data.update(overrides)
+    return pd.DataFrame(data, index=idx)
+
+
 def test_scorecard_available_and_table_shaped():
     result = build_credit_compensation_scorecard(_df())
     assert result["available"] is True
@@ -33,6 +63,9 @@ def test_scorecard_available_and_table_shaped():
     assert {"decision", "guidance", "why it matters"}.issubset(result["action_table"].columns)
     assert {"section", "view"}.issubset(result["memo_table"].columns)
     assert {"trigger", "condition", "portfolio action"}.issubset(result["trigger_table"].columns)
+    assert {"bucket", "target_weight", "tilt", "rationale"}.issubset(result["rating_bucket_table"].columns)
+    assert set(result["rating_weights"]) == {"IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"}
+    assert round(sum(result["rating_weights"].values()), 1) == 100.0
 
 
 def test_scorecard_adds_when_compensation_is_high_and_conditions_stable():
@@ -40,6 +73,7 @@ def test_scorecard_adds_when_compensation_is_high_and_conditions_stable():
     assert result["recommendation"] == "Add"
     assert result["allocation"]["credit_beta"] == "Overweight credit beta selectively"
     assert result["memo"]["Trade Expression"].startswith("Favor BB/B carry")
+    assert result["rating_weights"]["BB"] > result["rating_weights"]["IG"]
 
 
 def test_scorecard_upgrades_quality_when_spreads_are_very_rich():
@@ -113,3 +147,40 @@ def test_scorecard_adds_trade_memo_and_mind_change_triggers():
     assert "Wait for HY OAS" in result["triggers"]["add_risk"]
     assert "Add risk" in set(result["trigger_table"]["trigger"])
     assert result["memo"]["Invalidation Level"] == result["triggers"]["add_risk"]
+
+
+def test_scorecard_rating_allocation_upgrades_quality_when_hy_is_rich():
+    result = build_credit_compensation_scorecard(_df(
+        hy_spread=[2.5, 2.4, 2.3, 2.2],
+        hy_spread_percentile=[10, 9, 8, 5],
+    ))
+    weights = result["rating_weights"]
+    assert weights["IG"] > weights["BB"]
+    assert weights["CCC"] == 0.0
+    assert weights["Cash"] >= 5.0
+    assert "Rating allocation" in result["memo"]["Trade Expression"]
+
+
+def test_scorecard_rating_allocation_uses_cash_and_hedge_when_derisking():
+    result = build_credit_compensation_scorecard(_df(
+        composite_risk_score_smooth=[60, 65, 72, 80],
+        sloos_change_90d=[4, 5, 6, 7],
+        chargeoff_change_90d=[0.0, 0.1, 0.1, 0.1],
+    ))
+    weights = result["rating_weights"]
+    assert result["recommendation"] == "De-risk"
+    assert weights["Cash"] >= weights["IG"]
+    assert weights["Hedge"] >= 15.0
+    assert weights["B"] == 0.0
+
+
+def test_scorecard_adds_historical_forward_outcomes_when_forward_columns_exist():
+    result = build_credit_compensation_scorecard(_forward_df())
+    outcomes = result["forward_outcomes"]
+    assert outcomes["available"] is True
+    assert outcomes["sample_count"] >= 8
+    assert {"horizon", "sample_count", "hy_median_change_bps", "ig_median_change_bps"}.issubset(
+        result["forward_outcomes_table"].columns
+    )
+    assert result["forward_outcomes_table"]["hy_median_change_bps"].iloc[0] < 0
+    assert "HY spreads typically tightened" in result["forward_outcomes_summary"]

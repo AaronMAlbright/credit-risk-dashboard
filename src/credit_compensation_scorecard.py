@@ -13,10 +13,16 @@ import math
 import pandas as pd
 
 from src.carry_breakeven import get_current_breakeven
-from src.spread_decomposition import latest_spread_snapshot
+from src.spread_decomposition import decompose_spreads, latest_spread_snapshot
 
 
 RECOMMENDATIONS = {"Add", "Hold", "Upgrade Quality", "Hedge", "De-risk"}
+RATING_BUCKETS = ["IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"]
+FORWARD_HORIZONS = [
+    ("1M", "hy_spread_forward_21d_change", "ig_spread_forward_21d_change"),
+    ("3M", "hy_spread_forward_63d_change", "ig_spread_forward_63d_change"),
+    ("6M", "hy_spread_forward_126d_change", "ig_spread_forward_126d_change"),
+]
 
 
 def _safe_float(value) -> float | None:
@@ -43,6 +49,14 @@ def _spread_to_bps(value: float | None) -> float | None:
     if value is None:
         return None
     return value * 100.0 if abs(value) < 50 else value
+
+
+def _series_to_bps(series: pd.Series) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce")
+    median_abs = s.dropna().abs().median()
+    if pd.notna(median_abs) and median_abs < 10:
+        return s * 100.0
+    return s
 
 
 def _fmt_bps(value: float | None) -> str:
@@ -275,6 +289,188 @@ def _trade_memo(
     }
 
 
+def _rating_bucket_allocation(
+    *,
+    recommendation: str,
+    hy_percentile: float | None,
+    ig_percentile: float | None,
+    bbb_ig_ratio: float | None,
+    sloos_change_90d: float | None,
+    chargeoff_change_90d: float | None,
+    delinquency_change_90d: float | None,
+) -> tuple[dict[str, float], pd.DataFrame]:
+    weights_by_rec = {
+        "Add": {"IG": 20.0, "BBB": 15.0, "BB": 30.0, "B": 20.0, "CCC": 5.0, "Cash": 5.0, "Hedge": 5.0},
+        "Hold": {"IG": 30.0, "BBB": 20.0, "BB": 25.0, "B": 10.0, "CCC": 0.0, "Cash": 10.0, "Hedge": 5.0},
+        "Upgrade Quality": {"IG": 40.0, "BBB": 20.0, "BB": 20.0, "B": 5.0, "CCC": 0.0, "Cash": 10.0, "Hedge": 5.0},
+        "Hedge": {"IG": 35.0, "BBB": 20.0, "BB": 15.0, "B": 5.0, "CCC": 0.0, "Cash": 15.0, "Hedge": 10.0},
+        "De-risk": {"IG": 30.0, "BBB": 15.0, "BB": 5.0, "B": 0.0, "CCC": 0.0, "Cash": 35.0, "Hedge": 15.0},
+    }
+    weights = dict(weights_by_rec.get(recommendation, weights_by_rec["Hold"]))
+
+    quality_pressure = bbb_ig_ratio is not None and bbb_ig_ratio > 1.35
+    lending_tightening = sloos_change_90d is not None and sloos_change_90d > 3
+    fundamental_worsening = any(
+        value is not None and value > 0.05
+        for value in [chargeoff_change_90d, delinquency_change_90d]
+    )
+    hy_cheap_vs_ig = hy_percentile is not None and ig_percentile is not None and hy_percentile - ig_percentile >= 20
+    hy_rich = hy_percentile is not None and hy_percentile < 25
+
+    if quality_pressure:
+        weights["BBB"] = max(0.0, weights["BBB"] - 5.0)
+        weights["IG"] += 5.0
+    if lending_tightening or fundamental_worsening:
+        weights["CCC"] = 0.0
+        weights["B"] = max(0.0, weights["B"] - 5.0)
+        weights["Cash"] += 3.0
+        weights["Hedge"] += 2.0
+    elif hy_cheap_vs_ig and recommendation in {"Add", "Hold"}:
+        weights["IG"] = max(0.0, weights["IG"] - 5.0)
+        weights["BB"] += 3.0
+        weights["B"] += 2.0
+    if hy_rich and recommendation in {"Upgrade Quality", "Hedge", "De-risk"}:
+        weights["B"] = max(0.0, weights["B"] - 5.0)
+        weights["IG"] += 3.0
+        weights["Cash"] += 2.0
+
+    total = sum(weights.values())
+    if total:
+        weights = {bucket: round(weight * 100.0 / total, 1) for bucket, weight in weights.items()}
+        rounding_gap = round(100.0 - sum(weights.values()), 1)
+        weights["Cash"] = round(weights["Cash"] + rounding_gap, 1)
+
+    baseline = {"IG": 30.0, "BBB": 20.0, "BB": 20.0, "B": 10.0, "CCC": 2.5, "Cash": 12.5, "Hedge": 5.0}
+    rationales = {
+        "IG": "Core quality ballast and liquidity source",
+        "BBB": "Spread pickup inside IG, reduced when downgrade pressure rises",
+        "BB": "Preferred HY risk bucket when compensation is adequate",
+        "B": "Selective carry bucket; sensitive to lending standards and defaults",
+        "CCC": "Deep credit beta; only funded when compensation is broad and fundamentals stable",
+        "Cash": "Dry powder and volatility buffer",
+        "Hedge": "Explicit spread protection against widening/default beta",
+    }
+    rows = []
+    for bucket in RATING_BUCKETS:
+        weight = weights.get(bucket, 0.0)
+        diff = weight - baseline[bucket]
+        if diff >= 5:
+            tilt = "Overweight"
+        elif diff <= -5:
+            tilt = "Underweight"
+        else:
+            tilt = "Neutral"
+        rows.append(
+            {
+                "bucket": bucket,
+                "target_weight": weight,
+                "tilt": tilt,
+                "rationale": rationales[bucket],
+            }
+        )
+
+    return weights, pd.DataFrame(rows)
+
+
+def _historical_forward_outcomes(
+    df: pd.DataFrame,
+    *,
+    recommendation: str,
+    hy_percentile: float | None,
+    compensation_ratio: float | None,
+    excess_spread_bps: float | None,
+) -> dict:
+    available_horizons = [
+        (label, hy_col, ig_col)
+        for label, hy_col, ig_col in FORWARD_HORIZONS
+        if hy_col in df.columns or ig_col in df.columns
+    ]
+    if not available_horizons:
+        return {"available": False, "reason": "Forward spread columns unavailable"}
+
+    hist = df.iloc[:-1].copy()
+    if hist.empty:
+        return {"available": False, "reason": "No prior observations available"}
+
+    decomp = decompose_spreads(hist)
+    for col in ["spread_compensation_ratio", "excess_spread_bps"]:
+        if col not in hist.columns and col in decomp.columns:
+            hist[col] = decomp[col]
+
+    filters = pd.Series(True, index=hist.index)
+    if hy_percentile is not None and "hy_spread_percentile" in hist.columns:
+        pct = pd.to_numeric(hist["hy_spread_percentile"], errors="coerce")
+        filters &= pct.sub(hy_percentile).abs() <= 20
+    if compensation_ratio is not None and "spread_compensation_ratio" in hist.columns:
+        ratio = pd.to_numeric(hist["spread_compensation_ratio"], errors="coerce")
+        filters &= ratio.sub(compensation_ratio).abs() <= 0.50
+    if excess_spread_bps is not None and "excess_spread_bps" in hist.columns:
+        excess = pd.to_numeric(hist["excess_spread_bps"], errors="coerce")
+        filters &= excess.sub(excess_spread_bps).abs() <= 125
+
+    similar = hist[filters].copy()
+    if len(similar) < 8:
+        filters = pd.Series(True, index=hist.index)
+        if hy_percentile is not None and "hy_spread_percentile" in hist.columns:
+            pct = pd.to_numeric(hist["hy_spread_percentile"], errors="coerce")
+            filters &= pct.sub(hy_percentile).abs() <= 35
+        if compensation_ratio is not None and "spread_compensation_ratio" in hist.columns:
+            ratio = pd.to_numeric(hist["spread_compensation_ratio"], errors="coerce")
+            filters &= ratio.sub(compensation_ratio).abs() <= 0.85
+        similar = hist[filters].copy()
+
+    if similar.empty:
+        return {"available": False, "reason": "No similar historical states found"}
+
+    rows = []
+    widening_flags = []
+    for label, hy_col, ig_col in available_horizons:
+        hy = _series_to_bps(similar[hy_col]).dropna() if hy_col in similar.columns else pd.Series(dtype=float)
+        ig = _series_to_bps(similar[ig_col]).dropna() if ig_col in similar.columns else pd.Series(dtype=float)
+        if hy.empty and ig.empty:
+            continue
+
+        hy_tightened = float((hy < 0).mean() * 100.0) if not hy.empty else None
+        hy_material_widen = float((hy > 50).mean() * 100.0) if not hy.empty else None
+        if hy_material_widen is not None:
+            widening_flags.append(hy_material_widen)
+
+        rows.append(
+            {
+                "horizon": label,
+                "sample_count": int(max(len(hy), len(ig))),
+                "hy_median_change_bps": None if hy.empty else round(float(hy.median()), 1),
+                "ig_median_change_bps": None if ig.empty else round(float(ig.median()), 1),
+                "hy_tightened_pct": None if hy_tightened is None else round(hy_tightened, 0),
+                "hy_material_widen_pct": None if hy_material_widen is None else round(hy_material_widen, 0),
+                "hy_worst_widening_bps": None if hy.empty else round(float(hy.max()), 1),
+            }
+        )
+
+    outcome_table = pd.DataFrame(rows)
+    if outcome_table.empty:
+        return {"available": False, "reason": "Similar states lack forward spread outcomes"}
+
+    first = outcome_table.iloc[0]
+    hy_1m = first.get("hy_median_change_bps")
+    widen_risk = max(widening_flags) if widening_flags else None
+    if hy_1m is not None and hy_1m < 0 and recommendation in {"Add", "Hold"}:
+        interpretation = "Similar states historically favored owning carry; HY spreads typically tightened."
+    elif hy_1m is not None and hy_1m > 0 and recommendation in {"Upgrade Quality", "Hedge", "De-risk"}:
+        interpretation = "Historical analogs support caution; similar states skewed toward HY spread widening."
+    elif widen_risk is not None and widen_risk >= 35:
+        interpretation = "Forward outcomes show meaningful widening risk; keep quality and hedges prominent."
+    else:
+        interpretation = "Historical analogs are mixed; use the scorecard triggers rather than adding beta mechanically."
+
+    return {
+        "available": True,
+        "sample_count": int(outcome_table["sample_count"].max()),
+        "table": outcome_table,
+        "interpretation": interpretation,
+    }
+
+
 def _recommendation(
     *,
     compensation_ratio: float | None,
@@ -417,6 +613,32 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         fundamental_status=fundamental_status,
         sloos_status=sloos_status,
     )
+    rating_weights, rating_table = _rating_bucket_allocation(
+        recommendation=rec,
+        hy_percentile=hy_percentile,
+        ig_percentile=ig_percentile,
+        bbb_ig_ratio=bbb_ig_ratio,
+        sloos_change_90d=sloos_change_90d,
+        chargeoff_change_90d=chargeoff_change_90d,
+        delinquency_change_90d=delinquency_change_90d,
+    )
+    forward_outcomes = _historical_forward_outcomes(
+        df,
+        recommendation=rec,
+        hy_percentile=hy_percentile,
+        compensation_ratio=compensation_ratio,
+        excess_spread_bps=excess_spread_bps,
+    )
+    largest_rating_overweights = [
+        f"{row.bucket} {row.target_weight:.1f}%"
+        for row in rating_table.itertuples()
+        if row.tilt == "Overweight"
+    ][:3]
+    if largest_rating_overweights:
+        trade_memo["Trade Expression"] = (
+            f"{trade_memo['Trade Expression']} Rating allocation: "
+            f"{', '.join(largest_rating_overweights)}."
+        )
 
     current = {
         "hy_oas_bps": hy_spread_bps,
@@ -440,6 +662,8 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "drivers": drivers,
         "allocation": allocation,
         "triggers": triggers,
+        "rating_weights": rating_weights,
+        "forward_outcomes": forward_outcomes,
     }
 
     rows = pd.DataFrame([
@@ -481,6 +705,11 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "memo_table": memo_rows,
         "trigger_table": trigger_rows,
         "triggers": triggers,
+        "rating_weights": rating_weights,
+        "rating_bucket_table": rating_table,
+        "forward_outcomes": forward_outcomes,
+        "forward_outcomes_table": forward_outcomes.get("table", pd.DataFrame()),
+        "forward_outcomes_summary": forward_outcomes.get("interpretation", forward_outcomes.get("reason", "")),
         "allocation": allocation,
         "recommendation": rec,
         "drivers": drivers,

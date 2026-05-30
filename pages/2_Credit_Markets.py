@@ -414,6 +414,15 @@ if _active_sub is not None:
             if _action_table is not None and not _action_table.empty:
                 st.markdown("**Portfolio Expression**")
                 st.dataframe(_action_table, use_container_width=True, hide_index=True)
+            _rating_table = _ccs.get("rating_bucket_table")
+            if _rating_table is not None and not _rating_table.empty:
+                st.markdown("**Rating-Bucket Allocation**")
+                st.dataframe(_rating_table, use_container_width=True, hide_index=True)
+            _forward_table = _ccs.get("forward_outcomes_table")
+            if _forward_table is not None and not _forward_table.empty:
+                st.markdown("**Historical Forward Outcomes**")
+                st.caption(_ccs.get("forward_outcomes_summary", ""))
+                st.dataframe(_forward_table, use_container_width=True, hide_index=True)
             _trigger_table = _ccs.get("trigger_table")
             if _trigger_table is not None and not _trigger_table.empty:
                 st.markdown("**What Changes Our Mind**")
