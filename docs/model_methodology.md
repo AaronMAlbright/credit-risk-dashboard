@@ -55,6 +55,8 @@ For high yield, a simple starting point is:
 
 The model should classify spreads as attractive only when compensation remains strong after expected losses, not simply because nominal spreads are wide.
 
+See `docs/credit_compensation_scorecard.md` for the PM-facing scorecard methodology, including rating-bucket allocation, bucket expected return, historical analog blending, marginal allocation advice, and spread shock sensitivity.
+
 ## Portfolio Interpretation
 
 Regime labels should map to implementable credit actions:
@@ -94,4 +96,3 @@ No regime conclusion should be shown without sample size and confidence context.
 A concise explanation:
 
 > I built a macro-credit regime framework that decomposes credit risk into macro cycle, liquidity, spread, fundamentals, market technicals, and cross-asset confirmation channels. The model maps each channel to a composite regime score, validates regimes against forward returns and spread moves, and translates the result into credit portfolio actions such as HY/IG tilt, cash level, quality bias, and duration stance.
-

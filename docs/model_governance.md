@@ -19,6 +19,7 @@ The institutional credit framework is a parallel explanatory layer. It improves 
 - Spread decomposition.
 - HY/IG/BBB relative value.
 - Rating bucket proxy view.
+- Credit compensation scorecard.
 - Refinancing wall framework.
 - Credit tear sheet.
 - Credit strategy memo.
@@ -40,6 +41,6 @@ Before replacing the legacy composite:
 - Expected loss uses simple regime-level PD assumptions.
 - Recovery rate is fixed at 40%.
 - Rating bucket and refinancing wall views are frameworks until proper data are supplied.
+- Credit compensation scorecard bucket assumptions are transparent but heuristic; see `docs/credit_compensation_scorecard.md`.
 - Macro data have publication lags and revisions.
 - This is a risk overlay and strategy framework, not a standalone alpha model.
-
