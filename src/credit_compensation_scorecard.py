@@ -18,6 +18,15 @@ from src.spread_decomposition import decompose_spreads, latest_spread_snapshot
 
 RECOMMENDATIONS = {"Add", "Hold", "Upgrade Quality", "Hedge", "De-risk"}
 RATING_BUCKETS = ["IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"]
+BUCKET_ANALYTICS = {
+    "IG": {"spread_factor": 1.00, "spread_beta": 0.25, "source": "ig", "loss_factor": 0.20, "duration": 6.5, "stress_widen_bps": 75.0},
+    "BBB": {"spread_factor": 1.25, "spread_beta": 0.40, "source": "ig", "loss_factor": 0.35, "duration": 6.0, "stress_widen_bps": 125.0},
+    "BB": {"spread_factor": 0.75, "spread_beta": 0.75, "source": "hy", "loss_factor": 0.65, "duration": 4.5, "stress_widen_bps": 250.0},
+    "B": {"spread_factor": 1.10, "spread_beta": 1.10, "source": "hy", "loss_factor": 1.15, "duration": 3.75, "stress_widen_bps": 400.0},
+    "CCC": {"spread_factor": 1.85, "spread_beta": 1.80, "source": "hy", "loss_factor": 2.25, "duration": 2.75, "stress_widen_bps": 700.0},
+    "Cash": {"spread_factor": 0.00, "spread_beta": 0.00, "source": "cash", "loss_factor": 0.00, "duration": 0.0, "stress_widen_bps": 0.0},
+    "Hedge": {"spread_factor": 0.00, "spread_beta": -1.00, "source": "hedge", "loss_factor": 0.00, "duration": 4.0, "stress_widen_bps": -300.0},
+}
 FORWARD_HORIZONS = [
     ("1M", "hy_spread_forward_21d_change", "ig_spread_forward_21d_change"),
     ("3M", "hy_spread_forward_63d_change", "ig_spread_forward_63d_change"),
@@ -372,6 +381,142 @@ def _rating_bucket_allocation(
     return weights, pd.DataFrame(rows)
 
 
+def _expected_spread_change_bps(
+    *,
+    hy_percentile: float | None,
+    sloos_change_90d: float | None,
+    chargeoff_change_90d: float | None,
+    delinquency_change_90d: float | None,
+) -> float:
+    change = 0.0
+    if hy_percentile is not None:
+        if hy_percentile >= 80:
+            change -= 45.0
+        elif hy_percentile >= 65:
+            change -= 25.0
+        elif hy_percentile <= 20:
+            change += 45.0
+        elif hy_percentile <= 35:
+            change += 20.0
+
+    if sloos_change_90d is not None:
+        if sloos_change_90d > 10:
+            change += 35.0
+        elif sloos_change_90d > 3:
+            change += 20.0
+        elif sloos_change_90d < -10:
+            change -= 20.0
+        elif sloos_change_90d < -3:
+            change -= 10.0
+
+    worsening_count = sum(
+        1 for value in [chargeoff_change_90d, delinquency_change_90d]
+        if value is not None and value > 0.05
+    )
+    change += 20.0 * worsening_count
+    return change
+
+
+def _bucket_spread_bps(
+    bucket: str,
+    *,
+    hy_spread_bps: float | None,
+    ig_spread_bps: float | None,
+    bbb_ig_ratio: float | None,
+) -> float | None:
+    assumptions = BUCKET_ANALYTICS[bucket]
+    source = assumptions["source"]
+    if source == "cash":
+        return 0.0
+    if source == "hedge":
+        return -75.0
+    if source == "ig":
+        if ig_spread_bps is None:
+            return None
+        factor = bbb_ig_ratio if bucket == "BBB" and bbb_ig_ratio is not None else assumptions["spread_factor"]
+        return ig_spread_bps * factor
+    if hy_spread_bps is None:
+        return None
+    return hy_spread_bps * assumptions["spread_factor"]
+
+
+def _bucket_return_and_stress(
+    *,
+    rating_weights: dict[str, float],
+    hy_spread_bps: float | None,
+    ig_spread_bps: float | None,
+    expected_loss_bps: float | None,
+    hy_percentile: float | None,
+    bbb_ig_ratio: float | None,
+    sloos_change_90d: float | None,
+    chargeoff_change_90d: float | None,
+    delinquency_change_90d: float | None,
+) -> tuple[pd.DataFrame, dict]:
+    expected_hy_change = _expected_spread_change_bps(
+        hy_percentile=hy_percentile,
+        sloos_change_90d=sloos_change_90d,
+        chargeoff_change_90d=chargeoff_change_90d,
+        delinquency_change_90d=delinquency_change_90d,
+    )
+    hy_loss = expected_loss_bps if expected_loss_bps is not None else 240.0
+    rows = []
+
+    for bucket in RATING_BUCKETS:
+        assumptions = BUCKET_ANALYTICS[bucket]
+        weight = rating_weights.get(bucket, 0.0)
+        spread = _bucket_spread_bps(
+            bucket,
+            hy_spread_bps=hy_spread_bps,
+            ig_spread_bps=ig_spread_bps,
+            bbb_ig_ratio=bbb_ig_ratio,
+        )
+        duration = assumptions["duration"]
+        loss_bps = hy_loss * assumptions["loss_factor"]
+        stress_loss_bps = (duration * assumptions["stress_widen_bps"]) + (loss_bps * 1.5)
+
+        if bucket == "Hedge":
+            expected_mtm_bps = duration * expected_hy_change
+            expected_return_bps = (spread or 0.0) + expected_mtm_bps
+            stress_loss_bps = stress_loss_bps
+        elif spread is None:
+            expected_mtm_bps = None
+            expected_return_bps = None
+        else:
+            bucket_change = expected_hy_change * assumptions["spread_beta"]
+            expected_mtm_bps = -duration * bucket_change
+            expected_return_bps = spread - loss_bps + expected_mtm_bps
+
+        weighted_expected = None if expected_return_bps is None else expected_return_bps * weight / 100.0
+        weighted_stress = stress_loss_bps * weight / 100.0
+        rows.append(
+            {
+                "bucket": bucket,
+                "target_weight": round(weight, 1),
+                "spread_carry_bps": None if spread is None else round(float(spread), 1),
+                "expected_default_drag_bps": round(float(loss_bps), 1),
+                "expected_spread_mtm_bps": None if expected_mtm_bps is None else round(float(expected_mtm_bps), 1),
+                "expected_excess_return_bps": None if expected_return_bps is None else round(float(expected_return_bps), 1),
+                "recession_stress_loss_bps": round(float(stress_loss_bps), 1),
+                "weighted_expected_return_bps": None if weighted_expected is None else round(float(weighted_expected), 1),
+                "weighted_stress_loss_bps": round(float(weighted_stress), 1),
+            }
+        )
+
+    table = pd.DataFrame(rows)
+    weighted_expected = pd.to_numeric(table["weighted_expected_return_bps"], errors="coerce").sum()
+    weighted_stress = pd.to_numeric(table["weighted_stress_loss_bps"], errors="coerce").sum()
+    summary = {
+        "expected_hy_spread_change_bps": round(expected_hy_change, 1),
+        "portfolio_expected_excess_return_bps": round(float(weighted_expected), 1),
+        "portfolio_recession_stress_loss_bps": round(float(weighted_stress), 1),
+        "interpretation": (
+            f"Bucket model estimates {weighted_expected:.0f} bps expected excess return "
+            f"against {weighted_stress:.0f} bps recession stress loss."
+        ),
+    }
+    return table, summary
+
+
 def _historical_forward_outcomes(
     df: pd.DataFrame,
     *,
@@ -629,6 +774,17 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         compensation_ratio=compensation_ratio,
         excess_spread_bps=excess_spread_bps,
     )
+    bucket_return_table, bucket_return_summary = _bucket_return_and_stress(
+        rating_weights=rating_weights,
+        hy_spread_bps=hy_spread_bps,
+        ig_spread_bps=ig_spread_bps,
+        expected_loss_bps=expected_loss_bps,
+        hy_percentile=hy_percentile,
+        bbb_ig_ratio=bbb_ig_ratio,
+        sloos_change_90d=sloos_change_90d,
+        chargeoff_change_90d=chargeoff_change_90d,
+        delinquency_change_90d=delinquency_change_90d,
+    )
     largest_rating_overweights = [
         f"{row.bucket} {row.target_weight:.1f}%"
         for row in rating_table.itertuples()
@@ -664,6 +820,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "triggers": triggers,
         "rating_weights": rating_weights,
         "forward_outcomes": forward_outcomes,
+        "bucket_return_summary": bucket_return_summary,
     }
 
     rows = pd.DataFrame([
@@ -707,6 +864,9 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "triggers": triggers,
         "rating_weights": rating_weights,
         "rating_bucket_table": rating_table,
+        "bucket_return_table": bucket_return_table,
+        "bucket_return_summary": bucket_return_summary,
+        "bucket_return_summary_text": bucket_return_summary["interpretation"],
         "forward_outcomes": forward_outcomes,
         "forward_outcomes_table": forward_outcomes.get("table", pd.DataFrame()),
         "forward_outcomes_summary": forward_outcomes.get("interpretation", forward_outcomes.get("reason", "")),

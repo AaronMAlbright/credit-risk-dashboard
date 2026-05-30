@@ -418,6 +418,11 @@ if _active_sub is not None:
             if _rating_table is not None and not _rating_table.empty:
                 st.markdown("**Rating-Bucket Allocation**")
                 st.dataframe(_rating_table, use_container_width=True, hide_index=True)
+            _bucket_return_table = _ccs.get("bucket_return_table")
+            if _bucket_return_table is not None and not _bucket_return_table.empty:
+                st.markdown("**Expected Return & Stress by Rating Bucket**")
+                st.caption(_ccs.get("bucket_return_summary_text", ""))
+                st.dataframe(_bucket_return_table, use_container_width=True, hide_index=True)
             _forward_table = _ccs.get("forward_outcomes_table")
             if _forward_table is not None and not _forward_table.empty:
                 st.markdown("**Historical Forward Outcomes**")

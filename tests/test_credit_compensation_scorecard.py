@@ -64,6 +64,16 @@ def test_scorecard_available_and_table_shaped():
     assert {"section", "view"}.issubset(result["memo_table"].columns)
     assert {"trigger", "condition", "portfolio action"}.issubset(result["trigger_table"].columns)
     assert {"bucket", "target_weight", "tilt", "rationale"}.issubset(result["rating_bucket_table"].columns)
+    assert {
+        "bucket",
+        "target_weight",
+        "spread_carry_bps",
+        "expected_default_drag_bps",
+        "expected_excess_return_bps",
+        "recession_stress_loss_bps",
+        "weighted_expected_return_bps",
+        "weighted_stress_loss_bps",
+    }.issubset(result["bucket_return_table"].columns)
     assert set(result["rating_weights"]) == {"IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"}
     assert round(sum(result["rating_weights"].values()), 1) == 100.0
 
@@ -184,3 +194,29 @@ def test_scorecard_adds_historical_forward_outcomes_when_forward_columns_exist()
     )
     assert result["forward_outcomes_table"]["hy_median_change_bps"].iloc[0] < 0
     assert "HY spreads typically tightened" in result["forward_outcomes_summary"]
+
+
+def test_scorecard_adds_bucket_expected_return_and_stress_loss():
+    result = build_credit_compensation_scorecard(_df())
+    table = result["bucket_return_table"].set_index("bucket")
+    summary = result["bucket_return_summary"]
+    assert table.loc["BB", "expected_excess_return_bps"] > table.loc["IG", "expected_excess_return_bps"]
+    assert table.loc["CCC", "recession_stress_loss_bps"] > table.loc["BB", "recession_stress_loss_bps"]
+    assert table.loc["Hedge", "recession_stress_loss_bps"] < 0
+    assert summary["portfolio_expected_excess_return_bps"] > 0
+    assert summary["portfolio_recession_stress_loss_bps"] > 0
+    assert "expected excess return" in result["bucket_return_summary_text"]
+
+
+def test_scorecard_bucket_returns_penalize_rich_tightening_credit():
+    result = build_credit_compensation_scorecard(_df(
+        hy_spread=[2.5, 2.4, 2.3, 2.2],
+        ig_spread_bps=[80, 78, 76, 75],
+        hy_spread_percentile=[10, 9, 8, 5],
+        sloos_change_90d=[4, 5, 6, 7],
+        chargeoff_change_90d=[0.0, 0.1, 0.1, 0.1],
+    ))
+    table = result["bucket_return_table"].set_index("bucket")
+    assert result["recommendation"] == "De-risk"
+    assert result["bucket_return_summary"]["expected_hy_spread_change_bps"] > 0
+    assert table.loc["B", "expected_excess_return_bps"] < table.loc["IG", "expected_excess_return_bps"]
