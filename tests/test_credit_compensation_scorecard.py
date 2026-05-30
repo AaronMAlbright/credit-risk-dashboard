@@ -215,6 +215,7 @@ def test_scorecard_adds_bucket_expected_return_and_stress_loss():
     assert table.loc["Hedge", "recession_stress_loss_bps"] < 0
     assert summary["portfolio_expected_excess_return_bps"] > 0
     assert summary["portfolio_recession_stress_loss_bps"] > 0
+    assert summary["expected_hy_spread_change_source"] == "Rules"
     assert "expected excess return" in result["bucket_return_summary_text"]
 
 
@@ -244,3 +245,15 @@ def test_scorecard_surfaces_risk_reward_and_assumptions():
     assert metrics["hedge_stress_offset_pct"] > 0
     assert assumptions.loc["CCC", "spread_beta"] > assumptions.loc["BB", "spread_beta"]
     assert assumptions.loc["Hedge", "recession_widening_bps"] < 0
+
+
+def test_scorecard_blends_historical_analogs_into_bucket_return_model():
+    result = build_credit_compensation_scorecard(_forward_df())
+    summary = result["bucket_return_summary"]
+    table = result["bucket_return_table"].set_index("bucket")
+    assert summary["expected_hy_spread_change_source"] == "Blended historical analogs + rules"
+    assert summary["rule_hy_spread_change_bps"] < 0
+    assert summary["historical_hy_spread_change_bps"] < 0
+    assert summary["expected_hy_spread_change_bps"] < 0
+    assert "blended historical analogs" in result["bucket_return_summary_text"]
+    assert table.loc["BB", "expected_spread_mtm_bps"] > 0

@@ -417,6 +417,54 @@ def _expected_spread_change_bps(
     return change
 
 
+def _blended_expected_spread_change(
+    *,
+    rule_change_bps: float,
+    forward_outcomes: dict | None,
+) -> dict:
+    if not forward_outcomes or not forward_outcomes.get("available"):
+        return {
+            "expected_hy_spread_change_bps": rule_change_bps,
+            "source": "Rules",
+            "rule_change_bps": rule_change_bps,
+            "historical_change_bps": None,
+        }
+
+    table = forward_outcomes.get("table")
+    if table is None or table.empty or forward_outcomes.get("sample_count", 0) < 8:
+        return {
+            "expected_hy_spread_change_bps": rule_change_bps,
+            "source": "Rules",
+            "rule_change_bps": rule_change_bps,
+            "historical_change_bps": None,
+        }
+
+    analog_rows = table[table["horizon"].isin(["3M", "1M"])] if "horizon" in table.columns else pd.DataFrame()
+    if analog_rows.empty:
+        analog_rows = table
+    if "3M" in set(analog_rows["horizon"]):
+        analog_row = analog_rows.loc[analog_rows["horizon"] == "3M"].iloc[0]
+    else:
+        analog_row = analog_rows.iloc[0]
+
+    historical_change = _safe_float(analog_row.get("hy_median_change_bps"))
+    if historical_change is None:
+        return {
+            "expected_hy_spread_change_bps": rule_change_bps,
+            "source": "Rules",
+            "rule_change_bps": rule_change_bps,
+            "historical_change_bps": None,
+        }
+
+    blended = (rule_change_bps * 0.50) + (historical_change * 0.50)
+    return {
+        "expected_hy_spread_change_bps": blended,
+        "source": "Blended historical analogs + rules",
+        "rule_change_bps": rule_change_bps,
+        "historical_change_bps": historical_change,
+    }
+
+
 def _bucket_spread_bps(
     bucket: str,
     *,
@@ -451,13 +499,19 @@ def _bucket_return_and_stress(
     sloos_change_90d: float | None,
     chargeoff_change_90d: float | None,
     delinquency_change_90d: float | None,
+    forward_outcomes: dict | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    expected_hy_change = _expected_spread_change_bps(
+    rule_hy_change = _expected_spread_change_bps(
         hy_percentile=hy_percentile,
         sloos_change_90d=sloos_change_90d,
         chargeoff_change_90d=chargeoff_change_90d,
         delinquency_change_90d=delinquency_change_90d,
     )
+    spread_move = _blended_expected_spread_change(
+        rule_change_bps=rule_hy_change,
+        forward_outcomes=forward_outcomes,
+    )
+    expected_hy_change = spread_move["expected_hy_spread_change_bps"]
     hy_loss = expected_loss_bps if expected_loss_bps is not None else 240.0
     rows = []
 
@@ -507,11 +561,17 @@ def _bucket_return_and_stress(
     weighted_stress = pd.to_numeric(table["weighted_stress_loss_bps"], errors="coerce").sum()
     summary = {
         "expected_hy_spread_change_bps": round(expected_hy_change, 1),
+        "expected_hy_spread_change_source": spread_move["source"],
+        "rule_hy_spread_change_bps": round(rule_hy_change, 1),
+        "historical_hy_spread_change_bps": (
+            None if spread_move["historical_change_bps"] is None else round(spread_move["historical_change_bps"], 1)
+        ),
         "portfolio_expected_excess_return_bps": round(float(weighted_expected), 1),
         "portfolio_recession_stress_loss_bps": round(float(weighted_stress), 1),
         "interpretation": (
             f"Bucket model estimates {weighted_expected:.0f} bps expected excess return "
-            f"against {weighted_stress:.0f} bps recession stress loss."
+            f"against {weighted_stress:.0f} bps recession stress loss "
+            f"using {spread_move['source'].lower()} for expected spread move."
         ),
     }
     return table, summary
@@ -872,6 +932,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         sloos_change_90d=sloos_change_90d,
         chargeoff_change_90d=chargeoff_change_90d,
         delinquency_change_90d=delinquency_change_90d,
+        forward_outcomes=forward_outcomes,
     )
     risk_reward_table, risk_reward_summary = _risk_reward_metrics(
         bucket_return_table=bucket_return_table,
