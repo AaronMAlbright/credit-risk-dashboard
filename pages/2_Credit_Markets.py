@@ -183,6 +183,7 @@ from src.credit_channel_validation import channel_validation_table, latest_chann
 from src.credit_positioning import positioning_table, current_positioning
 from src.spread_decomposition import latest_spread_snapshot
 from src.credit_compensation_scorecard import build_credit_compensation_scorecard
+from src.credit_compensation_validation import validate_scorecard_recommendations
 from src.credit_relative_value import latest_relative_value_snapshot, relative_value_table
 from src.channel_attribution import channel_contribution_table, top_channel_drivers
 from src.credit_presentation import (
@@ -454,6 +455,11 @@ if _active_sub is not None:
             if _trigger_table is not None and not _trigger_table.empty:
                 st.markdown("**What Changes Our Mind**")
                 st.dataframe(_trigger_table, use_container_width=True, hide_index=True)
+            _validation = validate_scorecard_recommendations(df)
+            if _validation.get("available"):
+                with st.expander("Scorecard validation / backtest", expanded=False):
+                    st.caption(_validation.get("summary", ""))
+                    st.dataframe(_validation["table"], use_container_width=True, hide_index=True)
             with st.expander("Scorecard detail", expanded=False):
                 st.dataframe(_ccs["table"], use_container_width=True, hide_index=True)
     except Exception as _ccs_e:
