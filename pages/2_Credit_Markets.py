@@ -307,6 +307,7 @@ except Exception:
 if _active_sub is not None:
     try:
         _lhy = float(df["hy_spread"].dropna().iloc[-1])
+        _lhy_bps = _lhy * 100.0 if abs(_lhy) < 50 else _lhy
         _lhy_pct = float((df["hy_spread"].dropna() < _lhy).mean() * 100)
         _lvix = float(df["vix"].dropna().iloc[-1])
         _lvix_pct = float((df["vix"].dropna() < _lvix).mean() * 100)
@@ -325,7 +326,7 @@ if _active_sub is not None:
         # ── Main content signal bar ───────────────────────────────────────────
         _bar_parts = [
             (f'<span style="color:#6b7280;font-size:0.71rem;letter-spacing:.4px">HY&nbsp;</span>'
-             f'<span style="color:{_pct_clr(_lhy_pct)};font-weight:700">{_lhy:.0f}'
+             f'<span style="color:{_pct_clr(_lhy_pct)};font-weight:700">{_lhy_bps:.0f}'
              f'<span style="font-size:0.64rem;font-weight:400"> bps</span></span>'),
         ]
         if _lsv is not None:
@@ -351,7 +352,7 @@ if _active_sub is not None:
         # ── Sidebar live signal badges ────────────────────────────────────────
         st.sidebar.markdown("---")
         _sb_rows = (
-            f'{_sig_badge(_lhy_pct)}&nbsp;<b>HY</b> {_lhy:.0f} bps'
+            f'{_sig_badge(_lhy_pct)}&nbsp;<b>HY</b> {_lhy_bps:.0f} bps'
             f'&ensp;<span style="color:{_pct_clr(_lhy_pct)};font-size:0.69rem">{_lhy_pct:.0f}th pct</span><br>'
         )
         if _lsv is not None:
@@ -406,6 +407,10 @@ if _active_sub is not None:
                 unsafe_allow_html=True,
             )
             st.caption(_ccs.get("summary", ""))
+            _pm_verdict = _ccs.get("pm_final_verdict")
+            if _pm_verdict:
+                st.markdown("**PM Final Verdict**")
+                st.caption(_pm_verdict)
             _memo_table = _ccs.get("memo_table")
             if _memo_table is not None and not _memo_table.empty:
                 st.markdown("**PM Trade Memo**")
@@ -418,15 +423,6 @@ if _active_sub is not None:
             if _rating_table is not None and not _rating_table.empty:
                 st.markdown("**Rating-Bucket Allocation**")
                 st.dataframe(_rating_table, use_container_width=True, hide_index=True)
-            _bucket_return_table = _ccs.get("bucket_return_table")
-            if _bucket_return_table is not None and not _bucket_return_table.empty:
-                st.markdown("**Expected Return & Stress by Rating Bucket**")
-                st.caption(_ccs.get("bucket_return_summary_text", ""))
-                st.dataframe(_bucket_return_table, use_container_width=True, hide_index=True)
-            _pm_verdict = _ccs.get("pm_final_verdict")
-            if _pm_verdict:
-                st.markdown("**PM Final Verdict**")
-                st.caption(_pm_verdict)
             _risk_reward_table = _ccs.get("risk_reward_table")
             if _risk_reward_table is not None and not _risk_reward_table.empty:
                 st.markdown("**Allocation Risk / Reward**")
@@ -435,20 +431,25 @@ if _active_sub is not None:
             if _marginal_table is not None and not _marginal_table.empty:
                 st.markdown("**Marginal Allocation Advice**")
                 st.dataframe(_marginal_table, use_container_width=True, hide_index=True)
+            _bucket_return_table = _ccs.get("bucket_return_table")
+            if _bucket_return_table is not None and not _bucket_return_table.empty:
+                with st.expander("Expected return & stress by rating bucket", expanded=False):
+                    st.caption(_ccs.get("bucket_return_summary_text", ""))
+                    st.dataframe(_bucket_return_table, use_container_width=True, hide_index=True)
             _shock_table = _ccs.get("spread_shock_table")
             if _shock_table is not None and not _shock_table.empty:
-                st.markdown("**Spread Shock Sensitivity**")
-                st.caption(_ccs.get("spread_shock_summary_text", ""))
-                st.dataframe(_shock_table, use_container_width=True, hide_index=True)
+                with st.expander("Spread shock sensitivity", expanded=False):
+                    st.caption(_ccs.get("spread_shock_summary_text", ""))
+                    st.dataframe(_shock_table, use_container_width=True, hide_index=True)
             _assumptions_table = _ccs.get("bucket_assumptions_table")
             if _assumptions_table is not None and not _assumptions_table.empty:
                 with st.expander("Bucket model assumptions", expanded=False):
                     st.dataframe(_assumptions_table, use_container_width=True, hide_index=True)
             _forward_table = _ccs.get("forward_outcomes_table")
             if _forward_table is not None and not _forward_table.empty:
-                st.markdown("**Historical Forward Outcomes**")
-                st.caption(_ccs.get("forward_outcomes_summary", ""))
-                st.dataframe(_forward_table, use_container_width=True, hide_index=True)
+                with st.expander("Historical forward outcomes", expanded=False):
+                    st.caption(_ccs.get("forward_outcomes_summary", ""))
+                    st.dataframe(_forward_table, use_container_width=True, hide_index=True)
             _trigger_table = _ccs.get("trigger_table")
             if _trigger_table is not None and not _trigger_table.empty:
                 st.markdown("**What Changes Our Mind**")
