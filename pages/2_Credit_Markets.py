@@ -442,6 +442,10 @@ if _active_sub is not None:
                 with st.expander("Spread shock sensitivity", expanded=False):
                     st.caption(_ccs.get("spread_shock_summary_text", ""))
                     st.dataframe(_shock_table, use_container_width=True, hide_index=True)
+            _confidence_table = _ccs.get("confidence_table")
+            if _confidence_table is not None and not _confidence_table.empty:
+                with st.expander("Scorecard confidence flags", expanded=False):
+                    st.dataframe(_confidence_table, use_container_width=True, hide_index=True)
             _assumptions_table = _ccs.get("bucket_assumptions_table")
             if _assumptions_table is not None and not _assumptions_table.empty:
                 with st.expander("Bucket model assumptions", expanded=False):

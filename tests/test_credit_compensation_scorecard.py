@@ -103,6 +103,7 @@ def test_scorecard_available_and_table_shaped():
         "spread_duration",
         "recession_widening_bps",
     }.issubset(result["bucket_assumptions_table"].columns)
+    assert {"output", "confidence", "basis"}.issubset(result["confidence_table"].columns)
     assert set(result["rating_weights"]) == {"IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"}
     assert round(sum(result["rating_weights"].values()), 1) == 100.0
     assert result["pm_final_verdict"]
@@ -277,6 +278,17 @@ def test_scorecard_blends_historical_analogs_into_bucket_return_model():
     assert summary["expected_hy_spread_change_bps"] < 0
     assert "blended historical analogs" in result["bucket_return_summary_text"]
     assert table.loc["BB", "expected_spread_mtm_bps"] > 0
+    conf = result["confidence_table"].set_index("output")
+    assert conf.loc["Historical analogs", "confidence"] == "Thin sample"
+    assert conf.loc["Expected return model", "confidence"] == "Thin sample"
+
+
+def test_scorecard_confidence_flags_rules_only_without_analogs():
+    result = build_credit_compensation_scorecard(_df())
+    conf = result["confidence_table"].set_index("output")
+    assert conf.loc["Historical analogs", "confidence"] == "Rules-only"
+    assert conf.loc["Expected return model", "confidence"] == "Rules-only"
+    assert result["confidence_summary"]["overall_confidence"] == "Rules-only"
 
 
 def test_scorecard_adds_marginal_allocation_advice():

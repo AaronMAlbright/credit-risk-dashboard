@@ -843,6 +843,68 @@ def _pm_final_verdict(
     )
 
 
+def _confidence_from_sample(sample_count: int | None) -> str:
+    if sample_count is None:
+        return "Rules-only"
+    if sample_count >= 50:
+        return "Robust"
+    if sample_count >= 20:
+        return "Indicative"
+    if sample_count >= 8:
+        return "Thin sample"
+    return "Rules-only"
+
+
+def _scorecard_confidence_flags(
+    *,
+    forward_outcomes: dict,
+    bucket_return_summary: dict,
+) -> tuple[pd.DataFrame, dict]:
+    analog_sample = forward_outcomes.get("sample_count") if forward_outcomes.get("available") else None
+    analog_conf = _confidence_from_sample(analog_sample)
+    expected_source = bucket_return_summary.get("expected_hy_spread_change_source", "Rules")
+    expected_conf = analog_conf if "Blended" in expected_source else "Rules-only"
+
+    rows = pd.DataFrame([
+        {
+            "output": "Recommendation",
+            "confidence": "Rules-only",
+            "basis": "Transparent scorecard thresholds; validate with recommendation backtest",
+        },
+        {
+            "output": "Historical analogs",
+            "confidence": analog_conf,
+            "basis": (
+                f"{analog_sample} similar observations"
+                if analog_sample is not None else forward_outcomes.get("reason", "No analog sample")
+            ),
+        },
+        {
+            "output": "Expected return model",
+            "confidence": expected_conf,
+            "basis": f"Expected spread move source: {expected_source}",
+        },
+        {
+            "output": "Marginal allocation advice",
+            "confidence": "Rules-only",
+            "basis": "Stress-adjusted ranking from bucket assumptions",
+        },
+        {
+            "output": "Spread shock sensitivity",
+            "confidence": "Rules-only",
+            "basis": "Deterministic duration x spread beta scenario",
+        },
+    ])
+    summary = {
+        "overall_confidence": (
+            "Rules-only" if "Rules-only" in set(rows["confidence"]) else rows["confidence"].iloc[0]
+        ),
+        "analog_confidence": analog_conf,
+        "expected_return_confidence": expected_conf,
+    }
+    return rows, summary
+
+
 def _historical_forward_outcomes(
     df: pd.DataFrame,
     *,
@@ -1129,6 +1191,10 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         shock_summary=spread_shock_summary,
         triggers=triggers,
     )
+    confidence_table, confidence_summary = _scorecard_confidence_flags(
+        forward_outcomes=forward_outcomes,
+        bucket_return_summary=bucket_return_summary,
+    )
     assumptions_table = _bucket_assumptions_table()
     largest_rating_overweights = [
         f"{row.bucket} {row.target_weight:.1f}%"
@@ -1170,6 +1236,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "marginal_allocation_table": marginal_allocation_table,
         "spread_shock_summary": spread_shock_summary,
         "pm_final_verdict": pm_final_verdict,
+        "confidence_summary": confidence_summary,
     }
 
     rows = pd.DataFrame([
@@ -1223,6 +1290,8 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "spread_shock_summary": spread_shock_summary,
         "spread_shock_summary_text": spread_shock_summary["interpretation"],
         "pm_final_verdict": pm_final_verdict,
+        "confidence_table": confidence_table,
+        "confidence_summary": confidence_summary,
         "bucket_assumptions_table": assumptions_table,
         "forward_outcomes": forward_outcomes,
         "forward_outcomes_table": forward_outcomes.get("table", pd.DataFrame()),
