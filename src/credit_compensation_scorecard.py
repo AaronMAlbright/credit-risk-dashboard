@@ -818,6 +818,91 @@ def _spread_shock_sensitivity(rating_weights: dict[str, float]) -> tuple[pd.Data
     return pd.DataFrame(rows), summary
 
 
+def _scenario_preset_stress(
+    *,
+    rating_weights: dict[str, float],
+    expected_loss_bps: float | None,
+) -> tuple[pd.DataFrame, dict]:
+    hy_loss = expected_loss_bps if expected_loss_bps is not None else 240.0
+    scenarios = [
+        {
+            "scenario": "Soft landing",
+            "hy_shock_bps": -50.0,
+            "default_loss_multiplier": 0.75,
+            "primary_driver": "Carry plus modest spread tightening",
+            "portfolio_action": "Add BB/B selectively if compensation remains positive",
+        },
+        {
+            "scenario": "Recession widening",
+            "hy_shock_bps": 250.0,
+            "default_loss_multiplier": 1.50,
+            "primary_driver": "Broad spread beta and rising expected losses",
+            "portfolio_action": "Upgrade quality, raise cash, keep HY hedge",
+        },
+        {
+            "scenario": "Liquidity shock",
+            "hy_shock_bps": 350.0,
+            "default_loss_multiplier": 1.10,
+            "primary_driver": "Liquidity premium and ETF/index pressure",
+            "portfolio_action": "Use hedges first; avoid forced selling of cash bonds",
+        },
+        {
+            "scenario": "Fallen-angel wave",
+            "hy_shock_bps": 175.0,
+            "default_loss_multiplier": 1.25,
+            "primary_driver": "BBB downgrade pressure and BB supply",
+            "portfolio_action": "Cut BBB/BB downgrade beta and keep dry powder",
+        },
+        {
+            "scenario": "Default-cycle shock",
+            "hy_shock_bps": 450.0,
+            "default_loss_multiplier": 2.00,
+            "primary_driver": "Default drag plus lower-quality spread beta",
+            "portfolio_action": "De-risk B/CCC, maximize hedge and cash buffers",
+        },
+    ]
+    rows = []
+    for scenario in scenarios:
+        gross_loss = 0.0
+        hedge_offset = 0.0
+        default_drag = 0.0
+        for bucket in RATING_BUCKETS:
+            assumptions = BUCKET_ANALYTICS[bucket]
+            weight = rating_weights.get(bucket, 0.0) / 100.0
+            spread_loss = assumptions["duration"] * assumptions["spread_beta"] * scenario["hy_shock_bps"]
+            bucket_default_drag = hy_loss * assumptions["loss_factor"] * (scenario["default_loss_multiplier"] - 1.0)
+            weighted = (spread_loss + bucket_default_drag) * weight
+            gross_loss += weighted
+            default_drag += bucket_default_drag * weight
+            if bucket == "Hedge":
+                hedge_offset += -weighted
+
+        rows.append(
+            {
+                "scenario": scenario["scenario"],
+                "hy_shock_bps": scenario["hy_shock_bps"],
+                "default_loss_multiplier": scenario["default_loss_multiplier"],
+                "modeled_portfolio_loss_bps": round(float(gross_loss), 1),
+                "hedge_offset_bps": round(float(hedge_offset), 1),
+                "incremental_default_drag_bps": round(float(default_drag), 1),
+                "primary_driver": scenario["primary_driver"],
+                "portfolio_action": scenario["portfolio_action"],
+            }
+        )
+
+    table = pd.DataFrame(rows)
+    worst = table.sort_values("modeled_portfolio_loss_bps", ascending=False).iloc[0]
+    summary = {
+        "worst_scenario": worst["scenario"],
+        "worst_scenario_loss_bps": float(worst["modeled_portfolio_loss_bps"]),
+        "interpretation": (
+            f"Worst preset is {worst['scenario']} at roughly "
+            f"{worst['modeled_portfolio_loss_bps']:.0f} bps modeled portfolio loss."
+        ),
+    }
+    return table, summary
+
+
 def _pm_final_verdict(
     *,
     recommendation: str,
@@ -1184,6 +1269,10 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         risk_reward_summary=risk_reward_summary,
     )
     spread_shock_table, spread_shock_summary = _spread_shock_sensitivity(rating_weights)
+    scenario_preset_table, scenario_preset_summary = _scenario_preset_stress(
+        rating_weights=rating_weights,
+        expected_loss_bps=expected_loss_bps,
+    )
     pm_final_verdict = _pm_final_verdict(
         recommendation=rec,
         marginal_allocation_table=marginal_allocation_table,
@@ -1235,6 +1324,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "risk_reward_summary": risk_reward_summary,
         "marginal_allocation_table": marginal_allocation_table,
         "spread_shock_summary": spread_shock_summary,
+        "scenario_preset_summary": scenario_preset_summary,
         "pm_final_verdict": pm_final_verdict,
         "confidence_summary": confidence_summary,
     }
@@ -1289,6 +1379,9 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "spread_shock_table": spread_shock_table,
         "spread_shock_summary": spread_shock_summary,
         "spread_shock_summary_text": spread_shock_summary["interpretation"],
+        "scenario_preset_table": scenario_preset_table,
+        "scenario_preset_summary": scenario_preset_summary,
+        "scenario_preset_summary_text": scenario_preset_summary["interpretation"],
         "pm_final_verdict": pm_final_verdict,
         "confidence_table": confidence_table,
         "confidence_summary": confidence_summary,

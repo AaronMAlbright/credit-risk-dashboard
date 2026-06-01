@@ -95,6 +95,16 @@ def test_scorecard_available_and_table_shaped():
         "weighted_+100bps_bps",
     }.issubset(result["spread_shock_table"].columns)
     assert {
+        "scenario",
+        "hy_shock_bps",
+        "default_loss_multiplier",
+        "modeled_portfolio_loss_bps",
+        "hedge_offset_bps",
+        "incremental_default_drag_bps",
+        "primary_driver",
+        "portfolio_action",
+    }.issubset(result["scenario_preset_table"].columns)
+    assert {
         "bucket",
         "spread_source",
         "spread_carry_factor",
@@ -337,3 +347,14 @@ def test_scorecard_adds_pm_final_verdict():
     assert "expected excess return" in verdict
     assert "+100 bps spread shock" in verdict
     assert "key risk trigger" in verdict
+
+
+def test_scorecard_adds_scenario_preset_stress():
+    result = build_credit_compensation_scorecard(_df())
+    table = result["scenario_preset_table"].set_index("scenario")
+    summary = result["scenario_preset_summary"]
+    assert {"Soft landing", "Recession widening", "Liquidity shock", "Fallen-angel wave", "Default-cycle shock"}.issubset(table.index)
+    assert table.loc["Soft landing", "modeled_portfolio_loss_bps"] < table.loc["Recession widening", "modeled_portfolio_loss_bps"]
+    assert table.loc["Default-cycle shock", "incremental_default_drag_bps"] > table.loc["Liquidity shock", "incremental_default_drag_bps"]
+    assert summary["worst_scenario"] in set(table.index)
+    assert "Worst preset" in result["scenario_preset_summary_text"]
