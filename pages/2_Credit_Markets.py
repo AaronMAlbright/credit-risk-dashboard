@@ -472,6 +472,15 @@ if _active_sub is not None:
             if _confidence_table is not None and not _confidence_table.empty:
                 with st.expander("Scorecard confidence flags", expanded=False):
                     st.dataframe(_confidence_table, use_container_width=True, hide_index=True)
+            _audit_table = _ccs.get("audit_table")
+            if _audit_table is not None and not _audit_table.empty:
+                with st.expander("Scorecard audit trail", expanded=False):
+                    st.caption(_ccs.get("audit_summary_text", ""))
+                    _audit_inputs, _audit_rules = st.tabs(["Inputs", "Rules"])
+                    with _audit_inputs:
+                        st.dataframe(_ccs.get("audit_input_table"), use_container_width=True, hide_index=True)
+                    with _audit_rules:
+                        st.dataframe(_audit_table, use_container_width=True, hide_index=True)
             _assumptions_table = _ccs.get("bucket_assumptions_table")
             if _assumptions_table is not None and not _assumptions_table.empty:
                 with st.expander("Bucket model assumptions", expanded=False):

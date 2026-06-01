@@ -1333,6 +1333,98 @@ def _recommendation(
     return "Hold", drivers
 
 
+def _scorecard_audit_trail(
+    *,
+    as_of,
+    recommendation: str,
+    drivers: list[str],
+    compensation_ratio: float | None,
+    excess_spread_bps: float | None,
+    hy_percentile: float | None,
+    composite_score: float | None,
+    sloos_change_90d: float | None,
+    chargeoff_change_90d: float | None,
+    delinquency_change_90d: float | None,
+    expected_loss_bps: float | None,
+    final_decision: str,
+) -> tuple[pd.DataFrame, dict]:
+    technical_tightening = sloos_change_90d is not None and sloos_change_90d > 3
+    fundamental_worsening = any(
+        value is not None and value > 0.05
+        for value in [chargeoff_change_90d, delinquency_change_90d]
+    )
+    very_rich = (hy_percentile is not None and hy_percentile < 20) or (
+        excess_spread_bps is not None and excess_spread_bps < 75
+    )
+    cheap = (hy_percentile is not None and hy_percentile > 65) or (
+        excess_spread_bps is not None and excess_spread_bps >= 175
+    )
+    defensive_score = composite_score is not None and composite_score >= 70
+    underpaid_with_stress = (
+        compensation_ratio is not None
+        and compensation_ratio < 1.1
+        and (technical_tightening or fundamental_worsening)
+    )
+    add_quality_gate = cheap and compensation_ratio is not None and compensation_ratio >= 1.5 and not technical_tightening and not fundamental_worsening
+    add_score_gate = composite_score is None or composite_score < 50
+
+    checks = [
+        ("Composite risk veto", composite_score, ">= 70", defensive_score, "Forces De-risk when broad risk score is defensive"),
+        ("Very rich spread", hy_percentile, "HY percentile < 20 or excess spread < 75 bps", very_rich, "Flags tight compensation"),
+        ("Cheap spread", hy_percentile, "HY percentile > 65 or excess spread >= 175 bps", cheap, "Enables Add if risk gates are clean"),
+        ("SLOOS tightening", sloos_change_90d, "> 3 pct-pts over 90d", technical_tightening, "Blocks Add and can force Hedge/De-risk"),
+        ("Fundamental worsening", max([v for v in [chargeoff_change_90d, delinquency_change_90d] if v is not None], default=None), "> 0.05 change", fundamental_worsening, "Blocks Add and can force Hedge/De-risk"),
+        ("Underpaid stress", compensation_ratio, "< 1.10x with stress signal", underpaid_with_stress, "Forces Hedge when compensation is thin"),
+        ("Add compensation gate", compensation_ratio, ">= 1.50x and no stress signal", add_quality_gate, "Required before adding credit beta"),
+        ("Add score gate", composite_score, "< 50 or unavailable", add_score_gate, "Prevents Add when broad score is defensive"),
+    ]
+    rows = []
+    for rule, observed, threshold, fired, note in checks:
+        rows.append(
+            {
+                "as_of": as_of,
+                "rule": rule,
+                "observed": None if observed is None else round(float(observed), 2),
+                "threshold": threshold,
+                "fired": bool(fired),
+                "decision_impact": note,
+            }
+        )
+
+    input_rows = [
+        ("Expected loss", expected_loss_bps, "bps"),
+        ("Excess spread", excess_spread_bps, "bps"),
+        ("Compensation ratio", compensation_ratio, "x"),
+        ("HY percentile", hy_percentile, "percentile"),
+        ("Composite risk score", composite_score, "score"),
+        ("SLOOS 90d change", sloos_change_90d, "pct-pts"),
+        ("Charge-off 90d change", chargeoff_change_90d, "pct-pts"),
+        ("Delinquency 90d change", delinquency_change_90d, "pct-pts"),
+    ]
+    input_table = pd.DataFrame(
+        [
+            {
+                "input": name,
+                "value": None if value is None else round(float(value), 2),
+                "unit": unit,
+            }
+            for name, value, unit in input_rows
+        ]
+    )
+    summary = {
+        "as_of": as_of,
+        "recommendation": recommendation,
+        "drivers": "; ".join(drivers) if drivers else "No dominant risk imbalance",
+        "fired_rule_count": int(sum(row["fired"] for row in rows)),
+        "final_decision": final_decision,
+        "interpretation": (
+            f"Audit trail as of {as_of}: recommendation {recommendation}; "
+            f"{int(sum(row['fired'] for row in rows))} rule check(s) fired."
+        ),
+    }
+    return pd.DataFrame(rows), {"summary": summary, "input_table": input_table}
+
+
 def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
     """Return the current credit compensation scorecard."""
     if df.empty:
@@ -1491,6 +1583,23 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         forward_outcomes=forward_outcomes,
         bucket_return_summary=bucket_return_summary,
     )
+    as_of = df.index[-1] if len(df.index) else None
+    audit_table, audit_artifacts = _scorecard_audit_trail(
+        as_of=as_of,
+        recommendation=rec,
+        drivers=drivers,
+        compensation_ratio=compensation_ratio,
+        excess_spread_bps=excess_spread_bps,
+        hy_percentile=hy_percentile,
+        composite_score=composite_score,
+        sloos_change_90d=sloos_change_90d,
+        chargeoff_change_90d=chargeoff_change_90d,
+        delinquency_change_90d=delinquency_change_90d,
+        expected_loss_bps=expected_loss_bps,
+        final_decision=str(final_decision),
+    )
+    audit_input_table = audit_artifacts["input_table"]
+    audit_summary = audit_artifacts["summary"]
     assumptions_table = _bucket_assumptions_table()
     largest_rating_overweights = [
         f"{row.bucket} {row.target_weight:.1f}%"
@@ -1537,6 +1646,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "constraint_summary": constraint_summary,
         "pm_final_verdict": pm_final_verdict,
         "confidence_summary": confidence_summary,
+        "audit_summary": audit_summary,
     }
 
     rows = pd.DataFrame([
@@ -1606,6 +1716,10 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "pm_final_verdict": pm_final_verdict,
         "confidence_table": confidence_table,
         "confidence_summary": confidence_summary,
+        "audit_table": audit_table,
+        "audit_input_table": audit_input_table,
+        "audit_summary": audit_summary,
+        "audit_summary_text": audit_summary["interpretation"],
         "bucket_assumptions_table": assumptions_table,
         "forward_outcomes": forward_outcomes,
         "forward_outcomes_table": forward_outcomes.get("table", pd.DataFrame()),

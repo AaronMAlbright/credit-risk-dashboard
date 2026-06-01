@@ -131,6 +131,10 @@ def test_scorecard_available_and_table_shaped():
         "recession_widening_bps",
     }.issubset(result["bucket_assumptions_table"].columns)
     assert {"output", "confidence", "basis"}.issubset(result["confidence_table"].columns)
+    assert {"as_of", "rule", "observed", "threshold", "fired", "decision_impact"}.issubset(
+        result["audit_table"].columns
+    )
+    assert {"input", "value", "unit"}.issubset(result["audit_input_table"].columns)
     assert set(result["rating_weights"]) == {"IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"}
     assert round(sum(result["rating_weights"].values()), 1) == 100.0
     assert result["pm_final_verdict"]
@@ -383,6 +387,19 @@ def test_scorecard_adds_cdx_hedge_sizing():
     assert summary["post_trade_net_spread_beta"] <= result["net_spread_beta_summary"]["net_spread_beta"]
     assert table.loc["Incremental CDX HY protection", "unit"] == "% NAV"
     assert "CDX HY protection" in result["cdx_hedge_summary_text"]
+
+
+def test_scorecard_adds_audit_trail():
+    result = build_credit_compensation_scorecard(_df())
+    audit = result["audit_table"].set_index("rule")
+    inputs = result["audit_input_table"].set_index("input")
+
+    assert result["audit_summary"]["recommendation"] == result["recommendation"]
+    assert result["audit_summary"]["fired_rule_count"] == int(audit["fired"].sum())
+    assert bool(audit.loc["Cheap spread", "fired"]) is True
+    assert bool(audit.loc["Add compensation gate", "fired"]) is True
+    assert inputs.loc["Compensation ratio", "value"] == round(result["current"]["spread_compensation_ratio"], 2)
+    assert "Audit trail" in result["audit_summary_text"]
 
 
 def test_scorecard_adds_pm_final_verdict():
