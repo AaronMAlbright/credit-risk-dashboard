@@ -876,6 +876,64 @@ def _net_spread_beta(rating_weights: dict[str, float]) -> tuple[pd.DataFrame, di
     return pd.DataFrame(rows), summary
 
 
+def _cdx_hedge_sizing(
+    *,
+    rating_weights: dict[str, float],
+    recommendation: str,
+    net_spread_beta_summary: dict,
+) -> tuple[pd.DataFrame, dict]:
+    target_by_recommendation = {
+        "Add": 0.75,
+        "Hold": 0.45,
+        "Upgrade Quality": 0.30,
+        "Hedge": 0.20,
+        "De-risk": 0.05,
+    }
+    cdx_duration = 4.0
+    cdx_running_spread_bps = 75.0
+    current_net_beta = float(net_spread_beta_summary.get("net_spread_beta", 0.0))
+    gross_long_beta = float(net_spread_beta_summary.get("gross_long_spread_beta", 0.0))
+    current_hedge_pct = rating_weights.get("Hedge", 0.0)
+    target_net_beta = target_by_recommendation.get(recommendation, target_by_recommendation["Hold"])
+    incremental_protection_pct = max(0.0, (current_net_beta - target_net_beta) * 100.0)
+    post_trade_net_beta = current_net_beta - incremental_protection_pct / 100.0
+    loss_reduction_bps = incremental_protection_pct / 100.0 * cdx_duration * 100.0
+    carry_cost_bps = incremental_protection_pct / 100.0 * cdx_running_spread_bps
+    target_hedge_pct = current_hedge_pct + incremental_protection_pct
+    action = (
+        "Add CDX HY protection"
+        if incremental_protection_pct >= 1.0
+        else "No additional CDX hedge required"
+    )
+
+    rows = [
+        {"metric": "Current hedge bucket", "value": round(float(current_hedge_pct), 1), "unit": "% NAV"},
+        {"metric": "Gross long spread beta", "value": round(float(gross_long_beta), 3), "unit": "x HY"},
+        {"metric": "Current net spread beta", "value": round(float(current_net_beta), 3), "unit": "x HY"},
+        {"metric": "Target net spread beta", "value": round(float(target_net_beta), 3), "unit": "x HY"},
+        {"metric": "Incremental CDX HY protection", "value": round(float(incremental_protection_pct), 1), "unit": "% NAV"},
+        {"metric": "Target hedge bucket", "value": round(float(target_hedge_pct), 1), "unit": "% NAV"},
+        {"metric": "Post-trade net spread beta", "value": round(float(post_trade_net_beta), 3), "unit": "x HY"},
+        {"metric": "+100 bps loss reduction", "value": round(float(loss_reduction_bps), 1), "unit": "bps NAV"},
+        {"metric": "Estimated annual carry cost", "value": round(float(carry_cost_bps), 1), "unit": "bps NAV"},
+    ]
+    summary = {
+        "action": action,
+        "current_hedge_pct": round(float(current_hedge_pct), 1),
+        "target_hedge_pct": round(float(target_hedge_pct), 1),
+        "incremental_cdx_hy_protection_pct": round(float(incremental_protection_pct), 1),
+        "target_net_spread_beta": round(float(target_net_beta), 3),
+        "post_trade_net_spread_beta": round(float(post_trade_net_beta), 3),
+        "estimated_annual_carry_cost_bps": round(float(carry_cost_bps), 1),
+        "loss_reduction_100bps_bps": round(float(loss_reduction_bps), 1),
+        "interpretation": (
+            f"{action}: target net beta {target_net_beta:.2f}x versus current {current_net_beta:.2f}x; "
+            f"incremental CDX HY protection {incremental_protection_pct:.1f}% NAV."
+        ),
+    }
+    return pd.DataFrame(rows), summary
+
+
 def _scenario_preset_stress(
     *,
     rating_weights: dict[str, float],
@@ -1406,6 +1464,11 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         risk_reward_summary=risk_reward_summary,
     )
     net_spread_beta_table, net_spread_beta_summary = _net_spread_beta(rating_weights)
+    cdx_hedge_table, cdx_hedge_summary = _cdx_hedge_sizing(
+        rating_weights=rating_weights,
+        recommendation=rec,
+        net_spread_beta_summary=net_spread_beta_summary,
+    )
     spread_shock_table, spread_shock_summary = _spread_shock_sensitivity(rating_weights)
     scenario_preset_table, scenario_preset_summary = _scenario_preset_stress(
         rating_weights=rating_weights,
@@ -1468,6 +1531,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "risk_reward_summary": risk_reward_summary,
         "marginal_allocation_table": marginal_allocation_table,
         "net_spread_beta_summary": net_spread_beta_summary,
+        "cdx_hedge_summary": cdx_hedge_summary,
         "spread_shock_summary": spread_shock_summary,
         "scenario_preset_summary": scenario_preset_summary,
         "constraint_summary": constraint_summary,
@@ -1484,6 +1548,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         {"metric": "Compensation Ratio", "value": _fmt_ratio(compensation_ratio), "interpretation": "Spread divided by expected loss"},
         {"metric": "HY Carry Breakeven", "value": _fmt_bps(hy_breakeven_bps), "interpretation": "Annual widening cushion before carry is erased"},
         {"metric": "Net Spread Beta", "value": f"{net_spread_beta_summary['net_spread_beta']:.2f}x", "interpretation": "HY-equivalent spread beta after cash and hedge buckets"},
+        {"metric": "CDX Hedge Sizing", "value": f"{cdx_hedge_summary['incremental_cdx_hy_protection_pct']:.1f}% NAV", "interpretation": cdx_hedge_summary["action"]},
         {"metric": "Implied Default Rate", "value": _fmt_pct(implied_default_pct), "interpretation": "Market-implied default rate from spreads"},
         {"metric": "Charge-Off Rate", "value": _fmt_pct(chargeoff_pct), "interpretation": "Observed business-loan credit loss rate"},
         {"metric": "Business Loan Delinquency", "value": _fmt_pct(delinquency_pct), "interpretation": "Observed delinquency pressure"},
@@ -1526,6 +1591,9 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "net_spread_beta_table": net_spread_beta_table,
         "net_spread_beta_summary": net_spread_beta_summary,
         "net_spread_beta_summary_text": net_spread_beta_summary["interpretation"],
+        "cdx_hedge_table": cdx_hedge_table,
+        "cdx_hedge_summary": cdx_hedge_summary,
+        "cdx_hedge_summary_text": cdx_hedge_summary["interpretation"],
         "spread_shock_table": spread_shock_table,
         "spread_shock_summary": spread_shock_summary,
         "spread_shock_summary_text": spread_shock_summary["interpretation"],

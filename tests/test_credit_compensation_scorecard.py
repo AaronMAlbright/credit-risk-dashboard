@@ -102,6 +102,7 @@ def test_scorecard_available_and_table_shaped():
         "weighted_spread_beta",
         "weighted_duration_beta",
     }.issubset(result["net_spread_beta_table"].columns)
+    assert {"metric", "value", "unit"}.issubset(result["cdx_hedge_table"].columns)
     assert {
         "scenario",
         "hy_shock_bps",
@@ -365,6 +366,23 @@ def test_scorecard_adds_net_spread_beta():
     assert summary["hedge_offset_pct"] > 0
     assert summary["parallel_100bps_loss_bps"] == result["spread_shock_summary"]["portfolio_+100bps_loss_bps"]
     assert "Net spread beta" in result["net_spread_beta_summary_text"]
+
+
+def test_scorecard_adds_cdx_hedge_sizing():
+    result = build_credit_compensation_scorecard(_df(
+        composite_risk_score_smooth=[60, 65, 72, 80],
+        sloos_change_90d=[4, 5, 6, 7],
+        chargeoff_change_90d=[0.0, 0.1, 0.1, 0.1],
+    ))
+    summary = result["cdx_hedge_summary"]
+    table = result["cdx_hedge_table"].set_index("metric")
+
+    assert result["recommendation"] == "De-risk"
+    assert summary["target_net_spread_beta"] == 0.05
+    assert summary["incremental_cdx_hy_protection_pct"] >= 0
+    assert summary["post_trade_net_spread_beta"] <= result["net_spread_beta_summary"]["net_spread_beta"]
+    assert table.loc["Incremental CDX HY protection", "unit"] == "% NAV"
+    assert "CDX HY protection" in result["cdx_hedge_summary_text"]
 
 
 def test_scorecard_adds_pm_final_verdict():

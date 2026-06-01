@@ -442,6 +442,11 @@ if _active_sub is not None:
                 st.markdown("**Net Spread Beta**")
                 st.caption(_ccs.get("net_spread_beta_summary_text", ""))
                 st.dataframe(_net_beta_table, use_container_width=True, hide_index=True)
+            _cdx_hedge_table = _ccs.get("cdx_hedge_table")
+            if _cdx_hedge_table is not None and not _cdx_hedge_table.empty:
+                st.markdown("**CDX Hedge Sizing**")
+                st.caption(_ccs.get("cdx_hedge_summary_text", ""))
+                st.dataframe(_cdx_hedge_table, use_container_width=True, hide_index=True)
             _constraint_table = _ccs.get("constraint_table")
             if _constraint_table is not None and not _constraint_table.empty:
                 st.markdown("**Portfolio Constraints**")
