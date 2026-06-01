@@ -182,6 +182,7 @@ from src.credit_regime_performance import summarize_by_regime, latest_regime_per
 from src.credit_channel_validation import channel_validation_table, latest_channel_validation_snapshot
 from src.credit_positioning import positioning_table, current_positioning
 from src.spread_decomposition import latest_spread_snapshot
+from src.credit_compensation_packet import build_pm_review_packet
 from src.credit_compensation_scorecard import build_credit_compensation_scorecard
 from src.credit_compensation_validation import (
     analyze_scorecard_prediction_errors,
@@ -418,6 +419,23 @@ if _active_sub is not None:
             if _pm_verdict:
                 st.markdown("**PM Final Verdict**")
                 st.caption(_pm_verdict)
+            _pm_packet = build_pm_review_packet(df)
+            if _pm_packet.get("available"):
+                _pkt1, _pkt2 = st.columns(2)
+                _pkt1.download_button(
+                    "Download PM review packet",
+                    data=_pm_packet["markdown"],
+                    file_name="credit_compensation_pm_review_packet.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                )
+                _pkt2.download_button(
+                    "Download PM packet CSV bundle",
+                    data=_pm_packet["zip"],
+                    file_name="credit_compensation_pm_review_packet.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
             _memo_table = _ccs.get("memo_table")
             if _memo_table is not None and not _memo_table.empty:
                 st.markdown("**PM Trade Memo**")
