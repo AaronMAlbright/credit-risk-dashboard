@@ -187,6 +187,7 @@ from src.credit_compensation_validation import (
     analyze_scorecard_prediction_errors,
     analyze_scorecard_transitions,
     build_scorecard_validation_report,
+    replay_scorecard_stress_episodes,
     validate_scorecard_recommendations,
 )
 from src.credit_relative_value import latest_relative_value_snapshot, relative_value_table
@@ -528,6 +529,11 @@ if _active_sub is not None:
                         st.dataframe(_errors["false_negative_table"], use_container_width=True, hide_index=True)
                     with _error_summary_tab:
                         st.dataframe(_errors["summary_by_recommendation"], use_container_width=True, hide_index=True)
+            _stress_replay = replay_scorecard_stress_episodes(df)
+            if _stress_replay.get("available"):
+                with st.expander("Scorecard stress episode replay", expanded=False):
+                    st.caption(_stress_replay.get("summary_text", ""))
+                    st.dataframe(_stress_replay["table"], use_container_width=True, hide_index=True)
             with st.expander("Scorecard detail", expanded=False):
                 st.dataframe(_ccs["table"], use_container_width=True, hide_index=True)
     except Exception as _ccs_e:

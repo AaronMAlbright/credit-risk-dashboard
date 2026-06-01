@@ -16,6 +16,12 @@ from src.spread_decomposition import decompose_spreads
 DEFENSIVE_RECOMMENDATIONS = {"Upgrade Quality", "Hedge", "De-risk"}
 OFFENSIVE_RECOMMENDATIONS = {"Add"}
 NEUTRAL_RECOMMENDATIONS = {"Hold"}
+STRESS_EPISODES = [
+    ("2018 Q4 growth scare", "2018-10-03", "2018-12-24"),
+    ("COVID liquidity shock", "2020-02-19", "2020-03-23"),
+    ("2022 hiking shock", "2022-01-03", "2022-10-14"),
+    ("Regional bank shock", "2023-03-08", "2023-03-24"),
+]
 
 
 def _as_bps(series: pd.Series) -> pd.Series:
@@ -132,6 +138,21 @@ def _scorecard_error_reason(
     if recommendation in NEUTRAL_RECOMMENDATIONS and hy_change_bps >= materiality_bps:
         return "Hold missed material HY widening risk"
     return "Outcome inside materiality band"
+
+
+def _nearest_index(index: pd.Index, date: pd.Timestamp) -> pd.Timestamp | None:
+    if len(index) == 0:
+        return None
+    ordered = pd.DatetimeIndex(index).sort_values()
+    loc = ordered.searchsorted(date)
+    candidates = []
+    if loc < len(ordered):
+        candidates.append(ordered[loc])
+    if loc > 0:
+        candidates.append(ordered[loc - 1])
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: abs(item - date))
 
 
 def validate_scorecard_recommendations(
@@ -352,6 +373,97 @@ def build_scorecard_validation_report(
         **result,
         "markdown": "\n".join(lines),
         "csv": table.to_csv(index=False),
+    }
+
+
+def replay_scorecard_stress_episodes(
+    df: pd.DataFrame,
+    episodes: list[tuple[str, str, str]] | None = None,
+) -> dict:
+    """Replay named stress windows against historical scorecard recommendations."""
+    if df.empty or "hy_spread" not in df.columns:
+        return {"available": False, "reason": "hy_spread unavailable"}
+
+    work = add_scorecard_recommendations(df)
+    if "ig_spread" not in work.columns and "ig_spread_bps" in work.columns:
+        work["ig_spread"] = work["ig_spread_bps"]
+    if not isinstance(work.index, pd.DatetimeIndex):
+        return {"available": False, "reason": "datetime index required"}
+
+    work = work.sort_index()
+    episode_defs = episodes or STRESS_EPISODES
+    rows = []
+    for name, start_raw, end_raw in episode_defs:
+        start_target = pd.Timestamp(start_raw)
+        end_target = pd.Timestamp(end_raw)
+        if end_target < work.index.min() or start_target > work.index.max():
+            continue
+        start_idx = _nearest_index(work.index, start_target)
+        end_idx = _nearest_index(work.index, end_target)
+        if start_idx is None or end_idx is None or end_idx <= start_idx:
+            continue
+
+        window = work.loc[start_idx:end_idx]
+        if window.empty:
+            continue
+        start_row = work.loc[start_idx]
+        end_row = work.loc[end_idx]
+        rec = str(start_row.get("scorecard_recommendation"))
+        start_hy = _safe_float(start_row.get("hy_spread"))
+        end_hy = _safe_float(end_row.get("hy_spread"))
+        start_ig = _safe_float(start_row.get("ig_spread")) if "ig_spread" in work.columns else None
+        end_ig = _safe_float(end_row.get("ig_spread")) if "ig_spread" in work.columns else None
+        if start_hy is None or end_hy is None:
+            continue
+
+        hy_window = _as_bps(window["hy_spread"])
+        hy_change = _as_bps(pd.Series([end_hy - start_hy])).iloc[0]
+        max_hy_widening = hy_window.max() - _as_bps(pd.Series([start_hy])).iloc[0]
+        ig_change = None
+        if start_ig is not None and end_ig is not None:
+            ig_change = _as_bps(pd.Series([end_ig - start_ig])).iloc[0]
+
+        if rec in DEFENSIVE_RECOMMENDATIONS:
+            assessment = "Protected before stress"
+        elif rec in OFFENSIVE_RECOMMENDATIONS:
+            assessment = "Risk-on into stress"
+        else:
+            assessment = "Neutral into stress"
+
+        rows.append(
+            {
+                "episode": name,
+                "start": start_idx,
+                "end": end_idx,
+                "start_recommendation": rec,
+                "hy_change_bps": round(float(hy_change), 1),
+                "max_hy_widening_bps": round(float(max_hy_widening), 1),
+                "ig_change_bps": None if ig_change is None else round(float(ig_change), 1),
+                "assessment": assessment,
+            }
+        )
+
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return {"available": False, "reason": "no configured stress episodes overlap available history"}
+
+    protected = int(table["assessment"].eq("Protected before stress").sum())
+    risk_on = int(table["assessment"].eq("Risk-on into stress").sum())
+    summary = {
+        "episode_count": int(len(table)),
+        "protected_count": protected,
+        "risk_on_count": risk_on,
+        "worst_episode": table.sort_values("max_hy_widening_bps", ascending=False).iloc[0]["episode"],
+        "interpretation": (
+            f"Replay covers {len(table)} stress episode(s): {protected} began defensive, "
+            f"{risk_on} began risk-on."
+        ),
+    }
+    return {
+        "available": True,
+        "table": table,
+        "summary": summary,
+        "summary_text": summary["interpretation"],
     }
 
 

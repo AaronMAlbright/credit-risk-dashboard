@@ -5,6 +5,7 @@ from src.credit_compensation_validation import (
     analyze_scorecard_prediction_errors,
     analyze_scorecard_transitions,
     build_scorecard_validation_report,
+    replay_scorecard_stress_episodes,
     validate_scorecard_recommendations,
 )
 
@@ -173,3 +174,37 @@ def test_analyze_scorecard_prediction_errors_unavailable_without_hy():
     result = analyze_scorecard_prediction_errors(pd.DataFrame({"x": [1, 2, 3]}))
     assert result["available"] is False
     assert "hy_spread" in result["reason"]
+
+
+def test_replay_scorecard_stress_episodes_summarizes_overlap():
+    idx = pd.date_range("2020-02-03", periods=60, freq="B")
+    df = pd.DataFrame(
+        {
+            "hy_spread": [3.0 + i * 0.05 for i in range(60)],
+            "ig_spread_bps": [100 + i for i in range(60)],
+            "hy_spread_percentile": [10] * 60,
+            "final_decision": ["Neutral"] * 60,
+            "composite_risk_score_smooth": [35] * 60,
+            "sloos_change_90d": [8] * 60,
+            "chargeoff_change_90d": [0.0] * 60,
+            "delinquency_change_90d": [0.0] * 60,
+        },
+        index=idx,
+    )
+
+    result = replay_scorecard_stress_episodes(df)
+    table = result["table"]
+
+    assert result["available"] is True
+    assert "COVID liquidity shock" in set(table["episode"])
+    assert table["max_hy_widening_bps"].max() > 0
+    assert result["summary"]["episode_count"] >= 1
+    assert "stress episode" in result["summary_text"]
+
+
+def test_replay_scorecard_stress_episodes_unavailable_without_overlap():
+    df = _validation_df().copy()
+    df.index = pd.date_range("2024-01-01", periods=len(df), freq="B")
+    result = replay_scorecard_stress_episodes(df)
+    assert result["available"] is False
+    assert "overlap" in result["reason"]
