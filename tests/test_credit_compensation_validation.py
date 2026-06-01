@@ -2,6 +2,7 @@ import pandas as pd
 
 from src.credit_compensation_validation import (
     add_scorecard_recommendations,
+    build_scorecard_validation_report,
     validate_scorecard_recommendations,
 )
 
@@ -95,3 +96,12 @@ def test_validate_scorecard_recommendations_unavailable_without_hy():
     result = validate_scorecard_recommendations(pd.DataFrame({"x": [1, 2, 3]}))
     assert result["available"] is False
     assert "hy_spread" in result["reason"]
+
+
+def test_build_scorecard_validation_report_exports_markdown_and_csv():
+    result = build_scorecard_validation_report(_validation_df(), horizons=(21,))
+    assert result["available"] is True
+    assert "# Credit Compensation Scorecard Validation" in result["markdown"]
+    assert "Validation Table" in result["markdown"]
+    assert "recommendation,horizon_days" in result["csv"]
+    assert result["current_recommendation"] in result["markdown"]

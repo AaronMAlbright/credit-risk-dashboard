@@ -162,3 +162,54 @@ def validate_scorecard_recommendations(
         "summary": summary,
         "current_recommendation": current_rec,
     }
+
+
+def build_scorecard_validation_report(
+    df: pd.DataFrame,
+    horizons: tuple[int, ...] = HORIZONS,
+) -> dict:
+    """Build downloadable markdown and CSV validation artifacts."""
+    result = validate_scorecard_recommendations(df, horizons=horizons)
+    if not result.get("available"):
+        return result
+
+    table = result["table"].copy()
+    markdown_table = _markdown_table(table)
+    current = result.get("current_recommendation", "Unavailable")
+    lines = [
+        "# Credit Compensation Scorecard Validation",
+        "",
+        f"Current scorecard recommendation: **{current}**",
+        "",
+        result.get("summary", ""),
+        "",
+        "## Validation Table",
+        "",
+        markdown_table,
+        "",
+        "## Interpretation",
+        "",
+        "- Positive HY spread changes indicate widening, which is unfavorable for long credit beta.",
+        "- For Add, favorable hit rate measures subsequent HY tightening.",
+        "- For Upgrade Quality, Hedge, and De-risk, favorable hit rate measures subsequent HY widening avoided or hedged.",
+        "- Confidence is based on historical sample count and should govern how strongly results are used.",
+    ]
+    return {
+        **result,
+        "markdown": "\n".join(lines),
+        "csv": table.to_csv(index=False),
+    }
+
+
+def _markdown_table(table: pd.DataFrame) -> str:
+    if table.empty:
+        return ""
+    cols = list(table.columns)
+    lines = [
+        "| " + " | ".join(cols) + " |",
+        "| " + " | ".join(["---"] * len(cols)) + " |",
+    ]
+    for row in table.itertuples(index=False):
+        values = ["" if pd.isna(value) else str(value) for value in row]
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines)
