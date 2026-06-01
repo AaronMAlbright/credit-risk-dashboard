@@ -184,6 +184,7 @@ from src.credit_positioning import positioning_table, current_positioning
 from src.spread_decomposition import latest_spread_snapshot
 from src.credit_compensation_scorecard import build_credit_compensation_scorecard
 from src.credit_compensation_validation import (
+    analyze_scorecard_prediction_errors,
     analyze_scorecard_transitions,
     build_scorecard_validation_report,
     validate_scorecard_recommendations,
@@ -506,6 +507,17 @@ if _active_sub is not None:
                             st.dataframe(_transitions["transition_outcome_table"], use_container_width=True, hide_index=True)
                     with _td:
                         st.dataframe(_transitions["duration_table"], use_container_width=True, hide_index=True)
+            _errors = analyze_scorecard_prediction_errors(df)
+            if _errors.get("available"):
+                with st.expander("Scorecard false positive / false negative episodes", expanded=False):
+                    st.caption(_errors.get("summary_text", ""))
+                    _fp_tab, _fn_tab, _error_summary_tab = st.tabs(["False positives", "False negatives", "Summary"])
+                    with _fp_tab:
+                        st.dataframe(_errors["false_positive_table"], use_container_width=True, hide_index=True)
+                    with _fn_tab:
+                        st.dataframe(_errors["false_negative_table"], use_container_width=True, hide_index=True)
+                    with _error_summary_tab:
+                        st.dataframe(_errors["summary_by_recommendation"], use_container_width=True, hide_index=True)
             with st.expander("Scorecard detail", expanded=False):
                 st.dataframe(_ccs["table"], use_container_width=True, hide_index=True)
     except Exception as _ccs_e:

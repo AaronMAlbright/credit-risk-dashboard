@@ -2,6 +2,7 @@ import pandas as pd
 
 from src.credit_compensation_validation import (
     add_scorecard_recommendations,
+    analyze_scorecard_prediction_errors,
     analyze_scorecard_transitions,
     build_scorecard_validation_report,
     validate_scorecard_recommendations,
@@ -131,5 +132,44 @@ def test_analyze_scorecard_transitions_duration_metrics():
 
 def test_analyze_scorecard_transitions_unavailable_without_hy():
     result = analyze_scorecard_transitions(pd.DataFrame({"x": [1, 2, 3]}))
+    assert result["available"] is False
+    assert "hy_spread" in result["reason"]
+
+
+def test_analyze_scorecard_prediction_errors_splits_false_positive_and_negative_tables():
+    df = _validation_df()
+    df.iloc[:50, df.columns.get_loc("hy_spread")] = [6.0 + i * 0.02 for i in range(50)]
+
+    result = analyze_scorecard_prediction_errors(df, horizon_days=21, materiality_bps=25)
+    assert result["available"] is True
+    assert {"false_positive_count", "false_negative_count", "error_rate_pct", "worst_error"}.issubset(
+        result["summary"]
+    )
+    assert not result["false_positive_table"].empty
+    assert set(result["false_positive_table"]["classification"]) == {"false_positive"}
+    assert not result["summary_by_recommendation"].empty
+    assert "error_rate_pct" in result["summary_by_recommendation"].columns
+    assert "false positives" in result["summary_text"]
+
+
+def test_analyze_scorecard_prediction_errors_identifies_hold_false_negatives():
+    df = _validation_df()
+    df["hy_spread_percentile"] = 45
+    df["composite_risk_score_smooth"] = 35
+    df["sloos_change_90d"] = 0
+    df["chargeoff_change_90d"] = 0
+    df["delinquency_change_90d"] = 0
+
+    result = analyze_scorecard_prediction_errors(df, horizon_days=21, materiality_bps=25)
+    false_negatives = result["false_negative_table"]
+
+    assert result["available"] is True
+    assert not false_negatives.empty
+    assert false_negatives["classification"].str.startswith("false_negative").all()
+    assert "Hold" in set(false_negatives["recommendation"])
+
+
+def test_analyze_scorecard_prediction_errors_unavailable_without_hy():
+    result = analyze_scorecard_prediction_errors(pd.DataFrame({"x": [1, 2, 3]}))
     assert result["available"] is False
     assert "hy_spread" in result["reason"]

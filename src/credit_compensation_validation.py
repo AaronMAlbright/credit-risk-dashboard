@@ -15,6 +15,7 @@ from src.spread_decomposition import decompose_spreads
 
 DEFENSIVE_RECOMMENDATIONS = {"Upgrade Quality", "Hedge", "De-risk"}
 OFFENSIVE_RECOMMENDATIONS = {"Add"}
+NEUTRAL_RECOMMENDATIONS = {"Hold"}
 
 
 def _as_bps(series: pd.Series) -> pd.Series:
@@ -91,6 +92,48 @@ def _excess_return_proxy(recommendation: str, hy_changes: pd.Series) -> float | 
     return float((-s).mean())
 
 
+def _scorecard_outcome_label(
+    recommendation: str,
+    hy_change_bps: float,
+    materiality_bps: float,
+) -> str:
+    if recommendation in OFFENSIVE_RECOMMENDATIONS:
+        if hy_change_bps <= -materiality_bps:
+            return "true_positive"
+        if hy_change_bps >= materiality_bps:
+            return "false_positive"
+        return "noise"
+    if recommendation in DEFENSIVE_RECOMMENDATIONS:
+        if hy_change_bps >= materiality_bps:
+            return "true_positive"
+        if hy_change_bps <= -materiality_bps:
+            return "false_positive"
+        return "noise"
+    if recommendation in NEUTRAL_RECOMMENDATIONS:
+        if hy_change_bps <= -materiality_bps:
+            return "false_negative_missed_rally"
+        if hy_change_bps >= materiality_bps:
+            return "false_negative_missed_widening"
+        return "true_negative"
+    return "unclassified"
+
+
+def _scorecard_error_reason(
+    recommendation: str,
+    hy_change_bps: float,
+    materiality_bps: float,
+) -> str:
+    if recommendation in OFFENSIVE_RECOMMENDATIONS and hy_change_bps >= materiality_bps:
+        return "Add call was followed by material HY widening"
+    if recommendation in DEFENSIVE_RECOMMENDATIONS and hy_change_bps <= -materiality_bps:
+        return f"{recommendation} call was followed by material HY tightening"
+    if recommendation in NEUTRAL_RECOMMENDATIONS and hy_change_bps <= -materiality_bps:
+        return "Hold missed a material HY tightening rally"
+    if recommendation in NEUTRAL_RECOMMENDATIONS and hy_change_bps >= materiality_bps:
+        return "Hold missed material HY widening risk"
+    return "Outcome inside materiality band"
+
+
 def validate_scorecard_recommendations(
     df: pd.DataFrame,
     horizons: tuple[int, ...] = HORIZONS,
@@ -161,6 +204,117 @@ def validate_scorecard_recommendations(
         "table": table,
         "summary": summary,
         "current_recommendation": current_rec,
+    }
+
+
+def analyze_scorecard_prediction_errors(
+    df: pd.DataFrame,
+    horizon_days: int = 63,
+    materiality_bps: float = 25.0,
+) -> dict:
+    """
+    Identify historical scorecard false positives and false negatives.
+
+    False positives are active calls that were followed by an unfavorable
+    material move: Add before widening, or defensive recommendations before
+    tightening. False negatives are Hold calls that missed a material HY move.
+    """
+    if df.empty or "hy_spread" not in df.columns:
+        return {"available": False, "reason": "hy_spread unavailable"}
+
+    work = add_scorecard_recommendations(df)
+    work = _ensure_forward_spread_changes(work, (horizon_days,))
+    hy_col = f"hy_spread_forward_{horizon_days}d_change"
+    if hy_col not in work.columns:
+        return {"available": False, "reason": "forward spread outcomes unavailable"}
+
+    rows = []
+    for idx, row in work.dropna(subset=["scorecard_recommendation", hy_col]).iterrows():
+        recommendation = str(row["scorecard_recommendation"])
+        hy_change = _safe_float(row[hy_col])
+        if hy_change is None:
+            continue
+
+        classification = _scorecard_outcome_label(recommendation, hy_change, materiality_bps)
+        rows.append(
+            {
+                "date": idx,
+                "recommendation": recommendation,
+                f"hy_forward_{horizon_days}d_bps": round(float(hy_change), 1),
+                "classification": classification,
+                "reason": _scorecard_error_reason(recommendation, hy_change, materiality_bps),
+            }
+        )
+
+    classified = pd.DataFrame(rows)
+    if classified.empty:
+        return {"available": False, "reason": "no classified outcomes"}
+
+    error_mask = classified["classification"].isin(
+        ["false_positive", "false_negative_missed_rally", "false_negative_missed_widening"]
+    )
+    error_table = classified[error_mask].copy()
+    false_positive_table = classified[classified["classification"] == "false_positive"].copy()
+    false_negative_table = classified[
+        classified["classification"].isin(["false_negative_missed_rally", "false_negative_missed_widening"])
+    ].copy()
+
+    summary_table = (
+        classified.groupby(["recommendation", "classification"], dropna=True)
+        .size()
+        .reset_index(name="n_obs")
+    )
+    summary_by_recommendation = (
+        classified.assign(is_error=error_mask)
+        .groupby("recommendation", dropna=True)
+        .agg(n_obs=("classification", "size"), error_count=("is_error", "sum"))
+        .reset_index()
+    )
+    summary_by_recommendation["error_rate_pct"] = (
+        summary_by_recommendation["error_count"] / summary_by_recommendation["n_obs"] * 100.0
+    ).round(1)
+    summary_by_recommendation["confidence"] = summary_by_recommendation["n_obs"].apply(confidence_flag)
+
+    fp_count = int(len(false_positive_table))
+    fn_count = int(len(false_negative_table))
+    n_obs = int(len(classified))
+    error_rate = (fp_count + fn_count) / n_obs * 100.0 if n_obs else 0.0
+    worst_error = None
+    if not error_table.empty:
+        move_col = f"hy_forward_{horizon_days}d_bps"
+        worst = error_table.iloc[error_table[move_col].abs().argmax()]
+        worst_error = {
+            "date": worst["date"],
+            "recommendation": worst["recommendation"],
+            "classification": worst["classification"],
+            "hy_forward_change_bps": float(worst[move_col]),
+            "reason": worst["reason"],
+        }
+
+    summary = {
+        "n_obs": n_obs,
+        "horizon_days": horizon_days,
+        "materiality_bps": materiality_bps,
+        "false_positive_count": fp_count,
+        "false_negative_count": fn_count,
+        "error_rate_pct": round(float(error_rate), 1),
+        "worst_error": worst_error,
+        "interpretation": (
+            f"{fp_count} active-call false positives and {fn_count} Hold false negatives "
+            f"over {n_obs} scored observations at a {horizon_days}d horizon."
+        ),
+    }
+
+    return {
+        "available": True,
+        "classified_table": classified,
+        "false_positive_table": false_positive_table,
+        "false_negative_table": false_negative_table,
+        "error_table": error_table,
+        "summary_table": summary_table,
+        "summary_by_recommendation": summary_by_recommendation,
+        "summary": summary,
+        "summary_text": summary["interpretation"],
     }
 
 
