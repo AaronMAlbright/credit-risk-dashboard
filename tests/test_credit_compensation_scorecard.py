@@ -95,6 +95,14 @@ def test_scorecard_available_and_table_shaped():
         "weighted_+100bps_bps",
     }.issubset(result["spread_shock_table"].columns)
     assert {
+        "bucket",
+        "target_weight",
+        "spread_beta",
+        "spread_duration",
+        "weighted_spread_beta",
+        "weighted_duration_beta",
+    }.issubset(result["net_spread_beta_table"].columns)
+    assert {
         "scenario",
         "hy_shock_bps",
         "default_loss_multiplier",
@@ -344,6 +352,19 @@ def test_scorecard_adds_spread_shock_sensitivity():
     assert summary["portfolio_+100bps_loss_bps"] > 0
     assert summary["hedge_+100bps_offset_bps"] > 0
     assert "+100 bps spread shock" in summary["interpretation"]
+
+
+def test_scorecard_adds_net_spread_beta():
+    result = build_credit_compensation_scorecard(_df())
+    table = result["net_spread_beta_table"].set_index("bucket")
+    summary = result["net_spread_beta_summary"]
+
+    assert table.loc["Hedge", "weighted_spread_beta"] < 0
+    assert table.loc["Portfolio", "weighted_spread_beta"] == summary["net_spread_beta"]
+    assert summary["gross_long_spread_beta"] > summary["net_spread_beta"]
+    assert summary["hedge_offset_pct"] > 0
+    assert summary["parallel_100bps_loss_bps"] == result["spread_shock_summary"]["portfolio_+100bps_loss_bps"]
+    assert "Net spread beta" in result["net_spread_beta_summary_text"]
 
 
 def test_scorecard_adds_pm_final_verdict():

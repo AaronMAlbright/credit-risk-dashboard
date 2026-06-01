@@ -818,6 +818,64 @@ def _spread_shock_sensitivity(rating_weights: dict[str, float]) -> tuple[pd.Data
     return pd.DataFrame(rows), summary
 
 
+def _net_spread_beta(rating_weights: dict[str, float]) -> tuple[pd.DataFrame, dict]:
+    rows = []
+    gross_long_beta = 0.0
+    hedge_beta = 0.0
+    net_beta = 0.0
+    net_duration_beta = 0.0
+
+    for bucket in RATING_BUCKETS:
+        assumptions = BUCKET_ANALYTICS[bucket]
+        weight = rating_weights.get(bucket, 0.0)
+        spread_beta = assumptions["spread_beta"]
+        duration = assumptions["duration"]
+        weighted_beta = spread_beta * weight / 100.0
+        weighted_duration_beta = duration * spread_beta * weight / 100.0
+        net_beta += weighted_beta
+        net_duration_beta += weighted_duration_beta
+        if spread_beta > 0:
+            gross_long_beta += weighted_beta
+        elif spread_beta < 0:
+            hedge_beta += weighted_beta
+        rows.append(
+            {
+                "bucket": bucket,
+                "target_weight": round(weight, 1),
+                "spread_beta": round(float(spread_beta), 2),
+                "spread_duration": round(float(duration), 2),
+                "weighted_spread_beta": round(float(weighted_beta), 3),
+                "weighted_duration_beta": round(float(weighted_duration_beta), 3),
+            }
+        )
+
+    rows.append(
+        {
+            "bucket": "Portfolio",
+            "target_weight": round(sum(rating_weights.values()), 1),
+            "spread_beta": None,
+            "spread_duration": None,
+            "weighted_spread_beta": round(float(net_beta), 3),
+            "weighted_duration_beta": round(float(net_duration_beta), 3),
+        }
+    )
+    hedge_offset_pct = abs(hedge_beta) / gross_long_beta * 100.0 if gross_long_beta else 0.0
+    summary = {
+        "gross_long_spread_beta": round(float(gross_long_beta), 3),
+        "hedge_spread_beta": round(float(hedge_beta), 3),
+        "net_spread_beta": round(float(net_beta), 3),
+        "net_duration_beta": round(float(net_duration_beta), 3),
+        "hedge_offset_pct": round(float(hedge_offset_pct), 1),
+        "hy_equivalent_exposure_pct": round(float(net_beta * 100.0), 1),
+        "parallel_100bps_loss_bps": round(float(net_duration_beta * 100.0), 1),
+        "interpretation": (
+            f"Net spread beta is {net_beta:.2f}x HY-equivalent after hedge beta of {hedge_beta:.2f}x; "
+            f"a +100 bps spread shock maps to about {net_duration_beta * 100.0:.0f} bps price loss."
+        ),
+    }
+    return pd.DataFrame(rows), summary
+
+
 def _scenario_preset_stress(
     *,
     rating_weights: dict[str, float],
@@ -1347,6 +1405,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         rating_weights=rating_weights,
         risk_reward_summary=risk_reward_summary,
     )
+    net_spread_beta_table, net_spread_beta_summary = _net_spread_beta(rating_weights)
     spread_shock_table, spread_shock_summary = _spread_shock_sensitivity(rating_weights)
     scenario_preset_table, scenario_preset_summary = _scenario_preset_stress(
         rating_weights=rating_weights,
@@ -1408,6 +1467,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "bucket_return_summary": bucket_return_summary,
         "risk_reward_summary": risk_reward_summary,
         "marginal_allocation_table": marginal_allocation_table,
+        "net_spread_beta_summary": net_spread_beta_summary,
         "spread_shock_summary": spread_shock_summary,
         "scenario_preset_summary": scenario_preset_summary,
         "constraint_summary": constraint_summary,
@@ -1423,6 +1483,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         {"metric": "Excess Spread", "value": _fmt_bps(excess_spread_bps), "interpretation": "Residual spread after expected loss"},
         {"metric": "Compensation Ratio", "value": _fmt_ratio(compensation_ratio), "interpretation": "Spread divided by expected loss"},
         {"metric": "HY Carry Breakeven", "value": _fmt_bps(hy_breakeven_bps), "interpretation": "Annual widening cushion before carry is erased"},
+        {"metric": "Net Spread Beta", "value": f"{net_spread_beta_summary['net_spread_beta']:.2f}x", "interpretation": "HY-equivalent spread beta after cash and hedge buckets"},
         {"metric": "Implied Default Rate", "value": _fmt_pct(implied_default_pct), "interpretation": "Market-implied default rate from spreads"},
         {"metric": "Charge-Off Rate", "value": _fmt_pct(chargeoff_pct), "interpretation": "Observed business-loan credit loss rate"},
         {"metric": "Business Loan Delinquency", "value": _fmt_pct(delinquency_pct), "interpretation": "Observed delinquency pressure"},
@@ -1462,6 +1523,9 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "risk_reward_table": risk_reward_table,
         "risk_reward_summary": risk_reward_summary,
         "marginal_allocation_table": marginal_allocation_table,
+        "net_spread_beta_table": net_spread_beta_table,
+        "net_spread_beta_summary": net_spread_beta_summary,
+        "net_spread_beta_summary_text": net_spread_beta_summary["interpretation"],
         "spread_shock_table": spread_shock_table,
         "spread_shock_summary": spread_shock_summary,
         "spread_shock_summary_text": spread_shock_summary["interpretation"],
