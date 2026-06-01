@@ -432,6 +432,11 @@ if _active_sub is not None:
             if _marginal_table is not None and not _marginal_table.empty:
                 st.markdown("**Marginal Allocation Advice**")
                 st.dataframe(_marginal_table, use_container_width=True, hide_index=True)
+            _constraint_table = _ccs.get("constraint_table")
+            if _constraint_table is not None and not _constraint_table.empty:
+                st.markdown("**Portfolio Constraints**")
+                st.caption(_ccs.get("constraint_summary_text", ""))
+                st.dataframe(_constraint_table, use_container_width=True, hide_index=True)
             _bucket_return_table = _ccs.get("bucket_return_table")
             if _bucket_return_table is not None and not _bucket_return_table.empty:
                 with st.expander("Expected return & stress by rating bucket", expanded=False):

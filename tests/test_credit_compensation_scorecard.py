@@ -105,6 +105,14 @@ def test_scorecard_available_and_table_shaped():
         "portfolio_action",
     }.issubset(result["scenario_preset_table"].columns)
     assert {
+        "constraint",
+        "current_pct",
+        "limit_pct",
+        "status",
+        "gap_pct",
+        "portfolio_action",
+    }.issubset(result["constraint_table"].columns)
+    assert {
         "bucket",
         "spread_source",
         "spread_carry_factor",
@@ -358,3 +366,24 @@ def test_scorecard_adds_scenario_preset_stress():
     assert table.loc["Default-cycle shock", "incremental_default_drag_bps"] > table.loc["Liquidity shock", "incremental_default_drag_bps"]
     assert summary["worst_scenario"] in set(table.index)
     assert "Worst preset" in result["scenario_preset_summary_text"]
+
+
+def test_scorecard_adds_portfolio_constraints():
+    result = build_credit_compensation_scorecard(_df())
+    table = result["constraint_table"].set_index("constraint")
+    assert {"Max CCC", "Max B/CCC tail", "Min cash", "Min hedge", "Max HY beta"}.issubset(table.index)
+    assert set(table["status"]).issubset({"OK", "Breach"})
+    assert result["constraint_summary"]["breach_count"] >= 0
+    assert result["constraint_summary_text"]
+
+
+def test_scorecard_constraints_flag_cash_or_hedge_breach_when_tightening():
+    result = build_credit_compensation_scorecard(_df(
+        composite_risk_score_smooth=[60, 65, 72, 80],
+        sloos_change_90d=[4, 5, 6, 7],
+        chargeoff_change_90d=[0.0, 0.1, 0.1, 0.1],
+    ))
+    table = result["constraint_table"].set_index("constraint")
+    assert result["recommendation"] == "De-risk"
+    assert table.loc["Min cash", "current_pct"] >= table.loc["Min cash", "limit_pct"]
+    assert table.loc["Min hedge", "current_pct"] >= table.loc["Min hedge", "limit_pct"]

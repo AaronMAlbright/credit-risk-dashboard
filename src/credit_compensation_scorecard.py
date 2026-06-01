@@ -903,6 +903,85 @@ def _scenario_preset_stress(
     return table, summary
 
 
+def _portfolio_constraint_table(
+    *,
+    rating_weights: dict[str, float],
+    recommendation: str,
+    hy_percentile: float | None,
+    sloos_change_90d: float | None,
+) -> tuple[pd.DataFrame, dict]:
+    b_ccc = rating_weights.get("B", 0.0) + rating_weights.get("CCC", 0.0)
+    hy_beta = rating_weights.get("BB", 0.0) + b_ccc
+    min_cash = 20.0 if recommendation == "De-risk" else 15.0 if recommendation == "Hedge" else 5.0
+    min_hedge = 10.0 if sloos_change_90d is not None and sloos_change_90d > 3 else 5.0
+    max_hy_beta = 25.0 if hy_percentile is not None and hy_percentile < 25 else 55.0
+    constraints = [
+        {
+            "constraint": "Max CCC",
+            "current": rating_weights.get("CCC", 0.0),
+            "limit": 5.0,
+            "direction": "max",
+            "portfolio_action": "Trim CCC into BB/cash/hedge",
+        },
+        {
+            "constraint": "Max B/CCC tail",
+            "current": b_ccc,
+            "limit": 25.0,
+            "direction": "max",
+            "portfolio_action": "Reduce lower-quality HY tail beta",
+        },
+        {
+            "constraint": "Min cash",
+            "current": rating_weights.get("Cash", 0.0),
+            "limit": min_cash,
+            "direction": "min",
+            "portfolio_action": "Raise cash before adding credit beta",
+        },
+        {
+            "constraint": "Min hedge",
+            "current": rating_weights.get("Hedge", 0.0),
+            "limit": min_hedge,
+            "direction": "min",
+            "portfolio_action": "Add HY/CDX protection",
+        },
+        {
+            "constraint": "Max HY beta",
+            "current": hy_beta,
+            "limit": max_hy_beta,
+            "direction": "max",
+            "portfolio_action": "Upgrade quality or fund risk from HY beta",
+        },
+    ]
+    rows = []
+    for item in constraints:
+        if item["direction"] == "max":
+            breach = item["current"] > item["limit"]
+            gap = item["current"] - item["limit"]
+        else:
+            breach = item["current"] < item["limit"]
+            gap = item["limit"] - item["current"]
+        rows.append(
+            {
+                "constraint": item["constraint"],
+                "current_pct": round(float(item["current"]), 1),
+                "limit_pct": round(float(item["limit"]), 1),
+                "status": "Breach" if breach else "OK",
+                "gap_pct": round(float(gap if breach else 0.0), 1),
+                "portfolio_action": item["portfolio_action"] if breach else "No action required",
+            }
+        )
+    table = pd.DataFrame(rows)
+    breaches = int((table["status"] == "Breach").sum())
+    summary = {
+        "breach_count": breaches,
+        "interpretation": (
+            "All portfolio constraints are satisfied."
+            if breaches == 0 else f"{breaches} portfolio constraint(s) breached; review sizing before implementation."
+        ),
+    }
+    return table, summary
+
+
 def _pm_final_verdict(
     *,
     recommendation: str,
@@ -1273,6 +1352,12 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         rating_weights=rating_weights,
         expected_loss_bps=expected_loss_bps,
     )
+    constraint_table, constraint_summary = _portfolio_constraint_table(
+        rating_weights=rating_weights,
+        recommendation=rec,
+        hy_percentile=hy_percentile,
+        sloos_change_90d=sloos_change_90d,
+    )
     pm_final_verdict = _pm_final_verdict(
         recommendation=rec,
         marginal_allocation_table=marginal_allocation_table,
@@ -1325,6 +1410,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "marginal_allocation_table": marginal_allocation_table,
         "spread_shock_summary": spread_shock_summary,
         "scenario_preset_summary": scenario_preset_summary,
+        "constraint_summary": constraint_summary,
         "pm_final_verdict": pm_final_verdict,
         "confidence_summary": confidence_summary,
     }
@@ -1382,6 +1468,9 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "scenario_preset_table": scenario_preset_table,
         "scenario_preset_summary": scenario_preset_summary,
         "scenario_preset_summary_text": scenario_preset_summary["interpretation"],
+        "constraint_table": constraint_table,
+        "constraint_summary": constraint_summary,
+        "constraint_summary_text": constraint_summary["interpretation"],
         "pm_final_verdict": pm_final_verdict,
         "confidence_table": confidence_table,
         "confidence_summary": confidence_summary,
