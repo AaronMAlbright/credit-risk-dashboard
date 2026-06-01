@@ -183,7 +183,11 @@ from src.credit_channel_validation import channel_validation_table, latest_chann
 from src.credit_positioning import positioning_table, current_positioning
 from src.spread_decomposition import latest_spread_snapshot
 from src.credit_compensation_scorecard import build_credit_compensation_scorecard
-from src.credit_compensation_validation import build_scorecard_validation_report, validate_scorecard_recommendations
+from src.credit_compensation_validation import (
+    analyze_scorecard_transitions,
+    build_scorecard_validation_report,
+    validate_scorecard_recommendations,
+)
 from src.credit_relative_value import latest_relative_value_snapshot, relative_value_table
 from src.channel_attribution import channel_contribution_table, top_channel_drivers
 from src.credit_presentation import (
@@ -491,6 +495,17 @@ if _active_sub is not None:
                             mime="text/csv",
                             use_container_width=True,
                         )
+            _transitions = analyze_scorecard_transitions(df)
+            if _transitions.get("available"):
+                with st.expander("Scorecard transition stability", expanded=False):
+                    st.caption(_transitions.get("summary_text", ""))
+                    _tm, _td = st.tabs(["Transitions", "Durations"])
+                    with _tm:
+                        st.dataframe(_transitions["matrix_table"], use_container_width=True, hide_index=True)
+                        if not _transitions["transition_outcome_table"].empty:
+                            st.dataframe(_transitions["transition_outcome_table"], use_container_width=True, hide_index=True)
+                    with _td:
+                        st.dataframe(_transitions["duration_table"], use_container_width=True, hide_index=True)
             with st.expander("Scorecard detail", expanded=False):
                 st.dataframe(_ccs["table"], use_container_width=True, hide_index=True)
     except Exception as _ccs_e:

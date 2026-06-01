@@ -213,3 +213,118 @@ def _markdown_table(table: pd.DataFrame) -> str:
         values = ["" if pd.isna(value) else str(value) for value in row]
         lines.append("| " + " | ".join(values) + " |")
     return "\n".join(lines)
+
+
+def analyze_scorecard_transitions(
+    df: pd.DataFrame,
+    horizon_days: int = 21,
+) -> dict:
+    """Measure scorecard recommendation stability and outcomes after transitions."""
+    if df.empty or "hy_spread" not in df.columns:
+        return {"available": False, "reason": "hy_spread unavailable"}
+
+    work = add_scorecard_recommendations(df)
+    work = _ensure_forward_spread_changes(work, (horizon_days,))
+    rec = work["scorecard_recommendation"].dropna()
+    if len(rec) < 2:
+        return {"available": False, "reason": "not enough recommendations"}
+
+    transitions = pd.DataFrame({
+        "from_recommendation": rec.shift(1),
+        "to_recommendation": rec,
+    }).dropna()
+    transitions = transitions[transitions["from_recommendation"] != transitions["to_recommendation"]]
+
+    matrix = pd.crosstab(
+        transitions["from_recommendation"],
+        transitions["to_recommendation"],
+        dropna=False,
+    )
+    matrix_table = matrix.reset_index().rename(columns={"from_recommendation": "from"})
+
+    episodes = []
+    start_idx = rec.index[0]
+    current = rec.iloc[0]
+    length = 1
+    for idx, value in rec.iloc[1:].items():
+        if value == current:
+            length += 1
+        else:
+            episodes.append({"recommendation": current, "start": start_idx, "end": rec.index[rec.index.get_loc(idx) - 1], "duration_days": length})
+            start_idx = idx
+            current = value
+            length = 1
+    episodes.append({"recommendation": current, "start": start_idx, "end": rec.index[-1], "duration_days": length})
+    episodes_df = pd.DataFrame(episodes)
+
+    duration_table = (
+        episodes_df.groupby("recommendation", dropna=True)["duration_days"]
+        .agg(["count", "mean", "median", "min", "max"])
+        .reset_index()
+        .rename(columns={
+            "count": "episode_count",
+            "mean": "avg_duration_days",
+            "median": "median_duration_days",
+            "min": "shortest_duration_days",
+            "max": "longest_duration_days",
+        })
+    )
+    for col in ["avg_duration_days", "median_duration_days"]:
+        duration_table[col] = duration_table[col].round(1)
+
+    hy_col = f"hy_spread_forward_{horizon_days}d_change"
+    transition_outcomes = transitions.copy()
+    transition_outcomes["transition"] = (
+        transition_outcomes["from_recommendation"].astype(str)
+        + " -> "
+        + transition_outcomes["to_recommendation"].astype(str)
+    )
+    if hy_col in work.columns:
+        transition_outcomes["hy_forward_change_bps"] = _as_bps(work.loc[transition_outcomes.index, hy_col])
+    outcome_table = (
+        transition_outcomes.groupby("transition", dropna=True)["hy_forward_change_bps"]
+        .agg(["count", "median", "max"])
+        .reset_index()
+        .rename(columns={
+            "count": "n_obs",
+            "median": f"median_hy_forward_{horizon_days}d_bps",
+            "max": f"worst_hy_widening_{horizon_days}d_bps",
+        })
+    ) if "hy_forward_change_bps" in transition_outcomes.columns else pd.DataFrame()
+    if not outcome_table.empty:
+        for col in [f"median_hy_forward_{horizon_days}d_bps", f"worst_hy_widening_{horizon_days}d_bps"]:
+            outcome_table[col] = outcome_table[col].round(1)
+        outcome_table["confidence"] = outcome_table["n_obs"].apply(confidence_flag)
+
+    transition_count = int(len(transitions))
+    one_day_episodes = int((episodes_df["duration_days"] <= 1).sum())
+    whipsaw_rate = one_day_episodes / len(episodes_df) * 100.0 if len(episodes_df) else 0.0
+    most_common = None
+    if not transitions.empty:
+        most_common = (
+            transitions["from_recommendation"].astype(str)
+            + " -> "
+            + transitions["to_recommendation"].astype(str)
+        ).value_counts().idxmax()
+
+    summary = {
+        "transition_count": transition_count,
+        "episode_count": int(len(episodes_df)),
+        "one_day_episode_count": one_day_episodes,
+        "whipsaw_rate_pct": round(float(whipsaw_rate), 1),
+        "most_common_transition": most_common,
+        "interpretation": (
+            f"{transition_count} transitions across {len(episodes_df)} episodes; "
+            f"whipsaw rate {whipsaw_rate:.1f}%."
+        ),
+    }
+
+    return {
+        "available": True,
+        "matrix_table": matrix_table,
+        "duration_table": duration_table,
+        "transition_outcome_table": outcome_table,
+        "episode_table": episodes_df,
+        "summary": summary,
+        "summary_text": summary["interpretation"],
+    }

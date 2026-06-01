@@ -2,6 +2,7 @@ import pandas as pd
 
 from src.credit_compensation_validation import (
     add_scorecard_recommendations,
+    analyze_scorecard_transitions,
     build_scorecard_validation_report,
     validate_scorecard_recommendations,
 )
@@ -105,3 +106,30 @@ def test_build_scorecard_validation_report_exports_markdown_and_csv():
     assert "Validation Table" in result["markdown"]
     assert "recommendation,horizon_days" in result["csv"]
     assert result["current_recommendation"] in result["markdown"]
+
+
+def test_analyze_scorecard_transitions_shapes_outputs():
+    result = analyze_scorecard_transitions(_validation_df(), horizon_days=21)
+    assert result["available"] is True
+    assert not result["matrix_table"].empty
+    assert not result["duration_table"].empty
+    assert not result["transition_outcome_table"].empty
+    assert {"transition_count", "episode_count", "whipsaw_rate_pct", "most_common_transition"}.issubset(
+        result["summary"]
+    )
+    assert result["summary"]["transition_count"] >= 3
+    assert "transitions" in result["summary_text"]
+
+
+def test_analyze_scorecard_transitions_duration_metrics():
+    result = analyze_scorecard_transitions(_validation_df(), horizon_days=21)
+    duration = result["duration_table"].set_index("recommendation")
+    assert {"Add", "Upgrade Quality", "Hedge", "De-risk"}.issubset(duration.index)
+    assert duration.loc["Add", "median_duration_days"] >= 20
+    assert duration["episode_count"].sum() == result["summary"]["episode_count"]
+
+
+def test_analyze_scorecard_transitions_unavailable_without_hy():
+    result = analyze_scorecard_transitions(pd.DataFrame({"x": [1, 2, 3]}))
+    assert result["available"] is False
+    assert "hy_spread" in result["reason"]
