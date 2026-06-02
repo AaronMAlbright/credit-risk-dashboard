@@ -39,7 +39,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/scored_macro_credit_data.csv history/model_run_history.csv
+          git add data/scored_macro_credit_data.csv history/model_run_history.csv history/credit_compensation_scorecard_history.csv
           git diff --cached --quiet || git commit -m "chore: daily data refresh $(date -u +%Y-%m-%d)"
 
       - name: Run alert checks

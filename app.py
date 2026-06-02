@@ -105,6 +105,7 @@ from src.utils import (
 )
 
 from src.run_logger import log_model_run
+from src.credit_compensation_history import append_scorecard_history
 from src.composite_engine import build_composite_risk
 from src.credit_taxonomy import compute_channel_scores
 from src.credit_feature_proxies import add_credit_feature_proxies
@@ -744,6 +745,7 @@ df["model_confidence_reasons"] = df["model_confidence_obj"].apply(lambda x: x[1]
 # =====================
 latest = df.iloc[-1]
 log_model_run(latest)
+append_scorecard_history(df)
 shock_scenario = simulate_shock(latest)
 scenario_summary = summarize_scenario(latest, shock_scenario)
 credit_strategy_memo = generate_credit_strategy_memo(df)

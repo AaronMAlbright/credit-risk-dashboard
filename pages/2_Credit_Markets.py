@@ -183,6 +183,7 @@ from src.credit_channel_validation import channel_validation_table, latest_chann
 from src.credit_positioning import positioning_table, current_positioning
 from src.spread_decomposition import latest_spread_snapshot
 from src.credit_compensation_packet import build_pm_review_packet
+from src.credit_compensation_history import load_scorecard_history
 from src.credit_compensation_scorecard import build_credit_compensation_scorecard
 from src.credit_compensation_validation import (
     analyze_scorecard_prediction_errors,
@@ -424,6 +425,24 @@ if _active_sub is not None:
                 st.markdown("**PM Attribution: What Changed**")
                 st.caption(_ccs.get("pm_attribution_summary_text", ""))
                 st.dataframe(_pm_attribution_table, use_container_width=True, hide_index=True)
+            _scorecard_history = load_scorecard_history()
+            if not _scorecard_history.empty:
+                _history_cols = [
+                    "as_of",
+                    "recommendation",
+                    "hy_oas_bps",
+                    "excess_spread_bps",
+                    "spread_compensation_ratio",
+                    "net_spread_beta",
+                    "incremental_cdx_hy_protection_pct",
+                    "constraint_breach_count",
+                ]
+                st.markdown("**Scorecard History**")
+                st.dataframe(
+                    _scorecard_history[[col for col in _history_cols if col in _scorecard_history.columns]].tail(10),
+                    use_container_width=True,
+                    hide_index=True,
+                )
             _pm_packet = build_pm_review_packet(df)
             if _pm_packet.get("available"):
                 _pkt1, _pkt2 = st.columns(2)

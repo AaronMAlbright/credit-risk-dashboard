@@ -82,6 +82,7 @@ from src.validation_engine import (
 )
 
 from src.run_logger import log_model_run
+from src.credit_compensation_history import append_scorecard_history
 
 from src.utils import (
     ensure_dirs,
@@ -683,6 +684,7 @@ def run(show_charts: bool = False) -> pd.DataFrame:
     df, health_check, backtest_summary = run_analytics(df)
 
     log_model_run(df.iloc[-1])
+    append_scorecard_history(df)
 
     run_outputs(df, freshness, health_check, backtest_summary)
     generate_all_charts(df, OUTPUT_CHART_DIR, show=show_charts)
