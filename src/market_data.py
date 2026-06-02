@@ -45,8 +45,10 @@ _CACHE_DIR    = Path("data/cache")
 _CACHE_TTL_S  = 12 * 3600          # 12 hours before a re-fetch is triggered
 _DEFAULT_START = "1999-01-01"
 
-# Forward-fill limits (calendar days) per series.
-# Prevents a monthly release from propagating stale values over weeks.
+# Forward-fill limits in business-day rows after reindexing.
+# Monthly/quarterly FRED observation dates are period starts, while releases
+# often arrive weeks later, so limits need to bridge the release lag without
+# letting stale values propagate indefinitely.
 _FFILL_LIMITS: dict[str, int] = {
     # Daily series — allow up to 1 full week (covers long-weekend closures)
     "DGS10": 5, "DGS2": 5, "DGS3MO": 5, "T10Y3M": 5, "T10Y2Y": 5,
@@ -58,8 +60,8 @@ _FFILL_LIMITS: dict[str, int] = {
     "ICSA": 7, "CCSA": 7,
     "DPSACBW027SBOG": 7, "TOTLL": 7, "WALCL": 7, "WRESBAL": 7,
     "BOGMBASEW": 7,
-    # Monthly series — allow up to 35 calendar days (~1 month + buffer)
-    "UNRATE": 35, "CPIAUCSL": 35, "CPILFESL": 35, "PCEPILFE": 35,
+    # Monthly series — allow about two calendar months in business-day rows.
+    "UNRATE": 50, "CPIAUCSL": 50, "CPILFESL": 50, "PCEPILFE": 50,
     "USREC": 35,
     # Credit spread complex — daily ICE BofA series
     "BAMLC0A0CM":      5,   # IG OAS
