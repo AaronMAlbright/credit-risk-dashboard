@@ -43,7 +43,7 @@ The dashboard includes:
 - **Regime performance**: forward S&P returns and HY/IG spread changes by regime and horizon.
 - **Strategy memo and credit brief**: downloadable markdown outputs for review or interview demos.
 
-See `docs/credit_compensation_scorecard.md` for the PM-facing methodology behind the credit compensation scorecard, rating-bucket allocation, expected return/stress framework, marginal allocation advice, and spread shock sensitivity.
+See `docs/credit_compensation_scorecard.md` for the PM-facing methodology and workflow behind the credit compensation scorecard, rating-bucket allocation, expected return/stress framework, marginal allocation advice, spread shock sensitivity, net spread beta, CDX hedge sizing, audit trail, validation replay, and PM review packet.
 
 ## Outputs
 

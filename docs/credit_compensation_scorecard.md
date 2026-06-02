@@ -159,6 +159,115 @@ Weighted Shock Loss = Shock Loss x Target Weight
 
 The hedge bucket has negative spread beta, so it offsets widening losses. The portfolio row sums weighted losses across buckets.
 
+## Net Spread Beta
+
+The net spread beta table turns the rating-bucket allocation into HY-equivalent spread exposure.
+
+For each bucket:
+
+```text
+Weighted Spread Beta = Target Weight x Bucket Spread Beta
+Weighted Duration Beta = Target Weight x Bucket Spread Beta x Bucket Spread Duration
+```
+
+The portfolio row reports:
+
+- gross long spread beta,
+- hedge spread beta,
+- net spread beta,
+- HY-equivalent exposure,
+- estimated +100 bps parallel spread-shock loss.
+
+This table is the cleanest way to see whether the scorecard is adding credit beta, staying neutral, or reducing spread exposure after cash and hedge buckets.
+
+## CDX Hedge Sizing
+
+The CDX hedge-sizing table uses current net spread beta and the scorecard recommendation to estimate additional CDX HY protection.
+
+Recommendation targets are intentionally simple:
+
+```text
+Add             0.75x net spread beta
+Hold            0.45x net spread beta
+Upgrade Quality 0.30x net spread beta
+Hedge           0.20x net spread beta
+De-risk         0.05x net spread beta
+```
+
+If current net beta is above the target, the table estimates:
+
+- incremental CDX HY protection as percent of NAV,
+- target hedge bucket,
+- post-trade net spread beta,
+- +100 bps loss reduction,
+- estimated annual carry cost.
+
+This is not a full CDX pricing model. It is a portfolio-sizing bridge between the scorecard recommendation and an implementable index-hedge posture.
+
+## Validation And Replay
+
+The validation section checks whether historical recommendations aligned with subsequent HY and IG spread moves.
+
+Key views:
+
+- **Validation / backtest**: forward spread outcomes by recommendation and horizon.
+- **Transition stability**: recommendation changes, episode durations, whipsaw rate, and outcomes after transitions.
+- **False positive / false negative episodes**: active calls followed by unfavorable material spread moves, and Hold calls that missed material tightening or widening.
+- **Stress episode replay**: named spread-stress windows, the recommendation at the start of each episode, and whether the scorecard entered stress risk-on, neutral, or defensive.
+
+Validation confidence is sample-size aware. Thin historical samples should be read as diagnostic context, not as conclusive statistical proof.
+
+## Audit Trail
+
+The audit trail records the current scorecard inputs and rule checks behind the recommendation.
+
+The Inputs tab shows the observed values used by the scorecard, including expected loss, excess spread, compensation ratio, HY percentile, composite risk score, SLOOS change, charge-off change, and delinquency change.
+
+The Rules tab shows whether each decision rule fired:
+
+- composite risk veto,
+- very rich spread,
+- cheap spread,
+- SLOOS tightening,
+- fundamental worsening,
+- underpaid stress,
+- Add compensation gate,
+- Add score gate.
+
+The audit trail is designed to make the recommendation reviewable by a PM, risk committee, or future model reviewer without reading the source code.
+
+## PM Review Packet
+
+The scorecard section includes two PM packet downloads:
+
+- **Download PM review packet**: markdown packet for written review.
+- **Download PM packet CSV bundle**: ZIP file with the key scorecard tables as CSVs.
+
+The packet bundles:
+
+- current recommendation and PM final verdict,
+- trade memo,
+- portfolio expression,
+- rating-bucket allocation,
+- risk/reward table,
+- marginal allocation advice,
+- net spread beta,
+- CDX hedge sizing,
+- validation/backtest,
+- transition outcomes,
+- prediction errors,
+- stress replay,
+- audit inputs and audit rules.
+
+The intended PM workflow is:
+
+1. Read the PM final verdict and current snapshot.
+2. Check rating-bucket allocation and marginal allocation advice.
+3. Review net spread beta and CDX hedge sizing for risk budget implementation.
+4. Confirm validation, transition stability, false positives/false negatives, and stress replay.
+5. Use the audit trail to verify why the rule engine produced the recommendation.
+6. Download the PM packet for committee review or model documentation.
+
 ## PM Final Verdict
 
 The final verdict condenses the scorecard into one portfolio sentence:
