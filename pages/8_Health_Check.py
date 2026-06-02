@@ -12,6 +12,8 @@ st.set_page_config(
 )
 
 from utils.shared import load_data, _ANALYTICS_VIEWS
+from src.alert_engine import AlertConfig, check_scorecard_alerts, extract_current_state
+from src.credit_compensation_history import load_scorecard_history
 from src.data_pipeline import diagnose_refresh_limit, get_pipeline_status
 from src.data_sources import source_rows
 
@@ -65,6 +67,57 @@ try:
             st.caption("Run this when the scored CSV is stale and you need to see whether raw source coverage or pipeline output is the limiter.")
 except Exception as _de:
     st.error(f"Could not load data: {_de}")
+
+st.divider()
+
+# -- Scorecard alert status ---------------------------------------------------
+st.subheader("Scorecard Alert Status")
+try:
+    _alert_df = load_data()
+    _history = load_scorecard_history()
+    _current_state = extract_current_state(_alert_df)
+    _scorecard_alerts = check_scorecard_alerts(
+        _current_state,
+        _history,
+        AlertConfig(
+            check_regime_change=False,
+            check_blend_below=False,
+            check_composite_spike=False,
+            check_shock_flag=False,
+            check_composite_cross=False,
+            check_scorecard_alerts=True,
+            dry_run=True,
+        ),
+    )
+    if _history.empty:
+        st.warning("Scorecard history is unavailable.")
+    else:
+        _latest_hist = _history.tail(1).iloc[0]
+        _h1, _h2, _h3, _h4 = st.columns(4)
+        _h1.metric("Scorecard date", str(_latest_hist.get("as_of", "-")))
+        _h2.metric("Recommendation", str(_latest_hist.get("recommendation", "-")))
+        _h3.metric("Net beta", f"{float(_latest_hist.get('net_spread_beta', 0)):.2f}x")
+        _h4.metric("CDX gap", f"{float(_latest_hist.get('incremental_cdx_hy_protection_pct', 0)):.1f}% NAV")
+    if _scorecard_alerts:
+        st.warning(f"{len(_scorecard_alerts)} scorecard alert(s) would fire.")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "level": alert["level"],
+                        "trigger": alert["trigger"],
+                        "message": alert["message"],
+                    }
+                    for alert in _scorecard_alerts
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.success("No scorecard alerts would fire.")
+except Exception as _sae:
+    st.caption(f"Scorecard alert status unavailable: {_sae}")
 
 st.divider()
 

@@ -46,6 +46,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.credit_compensation_history import HISTORY_PATH as _SCORECARD_HISTORY_PATH
+from src.credit_compensation_history import load_scorecard_history
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -97,11 +100,15 @@ class AlertConfig:
     check_composite_spike: bool  = True
     check_shock_flag:      bool  = True
     check_composite_cross: bool  = True
+    check_scorecard_alerts: bool = True
 
     # ── Thresholds ────────────────────────────────────────────────────────
     blend_threshold:            float = 0.50   # alert when blend drops below this
     composite_spike_pts:        float = 10.0   # abs change in composite triggering alert
     composite_stress_threshold: float = 50.0   # upward crossing triggers ALERT
+    scorecard_beta_tolerance:   float = 0.05   # net beta target cushion before alerting
+    scorecard_hedge_gap_pct:    float = 5.0    # incremental CDX HY protection % NAV
+    scorecard_comp_ratio_min:   float = 1.10   # minimum acceptable spread compensation
 
     # ── Behaviour ─────────────────────────────────────────────────────────
     min_level: str  = "INFO"   # suppress alerts below this level
@@ -198,6 +205,132 @@ def extract_current_state(
 def _alert(trigger: str, level: str, message: str, details: dict | None = None) -> dict:
     return {"trigger": trigger, "level": level, "message": message,
             "details": details or {}}
+
+
+def _safe_float(value, default: float | None = None) -> float | None:
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return default
+    if np.isnan(val):
+        return default
+    return val
+
+
+def _latest_scorecard_rows(history: pd.DataFrame) -> tuple[dict | None, dict | None]:
+    if history is None or history.empty:
+        return None, None
+    work = history.copy()
+    if "as_of" in work.columns:
+        work["_as_of_sort"] = pd.to_datetime(work["as_of"], errors="coerce")
+        work = work.sort_values(["_as_of_sort", "recorded_at"], na_position="first")
+        work = work.drop(columns=["_as_of_sort"])
+    latest = work.iloc[-1].to_dict()
+    previous = work.iloc[-2].to_dict() if len(work) >= 2 else None
+    return latest, previous
+
+
+def check_scorecard_alerts(
+    current: dict,
+    history: pd.DataFrame,
+    config: AlertConfig,
+) -> list[dict]:
+    """Compare persisted scorecard history and return scorecard-specific alerts."""
+    if not config.check_scorecard_alerts:
+        return []
+
+    latest, previous = _latest_scorecard_rows(history)
+    current_date = str(current.get("last_date") or "")[:10]
+
+    if latest is None:
+        return [
+            _alert(
+                "scorecard_history_stale",
+                "WARNING",
+                "Scorecard history is missing; daily scorecard alerts cannot compare prior state.",
+                {"expected_date": current_date},
+            )
+        ]
+
+    alerts: list[dict] = []
+    latest_date = str(latest.get("as_of") or "")[:10]
+    if current_date and latest_date and latest_date != current_date:
+        alerts.append(_alert(
+            "scorecard_history_stale", "WARNING",
+            f"Scorecard history is stale: latest scorecard {latest_date}, scored data {current_date}",
+            {"scorecard_date": latest_date, "scored_data_date": current_date},
+        ))
+
+    curr_rec = str(latest.get("recommendation") or "")
+    prev_rec = str(previous.get("recommendation") or "") if previous else ""
+    defensive_recs = {"Hedge", "De-risk"}
+    if previous and prev_rec and curr_rec and curr_rec != prev_rec:
+        level = "ALERT" if curr_rec in defensive_recs else "WARNING" if curr_rec == "Upgrade Quality" else "INFO"
+        alerts.append(_alert(
+            "scorecard_recommendation_change", level,
+            f"Scorecard recommendation changed: {prev_rec} -> {curr_rec}",
+            {"prev": prev_rec, "curr": curr_rec},
+        ))
+        if curr_rec in defensive_recs and prev_rec not in defensive_recs:
+            alerts.append(_alert(
+                "scorecard_defensive_shift", "ALERT",
+                f"Scorecard shifted defensive: {prev_rec} -> {curr_rec}",
+                {"prev": prev_rec, "curr": curr_rec},
+            ))
+
+    beta = _safe_float(latest.get("net_spread_beta"))
+    target_beta = _safe_float(latest.get("target_net_spread_beta"))
+    prev_beta = _safe_float(previous.get("net_spread_beta")) if previous else None
+    prev_target = _safe_float(previous.get("target_net_spread_beta")) if previous else target_beta
+    if beta is not None and target_beta is not None:
+        threshold = target_beta + config.scorecard_beta_tolerance
+        prev_threshold = (prev_target if prev_target is not None else target_beta) + config.scorecard_beta_tolerance
+        crossed = beta > threshold and (previous is None or prev_beta is None or prev_beta <= prev_threshold)
+        worsened = previous is not None and prev_beta is not None and beta > threshold and beta > prev_beta
+        if crossed or worsened:
+            level = "ALERT" if beta > target_beta + 2 * config.scorecard_beta_tolerance else "WARNING"
+            alerts.append(_alert(
+                "scorecard_beta_breach", level,
+                f"Scorecard net spread beta {beta:.2f}x exceeds target {target_beta:.2f}x",
+                {
+                    "net_spread_beta": beta,
+                    "target_net_spread_beta": target_beta,
+                    "tolerance": config.scorecard_beta_tolerance,
+                },
+            ))
+
+    hedge_gap = _safe_float(latest.get("incremental_cdx_hy_protection_pct"))
+    prev_hedge_gap = _safe_float(previous.get("incremental_cdx_hy_protection_pct")) if previous else None
+    if hedge_gap is not None and hedge_gap > config.scorecard_hedge_gap_pct:
+        crossed = previous is None or prev_hedge_gap is None or prev_hedge_gap <= config.scorecard_hedge_gap_pct
+        if crossed:
+            alerts.append(_alert(
+                "scorecard_hedge_gap", "WARNING",
+                f"Scorecard calls for {hedge_gap:.1f}% NAV incremental CDX HY protection",
+                {"incremental_cdx_hy_protection_pct": hedge_gap, "threshold_pct": config.scorecard_hedge_gap_pct},
+            ))
+
+    breach_count = int(_safe_float(latest.get("constraint_breach_count"), 0) or 0)
+    prev_breach_count = int(_safe_float(previous.get("constraint_breach_count"), 0) or 0) if previous else 0
+    if breach_count > 0 and prev_breach_count == 0:
+        alerts.append(_alert(
+            "scorecard_constraint_breach", "ALERT",
+            f"Scorecard portfolio constraints breached: {latest.get('breached_constraints') or breach_count}",
+            {"constraint_breach_count": breach_count, "breached_constraints": latest.get("breached_constraints", "")},
+        ))
+
+    comp_ratio = _safe_float(latest.get("spread_compensation_ratio"))
+    prev_comp_ratio = _safe_float(previous.get("spread_compensation_ratio")) if previous else None
+    if comp_ratio is not None and comp_ratio < config.scorecard_comp_ratio_min:
+        crossed = previous is None or prev_comp_ratio is None or prev_comp_ratio >= config.scorecard_comp_ratio_min
+        if crossed:
+            alerts.append(_alert(
+                "scorecard_underpaid_credit", "WARNING",
+                f"Scorecard compensation ratio fell below {config.scorecard_comp_ratio_min:.2f}x: now {comp_ratio:.2f}x",
+                {"spread_compensation_ratio": comp_ratio, "threshold": config.scorecard_comp_ratio_min},
+            ))
+
+    return alerts
 
 
 def check_alerts(
@@ -493,6 +626,7 @@ def run_alerts(
     config: AlertConfig | None = None,
     sizing: dict | None = None,
     state_path: Path | str = _DEFAULT_STATE_PATH,
+    scorecard_history_path: Path | str = _SCORECARD_HISTORY_PATH,
 ) -> dict:
     """
     Full alert pipeline: load state → check → send → save.
@@ -503,6 +637,7 @@ def run_alerts(
     config     : AlertConfig (defaults built from env vars if None)
     sizing     : position sizing result for blend weight (optional)
     state_path : path to JSON state file
+    scorecard_history_path : path to persisted scorecard history CSV
 
     Returns dict:
       alerts       — list of fired alert dicts (empty if none)
@@ -529,6 +664,10 @@ def run_alerts(
         }
 
     alerts = check_alerts(current, previous, config)
+    if config.check_scorecard_alerts:
+        scorecard_history = load_scorecard_history(scorecard_history_path)
+        alerts.extend(check_scorecard_alerts(current, scorecard_history, config))
+        alerts.sort(key=lambda a: -ALERT_LEVELS.get(a["level"], 0))
 
     # Filter by min_level
     min_rank = ALERT_LEVELS.get(config.min_level, 0)

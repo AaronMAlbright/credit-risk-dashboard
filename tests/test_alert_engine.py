@@ -24,6 +24,7 @@ from src.alert_engine import (
     DEFAULT_STATE,
     AlertConfig,
     check_alerts,
+    check_scorecard_alerts,
     config_from_env,
     extract_current_state,
     format_alert_email,
@@ -67,6 +68,7 @@ def _cfg(**kw) -> AlertConfig:
         smtp_password="secret",
         from_addr="user@example.com",
         to_addrs=["recipient@example.com"],
+        check_scorecard_alerts=False,
     )
     defaults.update(kw)
     return AlertConfig(**defaults)
@@ -431,6 +433,123 @@ class TestCheckAlertsSorting:
                 "composite": 45.0, "blend": 0.65, "shock_flag": "No Shock"}
         alerts = check_alerts(same, same, _cfg())
         assert alerts == []
+
+
+# ---------------------------------------------------------------------------
+# scorecard history alerts
+# ---------------------------------------------------------------------------
+
+class TestScorecardAlerts:
+    def _current(self, date="2026-06-02") -> dict:
+        return {**DEFAULT_STATE, "last_date": date, "decision": "Neutral", "composite": 40.0}
+
+    def _history(self, rows: list[dict]) -> pd.DataFrame:
+        defaults = {
+            "as_of": "2026-06-02",
+            "recorded_at": "2026-06-02T12:00:00",
+            "recommendation": "Hold",
+            "net_spread_beta": 0.25,
+            "target_net_spread_beta": 0.30,
+            "incremental_cdx_hy_protection_pct": 0.0,
+            "constraint_breach_count": 0,
+            "breached_constraints": "",
+            "spread_compensation_ratio": 1.30,
+        }
+        return pd.DataFrame([{**defaults, **row} for row in rows])
+
+    def _scorecard_cfg(self, **kw) -> AlertConfig:
+        return _cfg(
+            check_regime_change=False,
+            check_blend_below=False,
+            check_composite_spike=False,
+            check_shock_flag=False,
+            check_composite_cross=False,
+            check_scorecard_alerts=True,
+            **kw,
+        )
+
+    def test_missing_history_warns(self):
+        alerts = check_scorecard_alerts(self._current(), pd.DataFrame(), self._scorecard_cfg())
+        match = next(a for a in alerts if a["trigger"] == "scorecard_history_stale")
+        assert match["level"] == "WARNING"
+
+    def test_stale_history_warns(self):
+        history = self._history([{"as_of": "2026-06-01"}])
+        alerts = check_scorecard_alerts(self._current("2026-06-02"), history, self._scorecard_cfg())
+        assert any(a["trigger"] == "scorecard_history_stale" for a in alerts)
+
+    def test_recommendation_change_fires(self):
+        history = self._history([
+            {"as_of": "2026-06-01", "recommendation": "Hold"},
+            {"as_of": "2026-06-02", "recommendation": "Upgrade Quality"},
+        ])
+        alerts = check_scorecard_alerts(self._current(), history, self._scorecard_cfg())
+        match = next(a for a in alerts if a["trigger"] == "scorecard_recommendation_change")
+        assert match["level"] == "WARNING"
+
+    def test_defensive_shift_fires_alert(self):
+        history = self._history([
+            {"as_of": "2026-06-01", "recommendation": "Add"},
+            {"as_of": "2026-06-02", "recommendation": "De-risk"},
+        ])
+        alerts = check_scorecard_alerts(self._current(), history, self._scorecard_cfg())
+        assert any(a["trigger"] == "scorecard_defensive_shift" and a["level"] == "ALERT" for a in alerts)
+
+    def test_beta_breach_fires_when_crossing_tolerance(self):
+        history = self._history([
+            {"as_of": "2026-06-01", "net_spread_beta": 0.32, "target_net_spread_beta": 0.30},
+            {"as_of": "2026-06-02", "net_spread_beta": 0.38, "target_net_spread_beta": 0.30},
+        ])
+        alerts = check_scorecard_alerts(self._current(), history, self._scorecard_cfg(scorecard_beta_tolerance=0.05))
+        assert any(a["trigger"] == "scorecard_beta_breach" for a in alerts)
+
+    def test_beta_under_tolerance_does_not_fire_with_single_row(self):
+        history = self._history([
+            {"as_of": "2026-06-02", "net_spread_beta": 0.29, "target_net_spread_beta": 0.30},
+        ])
+        alerts = check_scorecard_alerts(self._current(), history, self._scorecard_cfg(scorecard_beta_tolerance=0.05))
+        assert not any(a["trigger"] == "scorecard_beta_breach" for a in alerts)
+
+    def test_hedge_gap_fires_when_crossing_threshold(self):
+        history = self._history([
+            {"as_of": "2026-06-01", "incremental_cdx_hy_protection_pct": 0.0},
+            {"as_of": "2026-06-02", "incremental_cdx_hy_protection_pct": 8.0},
+        ])
+        alerts = check_scorecard_alerts(self._current(), history, self._scorecard_cfg(scorecard_hedge_gap_pct=5.0))
+        assert any(a["trigger"] == "scorecard_hedge_gap" for a in alerts)
+
+    def test_constraint_breach_fires_when_new(self):
+        history = self._history([
+            {"as_of": "2026-06-01", "constraint_breach_count": 0},
+            {"as_of": "2026-06-02", "constraint_breach_count": 1, "breached_constraints": "Max HY beta"},
+        ])
+        alerts = check_scorecard_alerts(self._current(), history, self._scorecard_cfg())
+        match = next(a for a in alerts if a["trigger"] == "scorecard_constraint_breach")
+        assert match["level"] == "ALERT"
+
+    def test_underpaid_credit_fires_when_crossing_threshold(self):
+        history = self._history([
+            {"as_of": "2026-06-01", "spread_compensation_ratio": 1.20},
+            {"as_of": "2026-06-02", "spread_compensation_ratio": 1.05},
+        ])
+        alerts = check_scorecard_alerts(self._current(), history, self._scorecard_cfg(scorecard_comp_ratio_min=1.10))
+        assert any(a["trigger"] == "scorecard_underpaid_credit" for a in alerts)
+
+    def test_run_alerts_includes_scorecard_history_alerts(self, tmp_path):
+        state_path = tmp_path / "state.json"
+        history_path = tmp_path / "scorecard_history.csv"
+        self._history([
+            {"as_of": "2026-06-01", "recommendation": "Hold"},
+            {"as_of": "2026-06-02", "recommendation": "De-risk"},
+        ]).to_csv(history_path, index=False)
+        df = _make_df(date="2026-06-02", final_decision="Neutral")
+        result = run_alerts(
+            df,
+            config=self._scorecard_cfg(dry_run=True),
+            state_path=state_path,
+            scorecard_history_path=history_path,
+        )
+        assert any(a["trigger"] == "scorecard_defensive_shift" for a in result["alerts"])
 
 
 # ---------------------------------------------------------------------------
