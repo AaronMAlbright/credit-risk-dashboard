@@ -419,6 +419,11 @@ if _active_sub is not None:
             if _pm_verdict:
                 st.markdown("**PM Final Verdict**")
                 st.caption(_pm_verdict)
+            _pm_attribution_table = _ccs.get("pm_attribution_table")
+            if _pm_attribution_table is not None and not _pm_attribution_table.empty:
+                st.markdown("**PM Attribution: What Changed**")
+                st.caption(_ccs.get("pm_attribution_summary_text", ""))
+                st.dataframe(_pm_attribution_table, use_container_width=True, hide_index=True)
             _pm_packet = build_pm_review_packet(df)
             if _pm_packet.get("available"):
                 _pkt1, _pkt2 = st.columns(2)

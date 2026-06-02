@@ -60,6 +60,7 @@ def test_build_pm_review_packet_exports_markdown_and_zip_bundle():
 
     assert result["available"] is True
     assert "# Credit Compensation PM Review Packet" in result["markdown"]
+    assert "PM Attribution: What Changed" in result["markdown"]
     assert "CDX Hedge Sizing" in result["markdown"]
     assert "Audit Rules" in result["markdown"]
     assert result["zip"]
@@ -68,6 +69,7 @@ def test_build_pm_review_packet_exports_markdown_and_zip_bundle():
         names = set(zf.namelist())
         assert "pm_review_packet.md" in names
         assert "rating_bucket_allocation.csv" in names
+        assert "pm_attribution.csv" in names
         assert "net_spread_beta.csv" in names
         assert "cdx_hedge_sizing.csv" in names
         assert "audit_rules.csv" in names

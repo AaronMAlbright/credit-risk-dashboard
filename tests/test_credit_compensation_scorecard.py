@@ -121,6 +121,9 @@ def test_scorecard_available_and_table_shaped():
         "gap_pct",
         "portfolio_action",
     }.issubset(result["constraint_table"].columns)
+    assert {"metric", "current", "prior", "change", "unit", "interpretation"}.issubset(
+        result["pm_attribution_table"].columns
+    )
     assert {
         "bucket",
         "spread_source",
@@ -138,6 +141,7 @@ def test_scorecard_available_and_table_shaped():
     assert set(result["rating_weights"]) == {"IG", "BBB", "BB", "B", "CCC", "Cash", "Hedge"}
     assert round(sum(result["rating_weights"].values()), 1) == 100.0
     assert result["pm_final_verdict"]
+    assert result["pm_attribution_summary_text"]
 
 
 def test_scorecard_adds_when_compensation_is_high_and_conditions_stable():
@@ -411,6 +415,30 @@ def test_scorecard_adds_pm_final_verdict():
     assert "expected excess return" in verdict
     assert "+100 bps spread shock" in verdict
     assert "key risk trigger" in verdict
+
+
+def test_scorecard_adds_pm_attribution_view():
+    result = build_credit_compensation_scorecard(_df())
+    table = result["pm_attribution_table"].set_index("metric")
+    summary = result["pm_attribution_summary"]
+
+    assert summary["available"] is True
+    assert summary["current_recommendation"] == result["recommendation"]
+    assert table.loc["Recommendation", "current"] == result["recommendation"]
+    assert table.loc["HY OAS", "change"] == "+300.0"
+    assert table.loc["Excess spread", "change"] == "+300.0"
+    assert "recommendation" in summary["interpretation"]
+
+
+def test_scorecard_pm_attribution_uses_date_column_for_as_of():
+    df = _df()
+    df = df.reset_index().rename(columns={"index": "date"})
+
+    result = build_credit_compensation_scorecard(df)
+    summary = result["pm_attribution_summary"]
+
+    assert summary["current_as_of"] == "2024-01-04"
+    assert summary["prior_as_of"] == "2024-01-01"
 
 
 def test_scorecard_adds_scenario_preset_stress():

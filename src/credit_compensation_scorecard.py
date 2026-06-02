@@ -1425,6 +1425,243 @@ def _scorecard_audit_trail(
     return pd.DataFrame(rows), {"summary": summary, "input_table": input_table}
 
 
+def _latest_as_of(df: pd.DataFrame):
+    if "date" in df.columns:
+        dates = pd.to_datetime(df["date"], errors="coerce").dropna()
+        if not dates.empty:
+            return dates.iloc[-1]
+    return df.index[-1] if len(df.index) else None
+
+
+def _scorecard_state_at(df: pd.DataFrame) -> dict:
+    """Compute the compact PM-facing scorecard state for the latest row in df."""
+    spread = latest_spread_snapshot(df)
+    hy_spread_bps = _spread_to_bps(
+        _safe_float(_latest_value(df, "hy_spread_bps"))
+        or _safe_float(spread.get("spread_oas_bps"))
+    )
+    ig_spread_bps = _spread_to_bps(_safe_float(_latest_value(df, "ig_spread_bps")))
+    hy_percentile = _safe_float(_latest_value(df, "hy_spread_percentile"))
+    ig_percentile = _safe_float(_latest_value(df, "ig_spread_percentile"))
+    bbb_ig_ratio = _safe_float(_latest_value(df, "bbb_ig_ratio"))
+    compensation_ratio = _safe_float(spread.get("spread_compensation_ratio"))
+    excess_spread_bps = _safe_float(spread.get("excess_spread_bps"))
+    expected_loss_bps = _safe_float(spread.get("expected_loss_bps"))
+    composite_score = _safe_float(_latest_value(df, "composite_risk_score_smooth"))
+    sloos_change_90d = _safe_float(_latest_value(df, "sloos_change_90d"))
+    chargeoff_change_90d = _safe_float(_latest_value(df, "chargeoff_change_90d"))
+    delinquency_change_90d = _safe_float(_latest_value(df, "delinquency_change_90d"))
+    chargeoff_pct = (
+        _safe_float(_latest_value(df, "actual_chargeoff_pct"))
+        or _safe_float(_latest_value(df, "business_chargeoff_rate"))
+    )
+    delinquency_pct = (
+        _safe_float(_latest_value(df, "actual_delinq_pct"))
+        or _safe_float(_latest_value(df, "ci_loan_delinquency"))
+    )
+
+    recommendation, drivers = _recommendation(
+        compensation_ratio=compensation_ratio,
+        excess_spread_bps=excess_spread_bps,
+        hy_percentile=hy_percentile,
+        composite_score=composite_score,
+        sloos_change_90d=sloos_change_90d,
+        chargeoff_change_90d=chargeoff_change_90d,
+        delinquency_change_90d=delinquency_change_90d,
+    )
+    rating_weights, _rating_table = _rating_bucket_allocation(
+        recommendation=recommendation,
+        hy_percentile=hy_percentile,
+        ig_percentile=ig_percentile,
+        bbb_ig_ratio=bbb_ig_ratio,
+        sloos_change_90d=sloos_change_90d,
+        chargeoff_change_90d=chargeoff_change_90d,
+        delinquency_change_90d=delinquency_change_90d,
+    )
+    _net_beta_table, net_beta = _net_spread_beta(rating_weights)
+    _cdx_table, cdx_hedge = _cdx_hedge_sizing(
+        rating_weights=rating_weights,
+        recommendation=recommendation,
+        net_spread_beta_summary=net_beta,
+    )
+
+    return {
+        "as_of": _latest_as_of(df),
+        "recommendation": recommendation,
+        "drivers": drivers,
+        "hy_oas_bps": hy_spread_bps,
+        "ig_oas_bps": ig_spread_bps,
+        "expected_loss_bps": expected_loss_bps,
+        "excess_spread_bps": excess_spread_bps,
+        "spread_compensation_ratio": compensation_ratio,
+        "hy_spread_percentile": hy_percentile,
+        "composite_risk_score": composite_score,
+        "sloos_change_90d": sloos_change_90d,
+        "chargeoff_rate_pct": chargeoff_pct,
+        "delinquency_rate_pct": delinquency_pct,
+        "chargeoff_change_90d": chargeoff_change_90d,
+        "delinquency_change_90d": delinquency_change_90d,
+        "ig_weight_pct": rating_weights["IG"],
+        "bbb_weight_pct": rating_weights["BBB"],
+        "bb_weight_pct": rating_weights["BB"],
+        "b_weight_pct": rating_weights["B"],
+        "ccc_weight_pct": rating_weights["CCC"],
+        "cash_weight_pct": rating_weights["Cash"],
+        "hedge_weight_pct": rating_weights["Hedge"],
+        "net_spread_beta": net_beta["net_spread_beta"],
+        "incremental_cdx_hy_protection_pct": cdx_hedge["incremental_cdx_hy_protection_pct"],
+    }
+
+
+def _fmt_attribution_value(value, unit: str) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    if isinstance(value, str):
+        return value
+    if unit in {"bps", "% NAV", "%", "pct", "score"}:
+        return f"{float(value):.1f}"
+    if unit == "x":
+        return f"{float(value):.2f}"
+    return str(value)
+
+
+def _fmt_attribution_change(value, unit: str) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    if isinstance(value, str):
+        return value
+    prefix = "+" if float(value) > 0 else ""
+    if unit == "x":
+        return f"{prefix}{float(value):.2f}"
+    return f"{prefix}{float(value):.1f}"
+
+
+def _change_interpretation(metric: str, change: float | str | None) -> str:
+    if change is None or pd.isna(change):
+        return "Prior comparison unavailable"
+    if isinstance(change, str):
+        return "Changed" if change else "Unchanged"
+    if abs(float(change)) < 0.05:
+        return "Little changed"
+    direction = "higher" if float(change) > 0 else "lower"
+    risk_up_positive = {
+        "HY OAS",
+        "IG OAS",
+        "Expected loss",
+        "Composite risk score",
+        "SLOOS 90d change",
+        "Charge-off rate",
+        "Delinquency rate",
+        "Charge-off 90d change",
+        "Delinquency 90d change",
+        "B weight",
+        "CCC weight",
+        "Net spread beta",
+        "Incremental CDX HY protection",
+    }
+    risk_down_positive = {
+        "Excess spread",
+        "Compensation ratio",
+        "Cash weight",
+        "Hedge weight",
+    }
+    if metric in risk_up_positive:
+        risk = "risk pressure increased" if float(change) > 0 else "risk pressure eased"
+    elif metric in risk_down_positive:
+        risk = "risk cushion improved" if float(change) > 0 else "risk cushion deteriorated"
+    else:
+        risk = "portfolio stance moved"
+    return f"{direction}; {risk}"
+
+
+def _pm_attribution_table(df: pd.DataFrame, lookback_rows: int = 21) -> tuple[pd.DataFrame, dict]:
+    """Explain what changed between the latest scorecard and a prior review date."""
+    if df.empty:
+        empty = pd.DataFrame(columns=["metric", "current", "prior", "change", "unit", "interpretation"])
+        return empty, {"available": False, "reason": "No data available"}
+
+    latest_pos = len(df) - 1
+    prior_pos = max(0, latest_pos - lookback_rows)
+    if prior_pos == latest_pos:
+        empty = pd.DataFrame(columns=["metric", "current", "prior", "change", "unit", "interpretation"])
+        return empty, {"available": False, "reason": "Need at least two observations"}
+
+    current = _scorecard_state_at(df.iloc[: latest_pos + 1])
+    prior = _scorecard_state_at(df.iloc[: prior_pos + 1])
+
+    metric_specs = [
+        ("Recommendation", "recommendation", ""),
+        ("HY OAS", "hy_oas_bps", "bps"),
+        ("IG OAS", "ig_oas_bps", "bps"),
+        ("Expected loss", "expected_loss_bps", "bps"),
+        ("Excess spread", "excess_spread_bps", "bps"),
+        ("Compensation ratio", "spread_compensation_ratio", "x"),
+        ("HY percentile", "hy_spread_percentile", "pct"),
+        ("Composite risk score", "composite_risk_score", "score"),
+        ("SLOOS 90d change", "sloos_change_90d", "%"),
+        ("Charge-off rate", "chargeoff_rate_pct", "%"),
+        ("Delinquency rate", "delinquency_rate_pct", "%"),
+        ("Charge-off 90d change", "chargeoff_change_90d", "%"),
+        ("Delinquency 90d change", "delinquency_change_90d", "%"),
+        ("IG weight", "ig_weight_pct", "% NAV"),
+        ("BBB weight", "bbb_weight_pct", "% NAV"),
+        ("BB weight", "bb_weight_pct", "% NAV"),
+        ("B weight", "b_weight_pct", "% NAV"),
+        ("CCC weight", "ccc_weight_pct", "% NAV"),
+        ("Cash weight", "cash_weight_pct", "% NAV"),
+        ("Hedge weight", "hedge_weight_pct", "% NAV"),
+        ("Net spread beta", "net_spread_beta", "x"),
+        ("Incremental CDX HY protection", "incremental_cdx_hy_protection_pct", "% NAV"),
+    ]
+
+    rows = []
+    for metric, key, unit in metric_specs:
+        curr = current.get(key)
+        prev = prior.get(key)
+        if isinstance(curr, str) or isinstance(prev, str):
+            change = "" if curr == prev else f"{prev or '-'} -> {curr or '-'}"
+        else:
+            change = None if curr is None or prev is None else float(curr) - float(prev)
+        rows.append(
+            {
+                "metric": metric,
+                "current": _fmt_attribution_value(curr, unit),
+                "prior": _fmt_attribution_value(prev, unit),
+                "change": _fmt_attribution_change(change, unit),
+                "unit": unit or "label",
+                "interpretation": _change_interpretation(metric, change),
+            }
+        )
+
+    table = pd.DataFrame(rows)
+    numeric_changes = [
+        (row["metric"], row["change"])
+        for row in rows
+        if row["change"] not in {"-", ""} and row["unit"] != "label"
+    ]
+    largest = sorted(
+        numeric_changes,
+        key=lambda item: abs(float(str(item[1]).replace("+", ""))),
+        reverse=True,
+    )[:3]
+    drivers = ", ".join(f"{metric} {change}" for metric, change in largest) if largest else "little changed"
+    summary = {
+        "available": True,
+        "current_as_of": str(pd.Timestamp(current["as_of"]).date()),
+        "prior_as_of": str(pd.Timestamp(prior["as_of"]).date()),
+        "lookback_rows": int(latest_pos - prior_pos),
+        "recommendation_changed": current["recommendation"] != prior["recommendation"],
+        "current_recommendation": current["recommendation"],
+        "prior_recommendation": prior["recommendation"],
+        "largest_changes": drivers,
+        "interpretation": (
+            f"Since {pd.Timestamp(prior['as_of']).date()}, recommendation "
+            f"{prior['recommendation']} -> {current['recommendation']}; largest moves: {drivers}."
+        ),
+    }
+    return table, summary
+
+
 def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
     """Return the current credit compensation scorecard."""
     if df.empty:
@@ -1583,7 +1820,8 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         forward_outcomes=forward_outcomes,
         bucket_return_summary=bucket_return_summary,
     )
-    as_of = df.index[-1] if len(df.index) else None
+    pm_attribution_table, pm_attribution_summary = _pm_attribution_table(df)
+    as_of = _latest_as_of(df)
     audit_table, audit_artifacts = _scorecard_audit_trail(
         as_of=as_of,
         recommendation=rec,
@@ -1645,6 +1883,7 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "scenario_preset_summary": scenario_preset_summary,
         "constraint_summary": constraint_summary,
         "pm_final_verdict": pm_final_verdict,
+        "pm_attribution_summary": pm_attribution_summary,
         "confidence_summary": confidence_summary,
         "audit_summary": audit_summary,
     }
@@ -1713,6 +1952,9 @@ def build_credit_compensation_scorecard(df: pd.DataFrame) -> dict:
         "constraint_table": constraint_table,
         "constraint_summary": constraint_summary,
         "constraint_summary_text": constraint_summary["interpretation"],
+        "pm_attribution_table": pm_attribution_table,
+        "pm_attribution_summary": pm_attribution_summary,
+        "pm_attribution_summary_text": pm_attribution_summary.get("interpretation", pm_attribution_summary.get("reason", "")),
         "pm_final_verdict": pm_final_verdict,
         "confidence_table": confidence_table,
         "confidence_summary": confidence_summary,

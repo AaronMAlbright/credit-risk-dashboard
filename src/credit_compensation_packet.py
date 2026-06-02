@@ -83,6 +83,7 @@ def build_pm_review_packet(df: pd.DataFrame) -> dict:
     ]
 
     _add_section(lines, "Trade Memo", table=scorecard.get("memo_table"))
+    _add_section(lines, "PM Attribution: What Changed", scorecard.get("pm_attribution_summary_text"), scorecard.get("pm_attribution_table"))
     _add_section(lines, "Portfolio Expression", table=scorecard.get("action_table"))
     _add_section(lines, "Rating-Bucket Allocation", table=scorecard.get("rating_bucket_table"))
     _add_section(lines, "Net Spread Beta", scorecard.get("net_spread_beta_summary_text"), scorecard.get("net_spread_beta_table"))
@@ -99,6 +100,7 @@ def build_pm_review_packet(df: pd.DataFrame) -> dict:
     tables = {
         "scorecard_metrics": scorecard.get("table"),
         "trade_memo": scorecard.get("memo_table"),
+        "pm_attribution": scorecard.get("pm_attribution_table"),
         "portfolio_expression": scorecard.get("action_table"),
         "rating_bucket_allocation": scorecard.get("rating_bucket_table"),
         "risk_reward": scorecard.get("risk_reward_table"),
