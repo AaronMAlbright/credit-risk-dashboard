@@ -10,7 +10,7 @@ for _k, _v in st.secrets.items():
         os.environ.setdefault(_k, _v)
 
 from src.report_generator import generate_html_report, generate_excel_report
-from src.data_pipeline import check_api_key, run_pipeline, fetch_source_dates
+from src.data_pipeline import check_api_key, diagnose_refresh_limit, fetch_source_dates, run_pipeline
 from src.bootstrap import run_bootstrap_analysis
 from src.regime_attribution import COMPOSITE_WEIGHTS, DISPLAY_NAMES, SCORE_COLS, run_regime_attribution
 from src.regime_charts import (
@@ -1132,6 +1132,19 @@ with st.sidebar.expander("Source freshness"):
                 st.write(f"⚠ {info['label']}: {info['last_date']} ({info['days_stale']}d stale)")
             else:
                 st.write(f"⚠⚠ {info['label']}: {info['last_date']} ({info['days_stale']}d stale)")
+    if st.button("Diagnose refresh limit", key="diagnose_refresh_limit"):
+        with st.spinner("Checking raw source limits…"):
+            _diag = diagnose_refresh_limit()
+        if not _diag.get("available"):
+            st.write(f"Refresh diagnostic unavailable: {_diag.get('reason')}")
+        else:
+            st.write(f"CSV latest: {_diag.get('csv_last_date')}")
+            st.write(f"Raw latest: {_diag.get('raw_last_date')}")
+            st.write(f"Latest complete core row: {_diag.get('latest_complete_core_date')}")
+            st.write(f"Status: {_diag.get('reason')}")
+            _limits = _diag.get("limiting_columns") or []
+            if _limits:
+                st.write("Limiting columns: " + ", ".join(_limits))
 
 st.sidebar.divider()
 

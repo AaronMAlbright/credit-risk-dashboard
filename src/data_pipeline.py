@@ -40,6 +40,7 @@ _FRED_SERIES: dict[str, str] = fred_source_labels()
 _DEFAULT_TIMEOUT  = 360     # seconds — pipeline can be slow on first run
 _CSV_PATH         = Path("data/scored_macro_credit_data.csv")
 _APP_SCRIPT       = "app.py"
+_CORE_REFRESH_COLUMNS = ["yield_10y", "yield_2y", "vix", "hy_spread", "sp500", "unemployment", "nfci"]
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +106,102 @@ def fetch_source_dates(start_date: str = "2020-01-01") -> dict[str, dict]:
                            "error": str(exc)}
 
     return result
+
+
+def get_csv_freshness(csv_path: Path | str = _CSV_PATH) -> dict:
+    """Return latest scored CSV date and business-day staleness."""
+    path = Path(csv_path)
+    if not path.exists():
+        return {"csv_last_date": None, "csv_bdays_stale": None, "row_count": 0}
+
+    try:
+        df = pd.read_csv(path, usecols=["date"])
+        last = pd.to_datetime(df["date"]).max().normalize()
+        today = pd.Timestamp.now().normalize()
+        bdays_stale = max(0, len(pd.bdate_range(last + pd.Timedelta(days=1), today)))
+        return {
+            "csv_last_date": str(last.date()),
+            "csv_bdays_stale": bdays_stale,
+            "row_count": int(len(df)),
+        }
+    except Exception as exc:
+        return {
+            "csv_last_date": None,
+            "csv_bdays_stale": None,
+            "row_count": 0,
+            "error": str(exc),
+        }
+
+
+def diagnose_refresh_limit(
+    start: str = "1999-01-01",
+    csv_path: Path | str = _CSV_PATH,
+) -> dict:
+    """
+    Diagnose whether scored data freshness is limited by raw source columns or
+    by a pipeline output that has not been regenerated.
+
+    This is intentionally separate from the fast sidebar status because loading
+    raw market data can touch cache/network-backed data sources.
+    """
+    csv = get_csv_freshness(csv_path)
+    try:
+        from src.market_data import load_all_series
+
+        raw = load_all_series(start=start)
+    except Exception as exc:
+        return {
+            **csv,
+            "available": False,
+            "reason": f"raw source load failed: {exc}",
+            "raw_last_date": None,
+            "latest_complete_core_date": None,
+            "limiting_columns": [],
+            "column_last_dates": {},
+        }
+
+    column_last_dates: dict[str, str | None] = {}
+    for col in _CORE_REFRESH_COLUMNS:
+        if col not in raw.columns:
+            column_last_dates[col] = None
+            continue
+        s = raw[col].dropna()
+        column_last_dates[col] = None if s.empty else str(pd.Timestamp(s.index[-1]).date())
+
+    present_core = [col for col in _CORE_REFRESH_COLUMNS if col in raw.columns]
+    latest_complete = None
+    if present_core:
+        complete = raw.dropna(subset=present_core)
+        if not complete.empty:
+            latest_complete = pd.Timestamp(complete.index[-1]).normalize()
+
+    raw_last = pd.Timestamp(raw.index[-1]).normalize() if not raw.empty else None
+    csv_last = pd.Timestamp(csv["csv_last_date"]).normalize() if csv.get("csv_last_date") else None
+
+    limiting_columns: list[str] = []
+    reason = "current"
+    if raw_last is None or latest_complete is None:
+        reason = "raw sources unavailable"
+    elif latest_complete < raw_last:
+        reason = "core source column limited"
+        limiting_columns = [
+            col for col, last in column_last_dates.items()
+            if last == str(latest_complete.date())
+        ]
+    elif csv_last is not None and csv_last < latest_complete:
+        reason = "pipeline output stale"
+    elif csv_last is None:
+        reason = "scored CSV unavailable"
+
+    return {
+        **csv,
+        "available": True,
+        "reason": reason,
+        "raw_last_date": None if raw_last is None else str(raw_last.date()),
+        "latest_complete_core_date": None if latest_complete is None else str(latest_complete.date()),
+        "limiting_columns": limiting_columns,
+        "column_last_dates": column_last_dates,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +303,7 @@ def run_pipeline(
         }
 
 
-def get_pipeline_status(fast: bool = True) -> dict:
+def get_pipeline_status(fast: bool = True, include_diagnostic: bool = False) -> dict:
     """
     Combined status for the sidebar display.
 
@@ -220,28 +317,19 @@ def get_pipeline_status(fast: bool = True) -> dict:
       csv_last_date  — str | None
       csv_bdays_stale— int
       source_dates   — dict from fetch_source_dates() or {} when fast=True
+      refresh_diagnostic — optional diagnose_refresh_limit() result
     """
     key_status = check_api_key()
-
-    csv_last_date = None
-    csv_bdays_stale = None
-    if _CSV_PATH.exists():
-        try:
-            df = pd.read_csv(_CSV_PATH, usecols=["date"])
-            last = pd.to_datetime(df["date"]).max().normalize()
-            csv_last_date = str(last.date())
-            today = pd.Timestamp.now().normalize()
-            csv_bdays_stale = max(0, len(pd.bdate_range(
-                last + pd.Timedelta(days=1), today
-            )))
-        except Exception:
-            pass
+    csv = get_csv_freshness()
 
     source_dates = fetch_source_dates() if not fast else {}
+    refresh_diagnostic = diagnose_refresh_limit() if include_diagnostic else {}
 
     return {
         "key_status":      key_status,
-        "csv_last_date":   csv_last_date,
-        "csv_bdays_stale": csv_bdays_stale,
+        "csv_last_date":   csv["csv_last_date"],
+        "csv_bdays_stale": csv["csv_bdays_stale"],
+        "row_count":       csv["row_count"],
         "source_dates":    source_dates,
+        "refresh_diagnostic": refresh_diagnostic,
     }

@@ -20,7 +20,9 @@ from src.data_pipeline import (
     _DEFAULT_TIMEOUT,
     _FRED_SERIES,
     check_api_key,
+    diagnose_refresh_limit,
     fetch_source_dates,
+    get_csv_freshness,
     get_pipeline_status,
     run_pipeline,
 )
@@ -298,7 +300,7 @@ class TestGetPipelineStatus:
 
     def test_all_keys_present(self):
         result = get_pipeline_status(fast=True)
-        for key in ["key_status", "csv_last_date", "csv_bdays_stale", "source_dates"]:
+        for key in ["key_status", "csv_last_date", "csv_bdays_stale", "row_count", "source_dates", "refresh_diagnostic"]:
             assert key in result
 
     def test_fast_mode_has_empty_source_dates(self):
@@ -330,6 +332,70 @@ class TestGetPipelineStatus:
         with patch("src.data_pipeline.fetch_source_dates", return_value=mock_dates):
             result = get_pipeline_status(fast=False)
         assert result["source_dates"] == mock_dates
+
+    def test_include_diagnostic_calls_refresh_diagnostic(self):
+        diagnostic = {"available": True, "reason": "current"}
+        with patch("src.data_pipeline.diagnose_refresh_limit", return_value=diagnostic):
+            result = get_pipeline_status(fast=True, include_diagnostic=True)
+        assert result["refresh_diagnostic"] == diagnostic
+
+
+class TestRefreshDiagnostics:
+    def test_get_csv_freshness_reads_latest_date(self, tmp_path):
+        csv = tmp_path / "scored.csv"
+        csv.write_text("date,val\n2026-05-29,1\n2026-06-02,2\n")
+
+        result = get_csv_freshness(csv)
+
+        assert result["csv_last_date"] == "2026-06-02"
+        assert result["row_count"] == 2
+
+    def test_diagnose_refresh_limit_flags_core_source_column(self, tmp_path):
+        csv = tmp_path / "scored.csv"
+        csv.write_text("date,val\n2026-05-20,1\n")
+        idx = pd.bdate_range("2026-05-20", "2026-06-02")
+        raw = pd.DataFrame(
+            {
+                "yield_10y": 1.0,
+                "yield_2y": 1.0,
+                "vix": 1.0,
+                "hy_spread": 1.0,
+                "sp500": 1.0,
+                "unemployment": [1.0] + [pd.NA] * (len(idx) - 1),
+                "nfci": 1.0,
+            },
+            index=idx,
+        )
+
+        with patch("src.market_data.load_all_series", return_value=raw):
+            result = diagnose_refresh_limit(csv_path=csv)
+
+        assert result["reason"] == "core source column limited"
+        assert result["latest_complete_core_date"] == "2026-05-20"
+        assert "unemployment" in result["limiting_columns"]
+
+    def test_diagnose_refresh_limit_flags_stale_pipeline_output(self, tmp_path):
+        csv = tmp_path / "scored.csv"
+        csv.write_text("date,val\n2026-05-20,1\n")
+        idx = pd.bdate_range("2026-05-20", "2026-06-02")
+        raw = pd.DataFrame(
+            {
+                "yield_10y": 1.0,
+                "yield_2y": 1.0,
+                "vix": 1.0,
+                "hy_spread": 1.0,
+                "sp500": 1.0,
+                "unemployment": 1.0,
+                "nfci": 1.0,
+            },
+            index=idx,
+        )
+
+        with patch("src.market_data.load_all_series", return_value=raw):
+            result = diagnose_refresh_limit(csv_path=csv)
+
+        assert result["reason"] == "pipeline output stale"
+        assert result["latest_complete_core_date"] == "2026-06-02"
 
 
 # ---------------------------------------------------------------------------

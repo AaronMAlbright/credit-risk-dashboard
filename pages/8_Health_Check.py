@@ -12,6 +12,7 @@ st.set_page_config(
 )
 
 from utils.shared import load_data, _ANALYTICS_VIEWS
+from src.data_pipeline import diagnose_refresh_limit, get_pipeline_status
 from src.data_sources import source_rows
 
 st.title("🩺 Dashboard Health Check")
@@ -20,20 +21,48 @@ st.title("🩺 Dashboard Health Check")
 st.subheader("Data Freshness")
 try:
     df = load_data()
+    _pipeline_status = get_pipeline_status(fast=True)
     _last_date = pd.to_datetime(df["date"]).max() if "date" in df.columns else df.index.max()
     _age_days  = (pd.Timestamp.now() - pd.Timestamp(_last_date)).days
     _nrows, _ncols = df.shape
-    _c1, _c2, _c3, _c4 = st.columns(4)
+    _c1, _c2, _c3, _c4, _c5 = st.columns(5)
     _c1.metric("Last data point", str(_last_date.date()))
     _c2.metric("Data age", f"{_age_days} day(s)")
     _c3.metric("Rows", f"{_nrows:,}")
     _c4.metric("Columns", str(_ncols))
+    _c5.metric("Trading-day stale", str(_pipeline_status.get("csv_bdays_stale", "-")))
     if _age_days > 3:
         st.warning(f"Data is {_age_days} days old — daily refresh may have failed. Check GitHub Actions.")
     elif _age_days > 1:
         st.info(f"Data is {_age_days} day(s) old (expected if weekend or holiday).")
     else:
         st.success("Data is current.")
+    with st.expander("Refresh limit diagnostic", expanded=False):
+        if st.button("Run refresh diagnostic", key="health_refresh_diagnostic"):
+            with st.spinner("Checking raw source limits..."):
+                _diag = diagnose_refresh_limit()
+            if not _diag.get("available"):
+                st.warning(_diag.get("reason", "Refresh diagnostic unavailable."))
+            else:
+                _d1, _d2, _d3 = st.columns(3)
+                _d1.metric("CSV latest", _diag.get("csv_last_date") or "-")
+                _d2.metric("Raw latest", _diag.get("raw_last_date") or "-")
+                _d3.metric("Complete core row", _diag.get("latest_complete_core_date") or "-")
+                st.caption(f"Status: {_diag.get('reason')}")
+                _limits = _diag.get("limiting_columns") or []
+                if _limits:
+                    st.warning("Limiting columns: " + ", ".join(_limits))
+                _col_dates = _diag.get("column_last_dates") or {}
+                if _col_dates:
+                    st.dataframe(
+                        pd.DataFrame(
+                            [{"column": col, "last_date": last} for col, last in _col_dates.items()]
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+        else:
+            st.caption("Run this when the scored CSV is stale and you need to see whether raw source coverage or pipeline output is the limiter.")
 except Exception as _de:
     st.error(f"Could not load data: {_de}")
 
