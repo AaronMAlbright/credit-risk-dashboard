@@ -6,6 +6,7 @@ import zipfile
 
 import pandas as pd
 
+from src.credit_compensation_overrides import get_active_override, load_overrides
 from src.credit_compensation_scorecard import build_credit_compensation_scorecard
 from src.credit_compensation_validation import (
     analyze_scorecard_prediction_errors,
@@ -64,6 +65,9 @@ def build_pm_review_packet(df: pd.DataFrame) -> dict:
     current = scorecard.get("current", {})
     as_of = scorecard.get("audit_summary", {}).get("as_of")
     recommendation = scorecard.get("recommendation", "Unavailable")
+    active_override = get_active_override(as_of=as_of)
+    override = active_override.get("override") if active_override.get("available") else None
+    override_table = pd.DataFrame([override]) if override else pd.DataFrame()
     lines = [
         "# Credit Compensation PM Review Packet",
         "",
@@ -81,6 +85,20 @@ def build_pm_review_packet(df: pd.DataFrame) -> dict:
         f"- Net spread beta: {scorecard['net_spread_beta_summary']['net_spread_beta']:.2f}x",
         f"- Incremental CDX HY protection: {scorecard['cdx_hedge_summary']['incremental_cdx_hy_protection_pct']:.1f}% NAV",
     ]
+
+    if override:
+        lines.extend([
+            "",
+            "## Active Override / IC Memo",
+            "",
+            f"- Model recommendation: {override.get('model_recommendation')}",
+            f"- Override recommendation: {override.get('override_recommendation')}",
+            f"- Owner: {override.get('owner')}",
+            f"- Effective: {override.get('effective_date')} through {override.get('expiration_date')}",
+            f"- Rationale: {override.get('rationale')}",
+        ])
+    else:
+        lines.extend(["", "## Active Override / IC Memo", "", "_No active override._"])
 
     _add_section(lines, "Trade Memo", table=scorecard.get("memo_table"))
     _add_section(lines, "PM Attribution: What Changed", scorecard.get("pm_attribution_summary_text"), scorecard.get("pm_attribution_table"))
@@ -101,6 +119,8 @@ def build_pm_review_packet(df: pd.DataFrame) -> dict:
         "scorecard_metrics": scorecard.get("table"),
         "trade_memo": scorecard.get("memo_table"),
         "pm_attribution": scorecard.get("pm_attribution_table"),
+        "active_override": override_table,
+        "override_history": load_overrides(),
         "portfolio_expression": scorecard.get("action_table"),
         "rating_bucket_allocation": scorecard.get("rating_bucket_table"),
         "risk_reward": scorecard.get("risk_reward_table"),

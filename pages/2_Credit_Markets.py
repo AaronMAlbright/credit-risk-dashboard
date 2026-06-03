@@ -184,6 +184,7 @@ from src.credit_positioning import positioning_table, current_positioning
 from src.spread_decomposition import latest_spread_snapshot
 from src.credit_compensation_packet import build_pm_review_packet
 from src.credit_compensation_history import build_scorecard_trend_views, load_scorecard_history
+from src.credit_compensation_overrides import get_active_override, save_override
 from src.credit_compensation_scorecard import build_credit_compensation_scorecard
 from src.credit_compensation_validation import (
     analyze_scorecard_prediction_errors,
@@ -420,6 +421,49 @@ if _active_sub is not None:
             if _pm_verdict:
                 st.markdown("**PM Final Verdict**")
                 st.caption(_pm_verdict)
+            _active_override = get_active_override(as_of=_ccs.get("audit_summary", {}).get("as_of"))
+            if _active_override.get("available"):
+                _override = _active_override["override"]
+                st.warning(
+                    "Active PM/IC override: "
+                    f"model {_override.get('model_recommendation')} -> "
+                    f"{_override.get('override_recommendation')} "
+                    f"through {_override.get('expiration_date')}."
+                )
+                st.caption(f"Owner: {_override.get('owner')} | Rationale: {_override.get('rationale')}")
+            with st.expander("Record PM/IC override", expanded=False):
+                with st.form("scorecard_override_form"):
+                    _or1, _or2, _or3 = st.columns(3)
+                    _override_rec = _or1.selectbox(
+                        "Override recommendation",
+                        ["Add", "Hold", "Upgrade Quality", "Hedge", "De-risk"],
+                        index=["Add", "Hold", "Upgrade Quality", "Hedge", "De-risk"].index(_rec)
+                        if _rec in {"Add", "Hold", "Upgrade Quality", "Hedge", "De-risk"} else 1,
+                    )
+                    _override_owner = _or2.text_input("Owner", value="PM/IC")
+                    _override_expiration = _or3.date_input(
+                        "Expiration date",
+                        value=(pd.Timestamp.today().normalize() + pd.Timedelta(days=30)).date(),
+                    )
+                    _override_rationale = st.text_area(
+                        "Rationale",
+                        placeholder="Document mandate, liquidity, issuer exposure, risk-budget, or IC rationale.",
+                    )
+                    _override_submit = st.form_submit_button("Save override")
+                    if _override_submit:
+                        _saved_override = save_override(
+                            model_recommendation=_rec,
+                            override_recommendation=_override_rec,
+                            rationale=_override_rationale,
+                            owner=_override_owner,
+                            effective_date=pd.Timestamp.today().date(),
+                            expiration_date=_override_expiration,
+                        )
+                        if _saved_override.get("available"):
+                            st.success("Override saved.")
+                            st.rerun()
+                        else:
+                            st.error(_saved_override.get("reason", "Override could not be saved."))
             _pm_attribution_table = _ccs.get("pm_attribution_table")
             if _pm_attribution_table is not None and not _pm_attribution_table.empty:
                 st.markdown("**PM Attribution: What Changed**")

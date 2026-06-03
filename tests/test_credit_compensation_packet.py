@@ -61,9 +61,11 @@ def test_build_pm_review_packet_exports_markdown_and_zip_bundle():
     assert result["available"] is True
     assert "# Credit Compensation PM Review Packet" in result["markdown"]
     assert "PM Attribution: What Changed" in result["markdown"]
+    assert "Active Override / IC Memo" in result["markdown"]
     assert "CDX Hedge Sizing" in result["markdown"]
     assert "Audit Rules" in result["markdown"]
     assert result["zip"]
+    assert "override_history" in result["tables"]
 
     with zipfile.ZipFile(io.BytesIO(result["zip"])) as zf:
         names = set(zf.namelist())

@@ -14,6 +14,7 @@ st.set_page_config(
 from utils.shared import load_data, _ANALYTICS_VIEWS
 from src.alert_engine import AlertConfig, check_scorecard_alerts, extract_current_state
 from src.credit_compensation_history import load_scorecard_history
+from src.credit_compensation_overrides import override_status_summary
 from src.data_pipeline import diagnose_refresh_limit, get_pipeline_status
 from src.data_sources import source_rows
 
@@ -67,6 +68,24 @@ try:
             st.caption("Run this when the scored CSV is stale and you need to see whether raw source coverage or pipeline output is the limiter.")
 except Exception as _de:
     st.error(f"Could not load data: {_de}")
+
+st.divider()
+
+# -- Scorecard override status ------------------------------------------------
+st.subheader("Scorecard Override Status")
+try:
+    _override_summary = override_status_summary()
+    _o1, _o2, _o3 = st.columns(3)
+    _o1.metric("Active overrides", str(_override_summary.get("active_count", 0)))
+    _o2.metric("Expiring soon", str(_override_summary.get("expiring_soon_count", 0)))
+    _o3.metric("Expired overrides", str(_override_summary.get("expired_count", 0)))
+    _override_table = _override_summary.get("table")
+    if _override_table is not None and not _override_table.empty:
+        st.dataframe(_override_table.tail(10), use_container_width=True, hide_index=True)
+    else:
+        st.success("No PM/IC overrides recorded.")
+except Exception as _soe:
+    st.caption(f"Scorecard override status unavailable: {_soe}")
 
 st.divider()
 
