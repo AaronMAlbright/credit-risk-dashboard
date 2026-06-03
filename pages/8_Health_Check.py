@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 from utils.shared import load_data, _ANALYTICS_VIEWS
-from src.alert_engine import AlertConfig, check_scorecard_alerts, extract_current_state
+from src.alert_engine import AlertConfig, check_override_alerts, check_scorecard_alerts, extract_current_state
 from src.credit_compensation_history import load_scorecard_history
 from src.credit_compensation_overrides import override_status_summary
 from src.data_pipeline import diagnose_refresh_limit, get_pipeline_status
@@ -108,6 +108,7 @@ try:
             dry_run=True,
         ),
     )
+    _scorecard_alerts.extend(check_override_alerts(_current_state, _history, AlertConfig(dry_run=True)))
     if _history.empty:
         st.warning("Scorecard history is unavailable.")
     else:

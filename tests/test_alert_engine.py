@@ -24,6 +24,7 @@ from src.alert_engine import (
     DEFAULT_STATE,
     AlertConfig,
     check_alerts,
+    check_override_alerts,
     check_scorecard_alerts,
     config_from_env,
     extract_current_state,
@@ -550,6 +551,136 @@ class TestScorecardAlerts:
             scorecard_history_path=history_path,
         )
         assert any(a["trigger"] == "scorecard_defensive_shift" for a in result["alerts"])
+
+
+# ---------------------------------------------------------------------------
+# override-aware alerts
+# ---------------------------------------------------------------------------
+
+class TestOverrideAlerts:
+    def _current(self, date="2026-06-02") -> dict:
+        return {**DEFAULT_STATE, "last_date": date, "decision": "Neutral", "composite": 40.0}
+
+    def _history(self, rows: list[dict]) -> pd.DataFrame:
+        defaults = {
+            "as_of": "2026-06-02",
+            "recorded_at": "2026-06-02T12:00:00",
+            "recommendation": "Upgrade Quality",
+            "net_spread_beta": 0.25,
+            "target_net_spread_beta": 0.30,
+            "incremental_cdx_hy_protection_pct": 0.0,
+            "constraint_breach_count": 0,
+            "breached_constraints": "",
+            "spread_compensation_ratio": 1.30,
+        }
+        return pd.DataFrame([{**defaults, **row} for row in rows])
+
+    def _overrides(self, rows: list[dict], path: Path) -> Path:
+        defaults = {
+            "override_id": "ovr-1",
+            "created_at": "2026-06-01T12:00:00",
+            "model_recommendation": "Upgrade Quality",
+            "override_recommendation": "Hold",
+            "rationale": "IC wants to keep risk stable.",
+            "owner": "IC",
+            "effective_date": "2026-06-01",
+            "expiration_date": "2026-06-30",
+            "status": "active",
+        }
+        pd.DataFrame([{**defaults, **row} for row in rows]).to_csv(path, index=False)
+        return path
+
+    def _cfg(self, **kw) -> AlertConfig:
+        return _cfg(
+            check_regime_change=False,
+            check_blend_below=False,
+            check_composite_spike=False,
+            check_shock_flag=False,
+            check_composite_cross=False,
+            check_scorecard_alerts=True,
+            check_override_alerts=True,
+            **kw,
+        )
+
+    def test_expiring_override_warns(self, tmp_path):
+        override_path = self._overrides([
+            {"expiration_date": "2026-06-05", "override_recommendation": "Hold"},
+        ], tmp_path / "overrides.csv")
+
+        alerts = check_override_alerts(
+            self._current("2026-06-02"),
+            self._history([{"recommendation": "Upgrade Quality"}]),
+            self._cfg(override_expiring_days=7),
+            override_path=override_path,
+        )
+
+        assert any(a["trigger"] == "override_expiring_soon" for a in alerts)
+
+    def test_risk_on_override_conflicts_with_defensive_scorecard(self, tmp_path):
+        override_path = self._overrides([
+            {"override_recommendation": "Hold"},
+        ], tmp_path / "overrides.csv")
+
+        alerts = check_override_alerts(
+            self._current(),
+            self._history([{"recommendation": "De-risk"}]),
+            self._cfg(),
+            override_path=override_path,
+        )
+
+        match = next(a for a in alerts if a["trigger"] == "override_conflicts_defensive_scorecard")
+        assert match["level"] == "ALERT"
+
+    def test_active_override_warns_when_model_recommendation_changes(self, tmp_path):
+        override_path = self._overrides([
+            {"override_recommendation": "Hold"},
+        ], tmp_path / "overrides.csv")
+
+        alerts = check_override_alerts(
+            self._current(),
+            self._history([
+                {"as_of": "2026-06-01", "recommendation": "Add"},
+                {"as_of": "2026-06-02", "recommendation": "Upgrade Quality"},
+            ]),
+            self._cfg(),
+            override_path=override_path,
+        )
+
+        assert any(a["trigger"] == "override_active_model_changed" for a in alerts)
+
+    def test_expired_active_override_warns_even_without_active_override(self, tmp_path):
+        override_path = self._overrides([
+            {"expiration_date": "2026-06-01", "status": "active"},
+        ], tmp_path / "overrides.csv")
+
+        alerts = check_override_alerts(
+            self._current("2026-06-02"),
+            self._history([{"recommendation": "Upgrade Quality"}]),
+            self._cfg(),
+            override_path=override_path,
+        )
+
+        assert any(a["trigger"] == "override_expired_active" for a in alerts)
+
+    def test_run_alerts_includes_override_alerts(self, tmp_path):
+        state_path = tmp_path / "state.json"
+        history_path = tmp_path / "scorecard_history.csv"
+        override_path = self._overrides([
+            {"override_recommendation": "Hold"},
+        ], tmp_path / "overrides.csv")
+        self._history([
+            {"as_of": "2026-06-02", "recommendation": "De-risk"},
+        ]).to_csv(history_path, index=False)
+
+        result = run_alerts(
+            _make_df(date="2026-06-02", final_decision="Neutral"),
+            config=self._cfg(dry_run=True),
+            state_path=state_path,
+            scorecard_history_path=history_path,
+            override_path=override_path,
+        )
+
+        assert any(a["trigger"] == "override_conflicts_defensive_scorecard" for a in result["alerts"])
 
 
 # ---------------------------------------------------------------------------

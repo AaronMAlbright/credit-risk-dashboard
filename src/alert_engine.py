@@ -48,6 +48,8 @@ import pandas as pd
 
 from src.credit_compensation_history import HISTORY_PATH as _SCORECARD_HISTORY_PATH
 from src.credit_compensation_history import load_scorecard_history
+from src.credit_compensation_overrides import OVERRIDE_PATH as _OVERRIDE_PATH
+from src.credit_compensation_overrides import get_active_override, load_overrides
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -101,6 +103,7 @@ class AlertConfig:
     check_shock_flag:      bool  = True
     check_composite_cross: bool  = True
     check_scorecard_alerts: bool = True
+    check_override_alerts: bool = True
 
     # ── Thresholds ────────────────────────────────────────────────────────
     blend_threshold:            float = 0.50   # alert when blend drops below this
@@ -109,6 +112,7 @@ class AlertConfig:
     scorecard_beta_tolerance:   float = 0.05   # net beta target cushion before alerting
     scorecard_hedge_gap_pct:    float = 5.0    # incremental CDX HY protection % NAV
     scorecard_comp_ratio_min:   float = 1.10   # minimum acceptable spread compensation
+    override_expiring_days:     int = 7        # alert when active override expires within N days
 
     # ── Behaviour ─────────────────────────────────────────────────────────
     min_level: str  = "INFO"   # suppress alerts below this level
@@ -329,6 +333,90 @@ def check_scorecard_alerts(
                 f"Scorecard compensation ratio fell below {config.scorecard_comp_ratio_min:.2f}x: now {comp_ratio:.2f}x",
                 {"spread_compensation_ratio": comp_ratio, "threshold": config.scorecard_comp_ratio_min},
             ))
+
+    return alerts
+
+
+def check_override_alerts(
+    current: dict,
+    history: pd.DataFrame,
+    config: AlertConfig,
+    *,
+    override_path: Path | str = _OVERRIDE_PATH,
+) -> list[dict]:
+    """Return alerts for PM/IC override conflicts and expirations."""
+    if not config.check_override_alerts:
+        return []
+
+    latest, previous = _latest_scorecard_rows(history)
+    current_date = str(current.get("last_date") or "")[:10]
+    as_of = current_date or (str(latest.get("as_of"))[:10] if latest else None)
+    active = get_active_override(as_of=as_of, path=override_path)
+    overrides = load_overrides(override_path)
+    alerts: list[dict] = []
+
+    if not overrides.empty and as_of:
+        work = overrides.copy()
+        work["expiration_dt"] = pd.to_datetime(work["expiration_date"], errors="coerce")
+        expired_active = work[
+            (work["status"] == "active")
+            & (work["expiration_dt"] < pd.Timestamp(as_of).normalize())
+        ]
+        if not expired_active.empty:
+            alerts.append(_alert(
+                "override_expired_active",
+                "WARNING",
+                f"{len(expired_active)} active override record(s) are past expiration.",
+                {"count": int(len(expired_active))},
+            ))
+
+    if not active.get("available"):
+        return alerts
+
+    override = active["override"]
+    override_rec = str(override.get("override_recommendation") or "")
+    model_rec = str(latest.get("recommendation") or override.get("model_recommendation") or "")
+    prev_model_rec = str(previous.get("recommendation") or "") if previous else ""
+    defensive_recs = {"Hedge", "De-risk"}
+    risk_on_recs = {"Add", "Hold"}
+
+    days_left = int(override.get("days_to_expiration", 999))
+    if days_left <= config.override_expiring_days:
+        alerts.append(_alert(
+            "override_expiring_soon",
+            "WARNING",
+            f"Active override expires in {days_left} day(s): {override_rec}",
+            {
+                "override_id": override.get("override_id"),
+                "expiration_date": override.get("expiration_date"),
+                "days_to_expiration": days_left,
+            },
+        ))
+
+    if model_rec in defensive_recs and override_rec in risk_on_recs:
+        alerts.append(_alert(
+            "override_conflicts_defensive_scorecard",
+            "ALERT",
+            f"Active override is {override_rec} while scorecard is {model_rec}.",
+            {
+                "override_id": override.get("override_id"),
+                "model_recommendation": model_rec,
+                "override_recommendation": override_rec,
+            },
+        ))
+
+    if previous and prev_model_rec and model_rec and model_rec != prev_model_rec:
+        alerts.append(_alert(
+            "override_active_model_changed",
+            "WARNING",
+            f"Scorecard changed {prev_model_rec} -> {model_rec} while override remains {override_rec}.",
+            {
+                "override_id": override.get("override_id"),
+                "prev_model_recommendation": prev_model_rec,
+                "model_recommendation": model_rec,
+                "override_recommendation": override_rec,
+            },
+        ))
 
     return alerts
 
@@ -627,6 +715,7 @@ def run_alerts(
     sizing: dict | None = None,
     state_path: Path | str = _DEFAULT_STATE_PATH,
     scorecard_history_path: Path | str = _SCORECARD_HISTORY_PATH,
+    override_path: Path | str = _OVERRIDE_PATH,
 ) -> dict:
     """
     Full alert pipeline: load state → check → send → save.
@@ -638,6 +727,7 @@ def run_alerts(
     sizing     : position sizing result for blend weight (optional)
     state_path : path to JSON state file
     scorecard_history_path : path to persisted scorecard history CSV
+    override_path : path to persisted scorecard overrides CSV
 
     Returns dict:
       alerts       — list of fired alert dicts (empty if none)
@@ -667,6 +757,8 @@ def run_alerts(
     if config.check_scorecard_alerts:
         scorecard_history = load_scorecard_history(scorecard_history_path)
         alerts.extend(check_scorecard_alerts(current, scorecard_history, config))
+        if config.check_override_alerts:
+            alerts.extend(check_override_alerts(current, scorecard_history, config, override_path=override_path))
         alerts.sort(key=lambda a: -ALERT_LEVELS.get(a["level"], 0))
 
     # Filter by min_level
