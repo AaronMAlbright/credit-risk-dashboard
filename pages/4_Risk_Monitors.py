@@ -253,7 +253,7 @@ load_funding_stress         = run_funding_stress_analysis
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
 if 'date' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
-    df = df.set_index(pd.to_datetime(df['date'])).drop(columns=['date'])
+    df = df.set_index(pd.to_datetime(df['date']), drop=False)
 
 latest      = df.iloc[-1].to_dict()
 decision    = str(latest.get('final_decision',    'N/A'))

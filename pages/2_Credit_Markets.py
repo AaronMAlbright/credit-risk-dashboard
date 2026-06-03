@@ -174,7 +174,7 @@ from src.yield_curve_butterfly import run_butterfly_analysis
 from src.sloos_monitor import run_sloos_monitor
 from src.etf_fund_flows import run_etf_fund_flows
 from src.corporate_profit_cycle import run_corporate_profit_cycle
-from src.cds_implied_pd import run_cds_implied_pd
+from src.cds_implied_pd import HY_HISTORICAL_AVG_PD, run_cds_implied_pd
 from src.data_diagnostics import run_diagnostics as _run_data_diagnostics
 from src.credit_strategy_memo import generate_credit_strategy_memo
 from src.credit_taxonomy import latest_channel_snapshot
@@ -270,7 +270,7 @@ def load_distressed_debt(df):
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
 if 'date' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
-    df = df.set_index(pd.to_datetime(df['date'])).drop(columns=['date'])
+    df = df.set_index(pd.to_datetime(df['date']), drop=False)
 
 latest      = df.iloc[-1].to_dict()
 decision    = str(latest.get('final_decision',    'N/A'))

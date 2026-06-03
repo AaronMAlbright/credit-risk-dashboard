@@ -225,10 +225,46 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
-# ── load_* aliases ────────────────────────────────────────────────────────────
-load_weight_optimization = run_weight_optimization
-load_regime_transition   = run_regime_analysis
-load_regime_probability  = run_regime_probability
+# ── load_* wrappers ───────────────────────────────────────────────────────────
+SENS_RESULTS_PATH = Path("outputs/sensitivity/sensitivity_results.csv")
+SENS_REPORT_PATH = Path("outputs/sensitivity/sensitivity_report.txt")
+
+
+@st.cache_data
+def load_weight_optimization(_df):
+    return run_weight_optimization(_df, n_samples=2000)
+
+
+@st.cache_data
+def load_sensitivity():
+    if SENS_RESULTS_PATH.exists():
+        return pd.read_csv(SENS_RESULTS_PATH)
+    return None
+
+
+@st.cache_data
+def load_regime_transition(_df):
+    return run_regime_analysis(_df)
+
+
+@st.cache_data
+def load_signal_horizon_grid(_df, _oos_cutoff="2016-01-01"):
+    return validate_signals_multi_horizon(_df, oos_cutoff=_oos_cutoff)
+
+
+@st.cache_data
+def load_signal_validation(_df, _oos_cutoff="2016-01-01"):
+    return validate_signals_vs_returns(_df, oos_cutoff=_oos_cutoff)
+
+
+@st.cache_data
+def load_stress_episode_stats(_df):
+    return compute_stress_episode_stats(_df)
+
+
+@st.cache_data
+def load_regime_probability(_df):
+    return run_regime_probability(_df)
 
 
 def load_monte_carlo(df, _cache_key=None):
@@ -244,6 +280,18 @@ def load_monte_carlo(df, _cache_key=None):
         return {}
 
 
+@st.cache_data
+def load_subperiod_attribution(_df):
+    return run_subperiod_attribution(_df)
+
+
+@st.cache_data
+def load_position_sizing(_df):
+    rp = run_regime_probability(_df)
+    prob_history = rp.get("history")
+    return run_position_sizing(_df, prob_history=prob_history)
+
+
 def load_scenario_grid(df):
     try:
         _grid = run_scenario_grid(df, SCENARIO_PRESETS)
@@ -253,10 +301,35 @@ def load_scenario_grid(df):
         return {"grid": pd.DataFrame(), "tornado": pd.DataFrame(), "model": {}}
 
 
+@st.cache_data
+def load_frozen_splits(_df):
+    return run_frozen_splits(_df)
+
+
+@st.cache_data
+def load_merton(_df):
+    return run_merton_analysis(_df)
+
+
+@st.cache_data
+def load_efficient_frontier(_df):
+    return compute_efficient_frontier(_df)
+
+
+@st.cache_data
+def load_kelly(_df):
+    return run_kelly_analysis(_df)
+
+
+@st.cache_data
+def load_risk_parity_allocation(_df):
+    return run_risk_parity_allocation(_df)
+
+
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
 if 'date' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
-    df = df.set_index(pd.to_datetime(df['date'])).drop(columns=['date'])
+    df = df.set_index(pd.to_datetime(df['date']), drop=False)
 
 latest      = df.iloc[-1].to_dict()
 decision    = str(latest.get('final_decision',    'N/A'))
@@ -264,6 +337,19 @@ environment = str(latest.get('final_environment', 'N/A'))
 action      = str(latest.get('final_action',      'N/A'))
 composite   = float(latest.get('composite_risk_score_smooth', 0))
 comp_label  = str(latest.get('composite_risk_label', 'N/A'))
+wf_windows = None
+_regime_counts_ov = (
+    df["final_decision"].value_counts()
+    if "final_decision" in df.columns
+    else pd.Series(dtype=int)
+)
+_min_n_ov = int(_regime_counts_ov.min()) if not _regime_counts_ov.empty else 0
+if len(df) >= 756 and _min_n_ov >= 30:
+    _conf_level = "Indicative"
+elif len(df) >= 252:
+    _conf_level = "Exploratory"
+else:
+    _conf_level = "Insufficient"
 
 # ── Sidebar nav for this section ─────────────────────────────────────────────
 _SECTION_NAME = 'Models'

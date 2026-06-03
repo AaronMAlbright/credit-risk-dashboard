@@ -225,6 +225,24 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
+HISTORY_PATH = Path("history/model_run_history.csv")
+
+
+def _sample_flag(n: int) -> str:
+    if n < 20:
+        return "Exploratory"
+    if n < 50:
+        return "Indicative"
+    return "Reliable"
+
+
+@st.cache_data
+def load_history():
+    if HISTORY_PATH.exists():
+        return pd.read_csv(HISTORY_PATH)
+    return pd.DataFrame()
+
+
 # ── load_* aliases ────────────────────────────────────────────────────────────
 load_attribution            = run_regime_attribution
 load_drawdown_attribution   = run_drawdown_attribution
@@ -250,7 +268,8 @@ load_cvar                   = run_cvar_analysis
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
 if 'date' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
-    df = df.set_index(pd.to_datetime(df['date'])).drop(columns=['date'])
+    df = df.set_index(pd.to_datetime(df['date']), drop=False)
+history = load_history()
 
 latest      = df.iloc[-1].to_dict()
 decision    = str(latest.get('final_decision',    'N/A'))
@@ -258,6 +277,28 @@ environment = str(latest.get('final_environment', 'N/A'))
 action      = str(latest.get('final_action',      'N/A'))
 composite   = float(latest.get('composite_risk_score_smooth', 0))
 comp_label  = str(latest.get('composite_risk_label', 'N/A'))
+
+with st.sidebar.expander("Model Config"):
+    _cfg_tc_bps = st.slider(
+        "Transaction cost (bps)", 0, 50, 10, step=5,
+        help="Deducted per day of equity weight change.",
+    )
+    _cfg_equity_floor = st.slider(
+        "Min equity weight (%)", 20, 60, 40, step=5,
+        help="Floor below which strategy weight never falls.",
+    )
+    _cfg_equity_cap = st.slider(
+        "Max equity weight (%)", 80, 100, 100, step=5,
+        help="Ceiling above which strategy weight never rises.",
+    )
+    _cfg_target_vol = st.slider(
+        "Vol target (%)", 5, 20, 10, step=1,
+        help="Annualized realized volatility target.",
+    )
+    _cfg_momentum_lookback = st.slider(
+        "Momentum MA (days)", 50, 252, 200, step=25,
+        help="Lookback for the trend filter.",
+    )
 
 # ── Sidebar nav for this section ─────────────────────────────────────────────
 _SECTION_NAME = 'Signal Lab'

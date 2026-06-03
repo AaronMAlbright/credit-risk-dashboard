@@ -5,6 +5,7 @@ Extracted from streamlit_app.py for performance (single-section reruns).
 import os
 import pandas as pd
 import streamlit as st
+import numpy as _np130
 from pathlib import Path
 
 # Inject Streamlit Cloud secrets into os.environ so all downstream
@@ -225,14 +226,66 @@ from utils.shared import (
     _ANALYTICS_VIEWS,
 )
 
-# ── load_* aliases ────────────────────────────────────────────────────────────
-load_failure_analysis = run_failure_analysis
+# ── load_* wrappers ───────────────────────────────────────────────────────────
+@st.cache_data
+def load_performance_scorecard(_df):
+    return run_performance_scorecard(_df)
+
+
+@st.cache_data
+def load_regime_validity(_df):
+    return run_regime_validity(_df)
+
+
+@st.cache_data
+def load_failure_analysis(_df):
+    return run_failure_analysis(_df)
+
+
+@st.cache_data
+def load_historical_analogs(_df):
+    return find_historical_analogs(_df)
+
+
+@st.cache_data
+def load_persistence(_df):
+    return run_persistence_analysis(_df)
+
+
+@st.cache_data
+def load_traffic_light(_df):
+    return run_traffic_light_analysis(_df)
+
+
+@st.cache_data
+def load_shock_analysis(_df):
+    return run_shock_analysis(_df)
+
+
+@st.cache_data
+def load_alert_backtest(_df):
+    return run_alert_backtest(_df)
+
+
+@st.cache_data
+def load_regime_forecast(_df):
+    return run_regime_forecast(_df)
+
+
+@st.cache_data
+def load_regime_duration(_df):
+    return run_regime_duration(_df)
+
+
+@st.cache_data
+def load_drawdown_recovery(_df):
+    return run_drawdown_recovery(_df)
 
 
 # ── Data & pre-processing ─────────────────────────────────────────────────────
 df = load_data()
 if 'date' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
-    df = df.set_index(pd.to_datetime(df['date'])).drop(columns=['date'])
+    df = df.set_index(pd.to_datetime(df['date']), drop=False)
 
 latest      = df.iloc[-1].to_dict()
 decision    = str(latest.get('final_decision',    'N/A'))
@@ -2191,4 +2244,3 @@ if _active_sub == "ov_reg":
     except Exception as _e_ov_reg:
         _err_track(_active_sub, _e_ov_reg)
         st.caption(f"Regime overview: {_e_ov_reg}")
-
