@@ -5,6 +5,7 @@ import pandas as pd
 from src.credit_compensation_history import (
     HISTORY_COLUMNS,
     append_scorecard_history,
+    build_scorecard_trend_views,
     build_scorecard_history_row,
     load_scorecard_history,
 )
@@ -74,3 +75,84 @@ def test_load_scorecard_history_returns_empty_columns_for_missing_path(tmp_path)
 
     assert history.empty
     assert list(history.columns) == HISTORY_COLUMNS
+
+
+def test_build_scorecard_trend_views_single_row_disables_charts():
+    history = pd.DataFrame([
+        {
+            "as_of": "2026-06-02",
+            "recommendation": "Upgrade Quality",
+            "hy_oas_bps": 272.0,
+            "expected_loss_bps": 240.0,
+            "excess_spread_bps": 32.0,
+            "spread_compensation_ratio": 1.13,
+            "net_spread_beta": 0.288,
+            "target_net_spread_beta": 0.300,
+            "incremental_cdx_hy_protection_pct": 0.0,
+            "constraint_breach_count": 0,
+            "ig_weight_pct": 43.0,
+            "bbb_weight_pct": 20.0,
+            "bb_weight_pct": 20.0,
+            "b_weight_pct": 0.0,
+            "ccc_weight_pct": 0.0,
+            "cash_weight_pct": 12.0,
+            "hedge_weight_pct": 5.0,
+        }
+    ])
+
+    views = build_scorecard_trend_views(history)
+
+    assert views["available"] is True
+    assert views["has_charts"] is False
+    assert len(views["recommendation_timeline"]) == 1
+    assert list(views["spread_trends"].columns) == ["hy_oas_bps", "expected_loss_bps", "excess_spread_bps"]
+
+
+def test_build_scorecard_trend_views_multi_row_returns_chart_frames():
+    history = pd.DataFrame([
+        {
+            "as_of": "2026-06-01",
+            "recommendation": "Hold",
+            "hy_oas_bps": 300.0,
+            "expected_loss_bps": 240.0,
+            "excess_spread_bps": 60.0,
+            "spread_compensation_ratio": 1.25,
+            "net_spread_beta": 0.25,
+            "target_net_spread_beta": 0.30,
+            "incremental_cdx_hy_protection_pct": 0.0,
+            "constraint_breach_count": 0,
+            "ig_weight_pct": 30.0,
+            "bbb_weight_pct": 20.0,
+            "bb_weight_pct": 20.0,
+            "b_weight_pct": 15.0,
+            "ccc_weight_pct": 0.0,
+            "cash_weight_pct": 10.0,
+            "hedge_weight_pct": 5.0,
+        },
+        {
+            "as_of": "2026-06-02",
+            "recommendation": "Upgrade Quality",
+            "hy_oas_bps": 272.0,
+            "expected_loss_bps": 240.0,
+            "excess_spread_bps": 32.0,
+            "spread_compensation_ratio": 1.13,
+            "net_spread_beta": 0.288,
+            "target_net_spread_beta": 0.30,
+            "incremental_cdx_hy_protection_pct": 0.0,
+            "constraint_breach_count": 0,
+            "ig_weight_pct": 43.0,
+            "bbb_weight_pct": 20.0,
+            "bb_weight_pct": 20.0,
+            "b_weight_pct": 0.0,
+            "ccc_weight_pct": 0.0,
+            "cash_weight_pct": 12.0,
+            "hedge_weight_pct": 5.0,
+        },
+    ])
+
+    views = build_scorecard_trend_views(history)
+
+    assert views["has_charts"] is True
+    assert len(views["spread_trends"]) == 2
+    assert "net_spread_beta" in views["beta_trends"].columns
+    assert "ig_weight_pct" in views["weight_trends"].columns

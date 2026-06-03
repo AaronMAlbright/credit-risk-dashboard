@@ -44,6 +44,19 @@ HISTORY_COLUMNS = [
     "pm_final_verdict",
 ]
 
+SPREAD_TREND_COLUMNS = ["hy_oas_bps", "expected_loss_bps", "excess_spread_bps"]
+BETA_TREND_COLUMNS = ["net_spread_beta", "target_net_spread_beta"]
+HEDGE_TREND_COLUMNS = ["incremental_cdx_hy_protection_pct", "constraint_breach_count"]
+WEIGHT_TREND_COLUMNS = [
+    "ig_weight_pct",
+    "bbb_weight_pct",
+    "bb_weight_pct",
+    "b_weight_pct",
+    "ccc_weight_pct",
+    "cash_weight_pct",
+    "hedge_weight_pct",
+]
+
 
 def _as_date_string(value) -> str | None:
     if value is None or pd.isna(value):
@@ -131,6 +144,51 @@ def load_scorecard_history(history_path: Path | str = HISTORY_PATH) -> pd.DataFr
         if col not in history.columns:
             history[col] = pd.NA
     return history[HISTORY_COLUMNS]
+
+
+def build_scorecard_trend_views(history: pd.DataFrame) -> dict:
+    """Return chart-ready scorecard history views for the dashboard."""
+    if history is None or history.empty:
+        empty = pd.DataFrame()
+        return {
+            "available": False,
+            "reason": "Scorecard history unavailable",
+            "history": empty,
+            "recommendation_timeline": empty,
+            "spread_trends": empty,
+            "compensation_trend": empty,
+            "beta_trends": empty,
+            "hedge_trends": empty,
+            "weight_trends": empty,
+            "has_charts": False,
+        }
+
+    work = history.copy()
+    work["as_of"] = pd.to_datetime(work["as_of"], errors="coerce")
+    work = work.dropna(subset=["as_of"]).sort_values("as_of")
+    for col in set(SPREAD_TREND_COLUMNS + BETA_TREND_COLUMNS + HEDGE_TREND_COLUMNS + WEIGHT_TREND_COLUMNS + ["spread_compensation_ratio"]):
+        if col in work.columns:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+
+    recommendation_timeline = work[["as_of", "recommendation"]].copy()
+    spread_trends = work[["as_of"] + [col for col in SPREAD_TREND_COLUMNS if col in work.columns]].set_index("as_of")
+    compensation_trend = work[["as_of", "spread_compensation_ratio"]].set_index("as_of") if "spread_compensation_ratio" in work.columns else pd.DataFrame()
+    beta_trends = work[["as_of"] + [col for col in BETA_TREND_COLUMNS if col in work.columns]].set_index("as_of")
+    hedge_trends = work[["as_of"] + [col for col in HEDGE_TREND_COLUMNS if col in work.columns]].set_index("as_of")
+    weight_trends = work[["as_of"] + [col for col in WEIGHT_TREND_COLUMNS if col in work.columns]].set_index("as_of")
+
+    return {
+        "available": True,
+        "reason": "",
+        "history": work,
+        "recommendation_timeline": recommendation_timeline,
+        "spread_trends": spread_trends,
+        "compensation_trend": compensation_trend,
+        "beta_trends": beta_trends,
+        "hedge_trends": hedge_trends,
+        "weight_trends": weight_trends,
+        "has_charts": len(work) >= 2,
+    }
 
 
 def append_scorecard_history(

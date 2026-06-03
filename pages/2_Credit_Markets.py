@@ -183,7 +183,7 @@ from src.credit_channel_validation import channel_validation_table, latest_chann
 from src.credit_positioning import positioning_table, current_positioning
 from src.spread_decomposition import latest_spread_snapshot
 from src.credit_compensation_packet import build_pm_review_packet
-from src.credit_compensation_history import load_scorecard_history
+from src.credit_compensation_history import build_scorecard_trend_views, load_scorecard_history
 from src.credit_compensation_scorecard import build_credit_compensation_scorecard
 from src.credit_compensation_validation import (
     analyze_scorecard_prediction_errors,
@@ -443,6 +443,34 @@ if _active_sub is not None:
                     use_container_width=True,
                     hide_index=True,
                 )
+                _trend_views = build_scorecard_trend_views(_scorecard_history)
+                with st.expander("Scorecard trend panel", expanded=False):
+                    _timeline = _trend_views.get("recommendation_timeline", pd.DataFrame())
+                    if _timeline is not None and not _timeline.empty:
+                        st.markdown("**Recommendation Timeline**")
+                        st.dataframe(_timeline.tail(20), use_container_width=True, hide_index=True)
+                    if not _trend_views.get("has_charts"):
+                        st.caption("Trend charts will populate after at least two daily scorecard snapshots are persisted.")
+                    else:
+                        _trend_tabs = st.tabs(["Compensation", "Beta / Hedge", "Rating Weights"])
+                        with _trend_tabs[0]:
+                            _spread_trends = _trend_views.get("spread_trends", pd.DataFrame())
+                            if _spread_trends is not None and not _spread_trends.empty:
+                                st.line_chart(_spread_trends, use_container_width=True)
+                            _comp_trend = _trend_views.get("compensation_trend", pd.DataFrame())
+                            if _comp_trend is not None and not _comp_trend.empty:
+                                st.line_chart(_comp_trend, use_container_width=True)
+                        with _trend_tabs[1]:
+                            _beta_trends = _trend_views.get("beta_trends", pd.DataFrame())
+                            if _beta_trends is not None and not _beta_trends.empty:
+                                st.line_chart(_beta_trends, use_container_width=True)
+                            _hedge_trends = _trend_views.get("hedge_trends", pd.DataFrame())
+                            if _hedge_trends is not None and not _hedge_trends.empty:
+                                st.line_chart(_hedge_trends, use_container_width=True)
+                        with _trend_tabs[2]:
+                            _weight_trends = _trend_views.get("weight_trends", pd.DataFrame())
+                            if _weight_trends is not None and not _weight_trends.empty:
+                                st.line_chart(_weight_trends, use_container_width=True)
             _pm_packet = build_pm_review_packet(df)
             if _pm_packet.get("available"):
                 _pkt1, _pkt2 = st.columns(2)
